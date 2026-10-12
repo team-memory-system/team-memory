@@ -7,11 +7,13 @@ import { prepareHonchoTree } from "./honcho-source.mjs";
 
 import {
   CHAT_MODEL_PREFIXES,
-  CHAT_THINKING_EFFORT,
+  CHAT_ROLE_PREFIXES,
+  CHAT_ROLES,
   DEFAULT_GATEWAY_ROUTER_URL,
   DEFAULT_GATEWAY_UI_URL,
   dockerRouterUrl,
   PREFERRED_CHAT_MODELS,
+  ROLE_EFFORTS,
 } from "./gateway.mjs";
 import { DEFAULT_EMBEDDING_ALIAS, EMBEDDING_ALIASES, embeddingAliasBase } from "./host-manager.mjs";
 
@@ -337,12 +339,14 @@ export function personalEnvironment(text) {
     // verified IPv4 and Compose service-name paths.
     TRUSTED_HOSTS: '["localhost","127.0.0.1","api"]',
   };
-  for (const prefix of PERSONAL_MODEL_PREFIXES) {
-    values[`${prefix}__TRANSPORT`] = "openai";
-    values[`${prefix}__MODEL`] = PREFERRED_CHAT_MODELS[0];
-    values[`${prefix}__THINKING_EFFORT`] = CHAT_THINKING_EFFORT;
-    values[`${prefix}__OVERRIDES__BASE_URL`] = routerUrl;
-    values[`${prefix}__OVERRIDES__API_KEY_ENV`] = "LLM_VLLM_API_KEY";
+  for (const role of CHAT_ROLES) {
+    for (const prefix of CHAT_ROLE_PREFIXES[role]) {
+      values[`${prefix}__TRANSPORT`] = "openai";
+      values[`${prefix}__MODEL`] = PREFERRED_CHAT_MODELS[0];
+      values[`${prefix}__THINKING_EFFORT`] = ROLE_EFFORTS[role];
+      values[`${prefix}__OVERRIDES__BASE_URL`] = routerUrl;
+      values[`${prefix}__OVERRIDES__API_KEY_ENV`] = "LLM_VLLM_API_KEY";
+    }
   }
   return replaceEnvironmentValues(sanitized, values);
 }

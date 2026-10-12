@@ -36,8 +36,9 @@ const SOURCE_RECORD = ".honcho-agent-bridge-source.json";
 export const DEFAULT_GATEWAY_UI_URL = "http://127.0.0.1:11450";
 export const DEFAULT_GATEWAY_ROUTER_URL = "http://127.0.0.1:11400/v1";
 
-// The first of these the gateway offers becomes every chat model.
+// A role that names no model gets the first of these the gateway offers.
 export const PREFERRED_CHAT_MODELS = Object.freeze([
+  "claude-opus-5-5",
   "gpt-6-luna",
   "gpt-5.6-luna",
   "gpt-5.5",
@@ -45,16 +46,30 @@ export const PREFERRED_CHAT_MODELS = Object.freeze([
   "claude-sonnet-5-5",
 ]);
 
-// Every Honcho setting that makes a chat completion. Embeddings are not among
-// them: they stay on Ollama.
-export const CHAT_MODEL_PREFIXES = Object.freeze([
-  "DERIVER_MODEL_CONFIG",
-  "SUMMARY_MODEL_CONFIG",
-  "DREAM_DEDUCTION_MODEL_CONFIG",
-  "DREAM_INDUCTION_MODEL_CONFIG",
-  ...["minimal", "low", "medium", "high", "max"].map((level) => `DIALECTIC_LEVELS__${level}__MODEL_CONFIG`),
-]);
-export const CHAT_THINKING_EFFORT = "low";
+// The three jobs the memory server gives a chat model, each with its own model and
+// effort, and the Honcho settings each one writes: deriver makes observations and
+// summaries from new messages, dream merges them and draws conclusions in the
+// background, dialectic answers a question at every reasoning_level. Embeddings are
+// not among them: they stay on Ollama.
+export const CHAT_ROLES = Object.freeze(["deriver", "dream", "dialectic"]);
+export const CHAT_ROLE_PREFIXES = Object.freeze({
+  deriver: Object.freeze(["DERIVER_MODEL_CONFIG", "SUMMARY_MODEL_CONFIG"]),
+  dream: Object.freeze(["DREAM_DEDUCTION_MODEL_CONFIG", "DREAM_INDUCTION_MODEL_CONFIG"]),
+  dialectic: Object.freeze(["minimal", "low", "medium", "high", "max"].map((level) => `DIALECTIC_LEVELS__${level}__MODEL_CONFIG`)),
+});
+// Every Honcho setting that makes a chat completion.
+export const CHAT_MODEL_PREFIXES = Object.freeze(CHAT_ROLES.flatMap((role) => CHAT_ROLE_PREFIXES[role]));
+// The reasoning efforts both of the gateway's backends take.
+export const THINKING_EFFORTS = Object.freeze(["low", "medium", "high", "xhigh", "max"]);
+// The effort of a role that names none. Nobody waits on a dream, so it thinks longer.
+export const ROLE_EFFORTS = Object.freeze({ deriver: "low", dream: "high", dialectic: "low" });
+// What first setup offers to choose from before any subscription is logged in, by
+// backend: what the gateway served on 2026-10-13. Once logged in, 서버 → 모델 lists
+// what the gateway really offers.
+export const SETUP_CHAT_MODELS = Object.freeze({
+  claude: Object.freeze(["claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-fable-5-1", "claude-fable-5", "claude-haiku-4-5"]),
+  codex: Object.freeze(["gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol"]),
+});
 
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._/+:-]{0,199}$/;
 const EMBEDDING_MODEL = /embed/i;
@@ -513,52 +528,82 @@ export function gatewayLoginAction(uiUrl, then, reason = "", { firstSetup = fals
 // ------------------------------------------------------------- model and .env
 
 /**
- * The chat model for every Honcho chat setting, and where it came from:
- *   override  `requested`, which the gateway has to offer
- *   kept      `installed`, the model the installed .env already uses, while the
- *             gateway still offers it
+ * The model and effort of each of CHAT_ROLES, and where each model came from:
+ *   override  the role's `requested` model, which the gateway has to offer
+ *   kept      the role's `installed` model, the one the installed .env already
+ *             uses, while the gateway still offers it
  *   default   the first of PREFERRED_CHAT_MODELS the gateway offers, otherwise the
  *             first model it lists that is not an embedding model
- * Keeping the installed model is what lets `server start`, which prepares again,
- * keep an earlier --model without being given it again. When nothing it offers can
- * chat, the result is `noChatModel` with a `reason`, not an error: the user has a
- * login to add.
+ * The effort is the role's requested one, else its installed one, else ROLE_EFFORTS.
+ * `requested` and `installed` are { deriver: { model, effort }, ... }, any part left
+ * out. Keeping what is installed is what lets `server start`, which prepares again,
+ * keep an earlier choice without being given it again. When nothing the gateway
+ * offers can chat, the result is `noChatModel` with a `reason`, not an error: the
+ * user has a login to add.
  */
-export function chooseChatModel(models, { requested = "", installed = "" } = {}) {
+export function chooseChatRoles(models, { requested = {}, installed = {} } = {}) {
   const offered = modelList(models);
-  const wanted = String(requested || "").trim();
-  if (wanted) {
-    if (offered.includes(wanted)) return { ok: true, model: wanted, source: "override", offered };
-    return {
-      ok: false,
-      offered,
-      error: `The gateway does not offer the model "${wanted.slice(0, 200)}". It offers: ${offered.join(", ") || "none yet"}`,
-    };
-  }
-  const current = String(installed || "").trim();
-  if (current && offered.includes(current)) return { ok: true, model: current, source: "kept", offered };
-  const preferred = PREFERRED_CHAT_MODELS.find((model) => offered.includes(model));
-  if (preferred) return { ok: true, model: preferred, source: "default", offered };
   // The router lists what Ollama serves as well, and an embedding model cannot chat.
-  const chat = offered.find((model) => !EMBEDDING_MODEL.test(model));
-  if (chat) return { ok: true, model: chat, source: "default", offered };
-  return {
-    ok: false,
-    noChatModel: true,
-    offered,
-    reason: offered.length
-      ? `The gateway offers no chat model, only embedding models (${offered.join(", ")})`
-      : "The gateway offers no model yet",
-  };
+  const fallback = PREFERRED_CHAT_MODELS.find((model) => offered.includes(model))
+    || offered.find((model) => !EMBEDDING_MODEL.test(model))
+    || "";
+  const roles = {};
+  for (const role of CHAT_ROLES) {
+    const wanted = String(requested[role]?.model || "").trim();
+    const wantedEffort = String(requested[role]?.effort || "").trim();
+    if (wantedEffort && !THINKING_EFFORTS.includes(wantedEffort)) {
+      return { ok: false, offered, error: `The ${role} effort "${wantedEffort.slice(0, 40)}" is not one of ${THINKING_EFFORTS.join(", ")}` };
+    }
+    if (wanted && !offered.includes(wanted)) {
+      return {
+        ok: false,
+        offered,
+        error: `The gateway does not offer the ${role} model "${wanted.slice(0, 200)}". It offers: ${offered.join(", ") || "none yet"}`,
+      };
+    }
+    const current = String(installed[role]?.model || "").trim();
+    const [model, source] = wanted ? [wanted, "override"]
+      : current && offered.includes(current) ? [current, "kept"]
+        : [fallback, "default"];
+    if (!model) {
+      return {
+        ok: false,
+        noChatModel: true,
+        offered,
+        reason: offered.length
+          ? `The gateway offers no chat model, only embedding models (${offered.join(", ")})`
+          : "The gateway offers no model yet",
+      };
+    }
+    const installedEffort = String(installed[role]?.effort || "").trim();
+    const effort = wantedEffort || (THINKING_EFFORTS.includes(installedEffort) ? installedEffort : ROLE_EFFORTS[role]);
+    roles[role] = { model, effort, source };
+  }
+  return { ok: true, roles, offered };
 }
 
-/** The chat model an installed .env uses now, or "". */
+/** The chat model an installed .env uses now, or "": its deriver's when it names one. */
 export function installedChatModel(environment = {}) {
   for (const prefix of CHAT_MODEL_PREFIXES) {
     const model = String(environment[`${prefix}__MODEL`] || "").trim();
     if (model) return model;
   }
   return "";
+}
+
+/**
+ * The model and effort an installed .env gives each role, read from the first of
+ * its settings that names a model: { deriver: { model, effort }, ... }, "" for what
+ * it does not name.
+ */
+export function installedChatRoles(environment = {}) {
+  return Object.fromEntries(CHAT_ROLES.map((role) => {
+    const prefix = CHAT_ROLE_PREFIXES[role].find((name) => String(environment[`${name}__MODEL`] || "").trim());
+    return [role, {
+      model: prefix ? String(environment[`${prefix}__MODEL`]).trim() : "",
+      effort: prefix ? String(environment[`${prefix}__THINKING_EFFORT`] || "").trim() : "",
+    }];
+  }));
 }
 
 /** The router as the Honcho containers reach it. */
@@ -570,20 +615,26 @@ export function dockerRouterUrl(routerUrl) {
 
 /**
  * The installed .env values that send every chat model through the gateway's
- * router. Embedding settings are not among them.
+ * router, each role with its own model and effort ({ deriver: { model, effort },
+ * ... }). Embedding settings are not among them.
  */
-export function gatewayEnvironment({ routerUrl, apiKey, model }) {
+export function gatewayEnvironment({ routerUrl, apiKey, roles }) {
   if (!loopbackUrl(routerUrl)) throw new Error("The router address must be on this machine");
   if (!ROUTER_KEY.test(String(apiKey || ""))) throw new Error("The router key cannot be stored safely");
-  if (!MODEL_ID.test(String(model || ""))) throw new Error("The chat model id cannot be stored safely");
+  for (const role of CHAT_ROLES) {
+    if (!MODEL_ID.test(String(roles?.[role]?.model || ""))) throw new Error(`The ${role} model id cannot be stored safely`);
+    if (!THINKING_EFFORTS.includes(roles[role].effort)) throw new Error(`The ${role} effort is not one of ${THINKING_EFFORTS.join(", ")}`);
+  }
   const baseUrl = dockerRouterUrl(routerUrl);
   const values = { LLM_VLLM_BASE_URL: baseUrl, LLM_VLLM_API_KEY: apiKey };
-  for (const prefix of CHAT_MODEL_PREFIXES) {
-    values[`${prefix}__TRANSPORT`] = "openai";
-    values[`${prefix}__MODEL`] = model;
-    values[`${prefix}__THINKING_EFFORT`] = CHAT_THINKING_EFFORT;
-    values[`${prefix}__OVERRIDES__BASE_URL`] = baseUrl;
-    values[`${prefix}__OVERRIDES__API_KEY_ENV`] = "LLM_VLLM_API_KEY";
+  for (const role of CHAT_ROLES) {
+    for (const prefix of CHAT_ROLE_PREFIXES[role]) {
+      values[`${prefix}__TRANSPORT`] = "openai";
+      values[`${prefix}__MODEL`] = roles[role].model;
+      values[`${prefix}__THINKING_EFFORT`] = roles[role].effort;
+      values[`${prefix}__OVERRIDES__BASE_URL`] = baseUrl;
+      values[`${prefix}__OVERRIDES__API_KEY_ENV`] = "LLM_VLLM_API_KEY";
+    }
   }
   return values;
 }

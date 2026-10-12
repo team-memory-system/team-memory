@@ -32,13 +32,24 @@ process.env.HONCHO_AGENT_TEAM_AUTH = path.join(os.tmpdir(), `no-team-login-${pro
 const noFetch = async () => ({ ok: true, fetched: false, directory: "(stubbed)" });
 
 const ROUTER_KEY = "0123456789abcdef".repeat(4);
-const CHAT_PREFIXES = [
-  "DERIVER_MODEL_CONFIG",
-  "SUMMARY_MODEL_CONFIG",
-  "DREAM_DEDUCTION_MODEL_CONFIG",
-  "DREAM_INDUCTION_MODEL_CONFIG",
-  ...["minimal", "low", "medium", "high", "max"].map((level) => `DIALECTIC_LEVELS__${level}__MODEL_CONFIG`),
-];
+const ROLE_PREFIXES = {
+  deriver: ["DERIVER_MODEL_CONFIG", "SUMMARY_MODEL_CONFIG"],
+  dream: ["DREAM_DEDUCTION_MODEL_CONFIG", "DREAM_INDUCTION_MODEL_CONFIG"],
+  dialectic: ["minimal", "low", "medium", "high", "max"].map((level) => `DIALECTIC_LEVELS__${level}__MODEL_CONFIG`),
+};
+const CHAT_PREFIXES = Object.values(ROLE_PREFIXES).flat();
+
+/** Each role's [model, effort] as an installed .env gives it, read from every one of its settings. */
+function envRoles(environment) {
+  return Object.fromEntries(Object.entries(ROLE_PREFIXES).map(([role, prefixes]) => {
+    const pairs = prefixes.map((prefix) => `${environment[`${prefix}__MODEL`]} ${environment[`${prefix}__THINKING_EFFORT`]}`);
+    assert.equal(new Set(pairs).size, 1, `every ${role} setting names the same model and effort: ${pairs.join(", ")}`);
+    return [role, pairs[0].split(" ")];
+  }));
+}
+
+/** A prepare result's roles as { role: [model, effort, source] }. */
+const resultRoles = (result) => Object.fromEntries(Object.entries(result.chatRoles).map(([role, { model, effort, source }]) => [role, [model, effort, source]]));
 
 function parseEnv(text) {
   return Object.fromEntries(text.split(/\r?\n/).flatMap((line) => {
@@ -1546,7 +1557,7 @@ test("personal prepare writes the gateway's router, key and chosen model into th
   t.after(() => fsp.rm(root, { recursive: true, force: true }));
   const source = await personalBundle(root);
   const destination = path.join(root, "installed");
-  const gateway = fakeGateway({ models: ["claude-sonnet-5-5", "gpt-5.5", "gpt-6-luna"] });
+  const gateway = fakeGateway({ models: ["claude-opus-5-5", "claude-sonnet-5-5", "gpt-5.5", "gpt-6-luna"] });
   let hostOptions = null;
 
   const result = await serverPrepare({
@@ -1559,12 +1570,16 @@ test("personal prepare writes the gateway's router, key and chosen model into th
   });
   assert.equal(result.ok, true, result.issues?.join(", "));
   assert.equal(result.ready, true);
-  assert.equal(result.chatModel, "gpt-6-luna");
-  assert.equal(result.chatModelSource, "default");
+  // Opus for all three jobs once Claude is logged in; the dream thinks longer.
+  assert.deepEqual(resultRoles(result), {
+    deriver: ["claude-opus-5-5", "low", "default"],
+    dream: ["claude-opus-5-5", "high", "default"],
+    dialectic: ["claude-opus-5-5", "low", "default"],
+  });
   assert.equal(result.gateway.routerUrl, "http://127.0.0.1:11400/v1");
   assert.equal(result.gateway.autostart, "launchd");
   assert.equal(result.gateway.routerKeyUpdated, true);
-  assert.deepEqual(result.gateway.models, ["claude-sonnet-5-5", "gpt-5.5", "gpt-6-luna"]);
+  assert.deepEqual(result.gateway.models, ["claude-opus-5-5", "claude-sonnet-5-5", "gpt-5.5", "gpt-6-luna"]);
   assert.deepEqual(result.missingSecretFields, []);
   assert.equal(hostOptions.skipGateway, true);
   assert.equal(JSON.stringify(result).includes(ROUTER_KEY), false, "the key is in the private .env and in no result");
@@ -1573,9 +1588,12 @@ test("personal prepare writes the gateway's router, key and chosen model into th
   const environment = parseEnv(text);
   assert.equal(environment.LLM_VLLM_API_KEY, ROUTER_KEY);
   assert.equal(environment.LLM_VLLM_BASE_URL, "http://host.docker.internal:11400/v1");
+  assert.deepEqual(envRoles(environment), {
+    deriver: ["claude-opus-5-5", "low"],
+    dream: ["claude-opus-5-5", "high"],
+    dialectic: ["claude-opus-5-5", "low"],
+  });
   for (const prefix of CHAT_PREFIXES) {
-    assert.equal(environment[`${prefix}__MODEL`], "gpt-6-luna", prefix);
-    assert.equal(environment[`${prefix}__THINKING_EFFORT`], "low", prefix);
     assert.equal(environment[`${prefix}__OVERRIDES__BASE_URL`], "http://host.docker.internal:11400/v1", prefix);
     assert.equal(environment[`${prefix}__OVERRIDES__API_KEY_ENV`], "LLM_VLLM_API_KEY", prefix);
   }
@@ -1615,8 +1633,12 @@ test("re-running prepare updates the key and model and keeps what the user edite
   const rotatedKey = "fedcba9876543210".repeat(4);
   const second = await prepare(fakeGateway({ apiKey: rotatedKey }), { model: "claude-sonnet-5-5" });
   assert.equal(second.ready, true, second.issues?.join(", "));
-  assert.equal(second.chatModel, "claude-sonnet-5-5");
-  assert.equal(second.chatModelSource, "override");
+  // --model is every role's model; the efforts stay what they were.
+  assert.deepEqual(resultRoles(second), {
+    deriver: ["claude-sonnet-5-5", "low", "override"],
+    dream: ["claude-sonnet-5-5", "high", "override"],
+    dialectic: ["claude-sonnet-5-5", "low", "override"],
+  });
   assert.equal(second.gateway.routerKeyUpdated, true);
   assert.equal(second.environment.updated, true);
   assert.equal(JSON.stringify(second).includes(rotatedKey), false);
@@ -1624,7 +1646,11 @@ test("re-running prepare updates the key and model and keeps what the user edite
   const updated = parseEnv(secondText);
   assert.equal(updated.LLM_VLLM_API_KEY, rotatedKey);
   assert.equal((secondText.match(/^LLM_VLLM_API_KEY=/gm) || []).length, 1);
-  for (const prefix of CHAT_PREFIXES) assert.equal(updated[`${prefix}__MODEL`], "claude-sonnet-5-5", prefix);
+  assert.deepEqual(envRoles(updated), {
+    deriver: ["claude-sonnet-5-5", "low"],
+    dream: ["claude-sonnet-5-5", "high"],
+    dialectic: ["claude-sonnet-5-5", "low"],
+  });
   assert.equal(updated.CUSTOM_SETTING, "keep-me");
   assert.equal(updated.LOG_LEVEL, "DEBUG");
   assert.equal(updated.POSTGRES_PASSWORD, first.POSTGRES_PASSWORD, "the database password is never regenerated");
@@ -1633,11 +1659,24 @@ test("re-running prepare updates the key and model and keeps what the user edite
   // chosen last time stays without being asked for again.
   const third = await prepare(fakeGateway({ apiKey: rotatedKey }));
   assert.equal(third.ready, true);
-  assert.equal(third.chatModel, "claude-sonnet-5-5");
-  assert.equal(third.chatModelSource, "kept");
+  assert.deepEqual(resultRoles(third).deriver, ["claude-sonnet-5-5", "low", "kept"]);
   assert.equal(third.environment.updated, false);
   assert.equal(third.gateway.routerKeyUpdated, false);
   assert.equal(await fsp.readFile(envPath, "utf8"), secondText);
+
+  // One role on its own: the others keep what they have.
+  const fourth = await prepare(fakeGateway({ apiKey: rotatedKey }), { roles: { dream: { model: "gpt-6-luna", effort: "xhigh" }, dialectic: { effort: "medium" } } });
+  assert.equal(fourth.ready, true, fourth.issues?.join(", "));
+  assert.deepEqual(resultRoles(fourth), {
+    deriver: ["claude-sonnet-5-5", "low", "kept"],
+    dream: ["gpt-6-luna", "xhigh", "override"],
+    dialectic: ["claude-sonnet-5-5", "medium", "kept"],
+  });
+  assert.deepEqual(envRoles(parseEnv(await fsp.readFile(envPath, "utf8"))), {
+    deriver: ["claude-sonnet-5-5", "low"],
+    dream: ["gpt-6-luna", "xhigh"],
+    dialectic: ["claude-sonnet-5-5", "medium"],
+  });
 });
 
 test("prepare keeps the installed chat model while the gateway offers it, and goes back to the default when it does not", async (t) => {
@@ -1656,19 +1695,32 @@ test("prepare keeps the installed chat model while the gateway offers it, and go
     serverDirectory: destination,
   });
 
-  // Chosen on an earlier run; gpt-6-luna would win the preference order.
-  await fsp.writeFile(envPath, "DERIVER_MODEL_CONFIG__MODEL=claude-sonnet-5-5\n", { mode: 0o600 });
+  // Chosen on an earlier run; gpt-6-luna would win the preference order. A role the
+  // .env names no model for gets the default.
+  await fsp.writeFile(envPath, [
+    "DERIVER_MODEL_CONFIG__MODEL=claude-sonnet-5-5",
+    "DREAM_DEDUCTION_MODEL_CONFIG__MODEL=claude-sonnet-5-5",
+    "DREAM_DEDUCTION_MODEL_CONFIG__THINKING_EFFORT=medium",
+    "",
+  ].join("\n"), { mode: 0o600 });
   const kept = await prepare();
   assert.equal(kept.ready, true, kept.issues?.join(", "));
-  assert.deepEqual([kept.chatModel, kept.chatModelSource], ["claude-sonnet-5-5", "kept"]);
-  const environment = parseEnv(await fsp.readFile(envPath, "utf8"));
-  for (const prefix of CHAT_PREFIXES) assert.equal(environment[`${prefix}__MODEL`], "claude-sonnet-5-5", prefix);
+  assert.deepEqual(resultRoles(kept), {
+    deriver: ["claude-sonnet-5-5", "low", "kept"],
+    dream: ["claude-sonnet-5-5", "medium", "kept"],
+    dialectic: ["gpt-6-luna", "low", "default"],
+  });
+  assert.deepEqual(envRoles(parseEnv(await fsp.readFile(envPath, "utf8"))), {
+    deriver: ["claude-sonnet-5-5", "low"],
+    dream: ["claude-sonnet-5-5", "medium"],
+    dialectic: ["gpt-6-luna", "low"],
+  });
 
   // A model the gateway stopped offering is not kept.
   await fsp.writeFile(envPath, "DERIVER_MODEL_CONFIG__MODEL=claude-opus-5-5\n", { mode: 0o600 });
   const replaced = await prepare();
   assert.equal(replaced.ready, true, replaced.issues?.join(", "));
-  assert.deepEqual([replaced.chatModel, replaced.chatModelSource], ["gpt-6-luna", "default"]);
+  assert.deepEqual(resultRoles(replaced).deriver, ["gpt-6-luna", "low", "default"]);
 });
 
 test("a gateway that offers only embedding models stops prepare with the reason and the login step", async (t) => {
@@ -1692,12 +1744,12 @@ test("a gateway that offers only embedding models stops prepare with the reason 
   assert.equal(result.gateway.reason, reason);
   assert.equal(result.nextAction.message.startsWith(`${reason}. Open the Team Memory app's gateway screen (ui open --screen models) or http://127.0.0.1:11450 and log in`), true, result.nextAction.message);
   assert.equal(result.next, result.nextAction.message);
-  assert.equal("chatModel" in result, false);
+  assert.equal("chatRoles" in result, false);
   assert.equal(hostCalled, false);
   await assert.rejects(fsp.access(destination), "nothing was installed");
 });
 
-test("server start keeps an earlier --model without being given it again", async (t) => {
+test("server start keeps an earlier choice of models and efforts without being given it again", async (t) => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "honcho-agent-bridge-gateway-start-kept-"));
   t.after(() => fsp.rm(root, { recursive: true, force: true }));
   const source = await personalBundle(root);
@@ -1714,8 +1766,8 @@ test("server start keeps an earlier --model without being given it again", async
     honchoSourceFetcher: noFetch,
     serverDirectory: destination,
   };
-  const prepared = await serverPrepare({ ...common, ...gatewayStub(), model: "claude-sonnet-5-5" });
-  assert.equal(prepared.chatModelSource, "override");
+  const prepared = await serverPrepare({ ...common, ...gatewayStub(), model: "claude-sonnet-5-5", roles: { dream: { effort: "max" } } });
+  assert.equal(prepared.chatRoles.deriver.source, "override");
 
   const started = await serverStart({
     ...common,
@@ -1724,8 +1776,11 @@ test("server start keeps an earlier --model without being given it again", async
     healthWaiter: async () => ({ ok: true, status: 200 }),
   });
   assert.equal(started.ok, true);
-  const environment = parseEnv(await fsp.readFile(path.join(destination, ".env"), "utf8"));
-  for (const prefix of CHAT_PREFIXES) assert.equal(environment[`${prefix}__MODEL`], "claude-sonnet-5-5", prefix);
+  assert.deepEqual(envRoles(parseEnv(await fsp.readFile(path.join(destination, ".env"), "utf8"))), {
+    deriver: ["claude-sonnet-5-5", "low"],
+    dream: ["claude-sonnet-5-5", "max"],
+    dialectic: ["claude-sonnet-5-5", "low"],
+  });
 });
 
 test("a requested model the gateway does not offer, or a failed gateway install, stops prepare before the bundle", async (t) => {
@@ -1746,7 +1801,10 @@ test("a requested model the gateway does not offer, or a failed gateway install,
   const unknown = await serverPrepare({ ...base, ...fakeGateway().options, model: "gpt-7" });
   assert.equal(unknown.ok, false);
   assert.equal(unknown.ready, false);
-  assert.match(unknown.issues[0], /does not offer the model "gpt-7"\. It offers: claude-sonnet-5-5, gpt-6-luna/);
+  assert.match(unknown.issues[0], /does not offer the deriver model "gpt-7"\. It offers: claude-sonnet-5-5, gpt-6-luna/);
+  const unknownDream = await serverPrepare({ ...base, ...fakeGateway().options, roles: { dream: { model: "claude-opus-5-5" } } });
+  assert.equal(unknownDream.ok, false);
+  assert.match(unknownDream.issues[0], /does not offer the dream model "claude-opus-5-5"/);
 
   const broken = fakeGateway({ install: { ok: false, error: "npm install failed" } });
   const failed = await serverPrepare({ ...base, ...broken.options });

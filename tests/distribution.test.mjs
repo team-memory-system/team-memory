@@ -152,8 +152,9 @@ test("distribution includes source and topology but excludes state and secrets",
   ];
   for (const prefix of chatPrefixes) {
     assert.match(profile, new RegExp(`^${prefix}__TRANSPORT=openai$`, "m"));
-    assert.match(profile, new RegExp(`^${prefix}__MODEL=gpt-6-luna$`, "m"));
-    assert.match(profile, new RegExp(`^${prefix}__THINKING_EFFORT=low$`, "m"));
+    assert.match(profile, new RegExp(`^${prefix}__MODEL=claude-opus-5-5$`, "m"));
+    // Nobody waits on a dream, so it thinks longer.
+    assert.match(profile, new RegExp(`^${prefix}__THINKING_EFFORT=${prefix.startsWith("DREAM_") ? "high" : "low"}$`, "m"));
     assert.match(profile, new RegExp(`^${prefix}__OVERRIDES__BASE_URL=http://host\\.docker\\.internal:11400/v1$`, "m"));
     assert.match(profile, new RegExp(`^${prefix}__OVERRIDES__API_KEY_ENV=LLM_VLLM_API_KEY$`, "m"));
   }

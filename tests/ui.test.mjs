@@ -9,7 +9,7 @@ import path from "node:path";
 import test, { after, before } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { createUiServer, pastOverviewInvocation, rejectUnsafeRequest, shareEnableInvocation, shareJoinInvocation, teammateInvocation } from "../scripts/ui.mjs";
+import { createUiServer, modelOption, pastOverviewInvocation, rejectUnsafeRequest, shareEnableInvocation, shareJoinInvocation, teammateInvocation } from "../scripts/ui.mjs";
 import { fixtureZip } from "./chatgpt-fixture.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -117,6 +117,19 @@ test("only a same-origin browser on this machine may drive the UI", async () => 
     assert.equal((await send(route)).status, 405, `${route} must not run on a GET`);
     assert.equal((await send(route, { method: "HEAD" })).status, 405, `${route} must not run on a HEAD`);
   }
+});
+
+test("the models chosen in the app reach server prepare and start as the CLI's own options", () => {
+  assert.deepEqual(modelOption({ profile: "personal" }), []);
+  assert.deepEqual(modelOption({ model: "gpt-6-luna" }), ["--model", "gpt-6-luna"]);
+  // Each role on its own, and only the parts that were sent.
+  assert.deepEqual(modelOption({ roles: {
+    deriver: { model: "claude-opus-5-5", effort: "low" },
+    dream: { effort: "high" },
+    dialectic: { model: "claude-opus-5-5" },
+  } }), ["--deriver-model", "claude-opus-5-5", "--deriver-effort", "low", "--dream-effort", "high", "--dialectic-model", "claude-opus-5-5"]);
+  // What could not be a model id or an effort never reaches the command line.
+  assert.deepEqual(modelOption({ model: "a b", roles: { deriver: { model: "--profile", effort: "none" }, dream: { model: "x\ny", effort: "xhigh; rm" }, other: { model: "gpt-6-luna" } } }), []);
 });
 
 test("the host and origin checks are decided by the request, not by the route", () => {

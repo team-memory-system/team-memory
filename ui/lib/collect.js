@@ -6,6 +6,7 @@
 // plan|apply` at the end, so a token typed here reaches those routes, and the count
 // of what the server already holds (`past overview`), and nothing else.
 import { get, post } from "./api.js";
+import { ROLES } from "./chat-roles.js";
 import { h, clear } from "./dom.js";
 import { number } from "./format.js";
 import { folderTreeTable, openAtFirst, treeRows } from "./folder-tree.js";
@@ -566,6 +567,9 @@ const WARNINGS = [
   [/(\S+) does not exist on this computer; conversations there are sent once it does/, (m) => `${shortPath(m[1])} 폴더가 지금은 없습니다. 생기면 그때부터 수집합니다.`],
   [/user peer id is required/, () => "peer 이름을 넣으세요."],
   // 새 팀 만들기 (team make): what Cloudflare refused, in the words of its token screen.
+  // 처음 설정 → 모델: a model the subscriptions logged in at 적용 do not offer.
+  [/The gateway does not offer the (\w+) model "([^"]+)"/, (m) => `구독 게이트웨이에 ${m[2]} 모델이 없습니다. 로그인한 구독 계정으로는 쓸 수 없는 모델입니다. 설정으로 돌아가기를 누르고 모델 단계에서 ${(ROLES.find(([key]) => key === m[1]) || [, m[1]])[1]} 모델을 다른 것으로 고르세요.`],
+  [/^Choose one of the models the gateway offers/, () => ""],
   [/The Cloudflare API token is needed/, () => "Cloudflare API token을 넣으세요."],
   [/The API token cannot see any zone/, () => "이 Cloudflare API token이 보는 zone이 없습니다. token에 쓸 zone의 Zone: Read와 DNS: Edit 권한을 주세요."],
   [/The API token cannot see a zone named (\S+);/, (m) => `이 Cloudflare API token은 ${m[1]} zone을 보지 못합니다. zone 이름과 token의 Zone: Read 권한을 확인하세요.`],

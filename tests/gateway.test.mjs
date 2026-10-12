@@ -9,7 +9,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  chooseChatModel,
+  chooseChatRoles,
   ensureGatewaySource,
   prepareGateway,
   gatewayConnectInfo,
@@ -20,8 +20,11 @@ import {
   gatewaySourceProbe,
   gatewayStatus,
   installedChatModel,
+  installedChatRoles,
   modelList,
   PREFERRED_CHAT_MODELS,
+  ROLE_EFFORTS,
+  THINKING_EFFORTS,
 } from "../scripts/gateway.mjs";
 
 const REPO = "https://github.com/team-memory-system/subscription-gateway";
@@ -548,78 +551,132 @@ if (subcommand === "install") {
   assert.deepEqual(failed, { ok: false, error: "unknown subcommand: open" });
 });
 
-test("the chat model is --model, else the installed one while offered, else the preference order", () => {
-  assert.deepEqual(PREFERRED_CHAT_MODELS, ["gpt-6-luna", "gpt-5.6-luna", "gpt-5.5", "claude-haiku-4-5", "claude-sonnet-5-5"]);
-  const offered = ["claude-sonnet-5-5", "gpt-5.5", "gpt-6-luna"];
-  const pick = (models, choice) => {
-    const result = chooseChatModel(models, choice);
-    return result.ok ? [result.model, result.source] : [result.ok, result.error];
-  };
+// One model and effort for each role, as chooseChatRoles returns it.
+const both = (model, effort = "low") => ({ model, effort });
+const pickRoles = (models, choice) => {
+  const result = chooseChatRoles(models, choice);
+  return result.ok
+    ? Object.fromEntries(Object.entries(result.roles).map(([role, { model, effort, source }]) => [role, [model, effort, source]]))
+    : [result.ok, result.error];
+};
 
-  // override: what was asked for, as long as the gateway offers it.
-  assert.deepEqual(pick(offered, { requested: "claude-sonnet-5-5", installed: "gpt-5.5" }), ["claude-sonnet-5-5", "override"]);
-  const refused = chooseChatModel(["gpt-6-luna"], { requested: "gpt-7" });
+test("each role's model is the one asked for, else the installed one while offered, else the preference order", () => {
+  assert.deepEqual(PREFERRED_CHAT_MODELS, ["claude-opus-5-5", "gpt-6-luna", "gpt-5.6-luna", "gpt-5.5", "claude-haiku-4-5", "claude-sonnet-5-5"]);
+  assert.deepEqual(THINKING_EFFORTS, ["low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(ROLE_EFFORTS, { deriver: "low", dream: "high", dialectic: "low" });
+  const offered = ["claude-opus-5-5", "claude-sonnet-5-5", "gpt-5.5", "gpt-6-luna"];
+
+  // default: Opus whenever it is offered, and the dream thinks longer.
+  assert.deepEqual(pickRoles(offered, {}), {
+    deriver: ["claude-opus-5-5", "low", "default"],
+    dream: ["claude-opus-5-5", "high", "default"],
+    dialectic: ["claude-opus-5-5", "low", "default"],
+  });
+  // Without Claude, the first ChatGPT model of the order.
+  assert.deepEqual(pickRoles(["gpt-5.5", "gpt-6-luna"], {}).dream, ["gpt-6-luna", "high", "default"]);
+  assert.deepEqual(pickRoles(["claude-sonnet-5-5", "gpt-5.6-luna", "gpt-5.5"], {}).deriver, ["gpt-5.6-luna", "low", "default"]);
+  assert.deepEqual(pickRoles(["claude-sonnet-5-5", "claude-haiku-4-5"], {}).deriver, ["claude-haiku-4-5", "low", "default"]);
+  assert.deepEqual(pickRoles(["local-chat-1", "local-chat-2"], {}).deriver, ["local-chat-1", "low", "default"]);
+
+  // override: each role on its own, as long as the gateway offers it.
+  const asked = pickRoles(offered, {
+    requested: { deriver: both("claude-sonnet-5-5"), dream: { effort: "xhigh" } },
+    installed: { deriver: both("gpt-5.5"), dream: both("gpt-6-luna", "low"), dialectic: both("gpt-5.5", "medium") },
+  });
+  assert.deepEqual(asked, {
+    deriver: ["claude-sonnet-5-5", "low", "override"],
+    // An effort alone changes the effort; the installed model stays.
+    dream: ["gpt-6-luna", "xhigh", "kept"],
+    dialectic: ["gpt-5.5", "medium", "kept"],
+  });
+  const refused = chooseChatRoles(["gpt-6-luna"], { requested: { dream: both("gpt-7") } });
   assert.equal(refused.ok, false);
-  assert.match(refused.error, /does not offer the model "gpt-7"\. It offers: gpt-6-luna/);
+  assert.equal(refused.error, 'The gateway does not offer the dream model "gpt-7". It offers: gpt-6-luna');
+  const badEffort = chooseChatRoles(["gpt-6-luna"], { requested: { dialectic: { effort: "minimal" } } });
+  assert.equal(badEffort.ok, false);
+  assert.match(badEffort.error, /The dialectic effort "minimal" is not one of low, medium, high, xhigh, max/);
 
-  // kept: the installed model wins over the preference order while it is offered.
-  assert.deepEqual(pick(offered, { installed: "claude-sonnet-5-5" }), ["claude-sonnet-5-5", "kept"]);
-
-  // default: nothing installed, or an installed model the gateway no longer offers.
-  assert.deepEqual(pick(offered, {}), ["gpt-6-luna", "default"]);
-  assert.deepEqual(pick(offered, { installed: "claude-opus-5-5" }), ["gpt-6-luna", "default"]);
-  assert.deepEqual(pick(["claude-sonnet-5-5", "gpt-5.6-luna", "gpt-5.5"]), ["gpt-5.6-luna", "default"]);
-  assert.deepEqual(pick(["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"]), ["claude-haiku-4-5", "default"]);
-  assert.deepEqual(pick(["local-chat-1", "local-chat-2"]), ["local-chat-1", "default"]);
+  // kept: what is installed wins over the order while it is offered, effort and all.
+  assert.deepEqual(pickRoles(offered, { installed: { deriver: both("gpt-6-luna"), dream: both("gpt-6-luna"), dialectic: both("gpt-6-luna") } }), {
+    deriver: ["gpt-6-luna", "low", "kept"],
+    dream: ["gpt-6-luna", "low", "kept"],
+    dialectic: ["gpt-6-luna", "low", "kept"],
+  });
+  // A model the gateway no longer offers goes back to the default; its effort stays,
+  // and one the gateway cannot take is the role's own.
+  assert.deepEqual(pickRoles(["gpt-6-luna"], { installed: { deriver: both("claude-opus-5-5", "medium"), dream: both("claude-opus-5-5", "minimal") } }), {
+    deriver: ["gpt-6-luna", "medium", "default"],
+    dream: ["gpt-6-luna", "high", "default"],
+    dialectic: ["gpt-6-luna", "low", "default"],
+  });
 
   // An id that could break a .env line is never offered, so it can never be chosen or kept.
   assert.deepEqual(modelList(["gpt-5.5\nAUTH_USE_AUTH=false", "gpt-5.5", "gpt-5.5", 7, "a b"]), ["gpt-5.5"]);
-  assert.equal(chooseChatModel(["x\ny", "gpt-5.5"], { requested: "x\ny" }).ok, false);
-  assert.deepEqual(pick(["x\ny", "gpt-5.5"], { installed: "x\ny" }), ["gpt-5.5", "default"]);
+  assert.equal(chooseChatRoles(["x\ny", "gpt-5.5"], { requested: { deriver: both("x\ny") } }).ok, false);
+  assert.deepEqual(pickRoles(["x\ny", "gpt-5.5"], { installed: { deriver: both("x\ny") } }).deriver, ["gpt-5.5", "low", "default"]);
 });
 
 test("the fallback skips embedding models, and with nothing left there is a reason instead of a model", () => {
-  const fallback = chooseChatModel(["qwen3-embedding-honcho-8192", "text-embedding-3-small", "local-chat-1"]);
-  assert.deepEqual([fallback.model, fallback.source], ["local-chat-1", "default"]);
+  const fallback = chooseChatRoles(["qwen3-embedding-honcho-8192", "text-embedding-3-small", "local-chat-1"]);
+  assert.deepEqual([fallback.roles.deriver.model, fallback.roles.deriver.source], ["local-chat-1", "default"]);
   // A preferred model still wins wherever it is listed.
-  assert.equal(chooseChatModel(["qwen3-embedding:8b", "claude-haiku-4-5"]).model, "claude-haiku-4-5");
+  assert.equal(chooseChatRoles(["qwen3-embedding:8b", "claude-haiku-4-5"]).roles.dream.model, "claude-haiku-4-5");
 
-  const onlyEmbeddings = chooseChatModel(["qwen3-embedding:8b", "nomic-embed-text"]);
+  const onlyEmbeddings = chooseChatRoles(["qwen3-embedding:8b", "nomic-embed-text"]);
   assert.equal(onlyEmbeddings.ok, false);
   assert.equal(onlyEmbeddings.noChatModel, true);
   assert.equal(onlyEmbeddings.reason, "The gateway offers no chat model, only embedding models (qwen3-embedding:8b, nomic-embed-text)");
 
-  const nothing = chooseChatModel([]);
+  const nothing = chooseChatRoles([]);
   assert.deepEqual([nothing.ok, nothing.noChatModel, nothing.reason], [false, true, "The gateway offers no model yet"]);
 
   // Only the fallback skips them: asking for one by name still works.
-  assert.deepEqual([chooseChatModel(["nomic-embed-text"], { requested: "nomic-embed-text" }).source], ["override"]);
+  const named = chooseChatRoles(["nomic-embed-text", "gpt-6-luna"], { requested: { deriver: both("nomic-embed-text") } });
+  assert.deepEqual([named.roles.deriver.source, named.roles.dream.model], ["override", "gpt-6-luna"]);
 });
 
-test("the installed chat model is read from the first chat setting that names one", () => {
+test("the installed chat model and each role's model and effort are read from the settings that name them", () => {
   assert.equal(installedChatModel({}), "");
   assert.equal(installedChatModel({ DERIVER_MODEL_CONFIG__MODEL: " gpt-5.5 ", SUMMARY_MODEL_CONFIG__MODEL: "gpt-6-luna" }), "gpt-5.5");
   assert.equal(installedChatModel({ EMBEDDING_MODEL_CONFIG__MODEL: "qwen3-embedding-honcho-8192", SUMMARY_MODEL_CONFIG__MODEL: "claude-haiku-4-5" }), "claude-haiku-4-5");
+
+  assert.deepEqual(installedChatRoles({}), { deriver: both("", ""), dream: both("", ""), dialectic: both("", "") });
+  assert.deepEqual(installedChatRoles({
+    SUMMARY_MODEL_CONFIG__MODEL: "gpt-6-luna",
+    SUMMARY_MODEL_CONFIG__THINKING_EFFORT: "medium",
+    DREAM_DEDUCTION_MODEL_CONFIG__MODEL: " claude-opus-5-5 ",
+    DREAM_DEDUCTION_MODEL_CONFIG__THINKING_EFFORT: "high",
+    DREAM_INDUCTION_MODEL_CONFIG__MODEL: "gpt-5.5",
+    DIALECTIC_LEVELS__low__MODEL_CONFIG__MODEL: "claude-opus-5-5",
+  }), {
+    deriver: both("gpt-6-luna", "medium"),
+    dream: both("claude-opus-5-5", "high"),
+    dialectic: both("claude-opus-5-5", ""),
+  });
 });
 
 test("the gateway's values point every chat model at the router through the Docker host alias", () => {
-  const values = gatewayEnvironment({ routerUrl: "http://127.0.0.1:11400/v1", apiKey: ROUTER_KEY, model: "gpt-6-luna" });
+  const roles = { deriver: both("claude-opus-5-5", "low"), dream: both("claude-opus-5-5", "high"), dialectic: both("gpt-6-luna", "medium") };
+  const values = gatewayEnvironment({ routerUrl: "http://127.0.0.1:11400/v1", apiKey: ROUTER_KEY, roles });
   assert.equal(values.LLM_VLLM_BASE_URL, "http://host.docker.internal:11400/v1");
   assert.equal(values.LLM_VLLM_API_KEY, ROUTER_KEY);
-  const prefixes = [
-    "DERIVER_MODEL_CONFIG",
-    "SUMMARY_MODEL_CONFIG",
-    "DREAM_DEDUCTION_MODEL_CONFIG",
-    "DREAM_INDUCTION_MODEL_CONFIG",
-    ...["minimal", "low", "medium", "high", "max"].map((level) => `DIALECTIC_LEVELS__${level}__MODEL_CONFIG`),
-  ];
-  for (const prefix of prefixes) {
-    assert.equal(values[`${prefix}__MODEL`], "gpt-6-luna");
-    assert.equal(values[`${prefix}__THINKING_EFFORT`], "low");
-    assert.equal(values[`${prefix}__OVERRIDES__BASE_URL`], "http://host.docker.internal:11400/v1");
-    assert.equal(values[`${prefix}__OVERRIDES__API_KEY_ENV`], "LLM_VLLM_API_KEY");
+  const prefixes = {
+    deriver: ["DERIVER_MODEL_CONFIG", "SUMMARY_MODEL_CONFIG"],
+    dream: ["DREAM_DEDUCTION_MODEL_CONFIG", "DREAM_INDUCTION_MODEL_CONFIG"],
+    dialectic: ["minimal", "low", "medium", "high", "max"].map((level) => `DIALECTIC_LEVELS__${level}__MODEL_CONFIG`),
+  };
+  for (const [role, names] of Object.entries(prefixes)) {
+    for (const prefix of names) {
+      assert.equal(values[`${prefix}__MODEL`], roles[role].model, prefix);
+      assert.equal(values[`${prefix}__THINKING_EFFORT`], roles[role].effort, prefix);
+      assert.equal(values[`${prefix}__TRANSPORT`], "openai", prefix);
+      assert.equal(values[`${prefix}__OVERRIDES__BASE_URL`], "http://host.docker.internal:11400/v1", prefix);
+      assert.equal(values[`${prefix}__OVERRIDES__API_KEY_ENV`], "LLM_VLLM_API_KEY", prefix);
+    }
   }
   assert.equal(Object.keys(values).some((key) => key.startsWith("EMBEDDING") || key.includes("OPENAI_COMPATIBLE")), false, "embeddings stay on Ollama");
-  assert.throws(() => gatewayEnvironment({ routerUrl: "http://127.0.0.1:11400/v1", apiKey: `${ROUTER_KEY}\nX=1`, model: "gpt-6-luna" }), /router key/);
-  assert.throws(() => gatewayEnvironment({ routerUrl: "http://example.test/v1", apiKey: ROUTER_KEY, model: "gpt-6-luna" }), /on this machine/);
+  assert.throws(() => gatewayEnvironment({ routerUrl: "http://127.0.0.1:11400/v1", apiKey: `${ROUTER_KEY}\nX=1`, roles }), /router key/);
+  assert.throws(() => gatewayEnvironment({ routerUrl: "http://example.test/v1", apiKey: ROUTER_KEY, roles }), /on this machine/);
+  assert.throws(() => gatewayEnvironment({ routerUrl: "http://127.0.0.1:11400/v1", apiKey: ROUTER_KEY, roles: { ...roles, dream: both("a\nb", "high") } }), /dream model id/);
+  assert.throws(() => gatewayEnvironment({ routerUrl: "http://127.0.0.1:11400/v1", apiKey: ROUTER_KEY, roles: { ...roles, dialectic: both("gpt-6-luna", "none") } }), /dialectic effort/);
 });

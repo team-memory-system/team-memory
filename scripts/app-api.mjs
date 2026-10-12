@@ -9,6 +9,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 
 import { collectAutomation, collectFolders, installPaths, loadConfig, readJson } from "./config.mjs";
+import { PREFERRED_CHAT_MODELS, ROLE_EFFORTS, SETUP_CHAT_MODELS, THINKING_EFFORTS } from "./gateway.mjs";
 import {
   ACCESS_REFUSED_KO,
   configuredAccess,
@@ -22,7 +23,7 @@ import { pastFlow } from "./past.mjs";
 import { rederiveFlow } from "./rederive.mjs";
 import { writePrivateFileAtomic } from "./private-file-permissions.mjs";
 import { publicUrl } from "./redact.mjs";
-import { installedServerModel, installedServerPorts } from "./server-manager.mjs";
+import { installedServerPorts, installedServerRoles } from "./server-manager.mjs";
 import { configuredTargets, countPending, sentSummary, targetSummary } from "./targets.mjs";
 import { readTeamState, registeredTeamServers, teamAccessPaths } from "./team-access.mjs";
 import { teamAuthPaths, teamLoginStatus } from "./team-auth.mjs";
@@ -92,7 +93,11 @@ export async function appContext(options = {}) {
     // 자동 실행 대화도 수집: whether it also takes conversations no person took part in.
     collectAutomation: collectAutomation(config),
     honcho: { url: publicUrl(endpoints.honchoUrl), hasToken: Boolean(endpoints.honchoToken), hasAccess: Boolean(endpoints.honchoAccess) },
-    localServer: endpoints.localServer ? { ...endpoints.localServer, chatModel: await installedServerModel() } : null,
+    // The model and effort the server on this computer gives deriver, dream and dialectic.
+    localServer: endpoints.localServer ? { ...endpoints.localServer, chatRoles: await installedServerRoles() } : null,
+    // What first setup's 모델 step offers before any login, and how a role left alone is
+    // filled: the first of `preferred` among the chosen subscriptions', at its role's effort.
+    chatModels: { setup: SETUP_CHAT_MODELS, preferred: PREFERRED_CHAT_MODELS, efforts: THINKING_EFFORTS, roleEfforts: ROLE_EFFORTS },
     dashboardUrl: endpoints.dashboardUrl,
     gatewayUiUrl: endpoints.gatewayUiUrl,
     // Teammates' memory this computer's Claude Code and Codex reach as team-* remote

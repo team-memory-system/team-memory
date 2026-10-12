@@ -1,12 +1,14 @@
 // 서버 → 모델: the models the memory server on this computer uses. The subscription
 // gateway turns ChatGPT (its codex backend) and Claude accounts into chat models:
 // the accounts are a list to log in, order and take out, 계정 더하기 opens a window
-// that logs one in (lib/login.js), and the model the memory server sorts and answers
-// with is chosen in its own window. The Ollama embedding model kept resident by the
-// host supervisor sits below; the gateway's own programs and models are folded away.
-// Everything about accounts is the gateway's own API.
+// that logs one in (lib/login.js), and the model and effort of each of the memory
+// server's three jobs (추출, 드림, 묻기) are chosen in their own window. The Ollama
+// embedding model kept resident by the host supervisor sits below; the gateway's own
+// programs and models are folded away. Everything about accounts is the gateway's own
+// API.
 import { cli, gateway, post } from "../lib/api.js";
 import { accountGroups, modelGroups, sharedGroups } from "../lib/accounts.js";
+import { defaultRoles, roleRows, ROLES, subscriptionName } from "../lib/chat-roles.js";
 import { h, clear, copyText } from "../lib/dom.js";
 import { ago, dayTime, number } from "../lib/format.js";
 import { block, confirmWindow, kv, list, listItem, modal, opt, opts } from "../lib/kit.js";
@@ -15,9 +17,8 @@ import { screenTabs } from "../lib/tabs.js";
 import { app, go, loadContext, refreshStatus } from "../lib/state.js";
 import { button, busy, errorNotice, notice, pageHead, segmented, spinner, statusTag, tag, toast } from "../lib/ui.js";
 
-// What a person subscribes to, by the gateway's backend.
-const SUBSCRIPTION = { codex: "ChatGPT", claude: "Claude" };
-const subscription = (backend) => SUBSCRIPTION[backend] || backend || "기타";
+const subscription = subscriptionName;
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
 function planLabel(plan) {
   return plan ? String(plan).replace(/^\w/, (letter) => letter.toUpperCase()) : "";
@@ -58,40 +59,56 @@ function openAddAccount(onDone, backend = null) {
   win.open();
 }
 
-/** 기억 서버가 쓰는 모델: one of the gateway's models, tried before it is chosen. */
+/**
+ * 기억 서버가 쓰는 모델: a model and effort for 추출, 드림 and 묻기, from the models the
+ * gateway offers, each model tried once before it is chosen.
+ */
 function openServerModel(report, onDone) {
-  const current = app.context?.localServer?.chatModel || "";
+  const current = app.context?.localServer?.chatRoles || {};
   const groups = modelGroups(report?.models?.models, report?.accounts);
-  let chosen = current || groups[0]?.models[0] || "";
-  const tried = h("span", { class: "muted", style: { fontSize: "12.5px" } });
-  const win = modal({ title: "기억 서버가 쓰는 모델", big: true, small: true });
+  const offered = groups.flatMap((group) => group.models);
+  const efforts = app.context?.chatModels?.efforts || EFFORTS;
+  const fallback = defaultRoles(offered, app.context?.chatModels);
+  // The rows change a copy. A model the gateway no longer offers starts from the
+  // default, which the select can show.
+  const values = Object.fromEntries(ROLES.map(([key]) => [key, {
+    model: offered.includes(current[key]?.model) ? current[key].model : fallback[key].model,
+    effort: efforts.includes(current[key]?.effort) ? current[key].effort : fallback[key].effort,
+  }]));
+  const rows = groups.length ? roleRows(values, { groups, efforts, current }) : null;
+  const win = modal({ title: "기억 서버가 쓰는 모델", big: true });
   win.body(
     h("p", { class: "lead", style: { marginTop: "4px" } }, "구독 게이트웨이에 로그인한 계정의 모델입니다."),
-    groups.length
-      ? h("div", { class: "opts pt-scroll" }, groups.flatMap((group) => group.models.map((id) => opt({
-        name: "server-model", value: id, checked: id === chosen,
-        title: h("span", { class: "mono" }, id),
-        sub: subscription(group.backend),
-        end: id === current ? tag("지금 씀") : null,
-        onChange: () => { chosen = id; clear(tried); },
-      }))))
-      : notice("warn", "고를 수 있는 모델이 없습니다. 구독 계정을 로그인하고 연결하세요."),
-    groups.length ? h("div", { class: "row2" }, button("써 보기", { kind: "small", onClick: (event) => busy(event.currentTarget, async () => {
-      clear(tried, "묻는 중…");
-      const result = await post("/api/gw/api/chat", { model: chosen, prompt: "한 문장으로 인사해 주세요." });
-      clear(tried, result.ok ? `${chosen} · 답함 · ${(Number(result.elapsedMs || 0) / 1000).toFixed(1)}초` : `${chosen} · 답하지 않음 ${result.error || ""}`);
-    }) }), tried) : null,
-    h("p", { class: "hint" }, "적용하면 기억 서버 설정을 고치고 다시 시작합니다. 1~2분 동안 기억을 쓰거나 찾을 수 없습니다."));
+    rows ? rows.root : notice("warn", "고를 수 있는 모델이 없습니다. 구독 계정을 로그인하고 연결하세요."),
+    rows ? h("div", { class: "row2" }, button("써 보기", { kind: "small", onClick: (event) => busy(event.currentTarget, async () => {
+      // Each model once, however many roles use it; its answer goes under each of them.
+      const asked = new Map();
+      await Promise.all(ROLES.map(async ([key]) => {
+        const { model } = values[key];
+        const line = rows.tried[key];
+        line.className = "tried";
+        line.textContent = "묻는 중…";
+        if (!asked.has(model)) asked.set(model, post("/api/gw/api/chat", { model, prompt: "한 문장으로 인사해 주세요." }).catch((error) => ({ ok: false, error: error.message })));
+        const result = await asked.get(model);
+        line.className = result.ok ? "tried ok" : "tried bad";
+        line.textContent = result.ok
+          ? `${model} · 답함 · ${(Number(result.elapsedMs || 0) / 1000).toFixed(1)}초`
+          : `${model} · 답하지 않음 ${result.error || ""}`;
+      }));
+    }) })) : null,
+    h("p", { class: "hint" }, "적용하면 기억 서버 설정을 고치고 다시 시작합니다. 1~2분 동안 기억을 쓰거나 찾을 수 없습니다."),
+    h("p", { class: "hint" }, "이미 쌓인 기억은 그대로입니다. 새 모델로 다시 만들려면 서버 → 기억 서버에서 처음부터 다시 정리를 누르세요."));
   win.foot(null, [
     button("취소", { kind: "quiet", onClick: () => win.close() }),
-    button("적용", { kind: "primary", disabled: !groups.length, onClick: (event) => busy(event.currentTarget, async () => {
-      if (chosen === current) { win.close(); return; }
-      await cli("/api/server/start", { profile: "personal", model: chosen });
+    button("적용", { kind: "primary", disabled: !rows, onClick: (event) => busy(event.currentTarget, async () => {
+      const changed = ROLES.filter(([key]) => values[key].model !== current[key]?.model || values[key].effort !== current[key]?.effort);
+      if (!changed.length) { win.close(); return; }
+      await cli("/api/server/start", { profile: "personal", roles: values });
       win.close("ok");
       await loadContext();
       onDone();
       refreshStatus();
-      toast(`${chosen}로 바꿨습니다.`, "ok");
+      toast(`${changed.map(([, name]) => name).join("·")} 설정을 바꿨습니다.`, "ok");
     }) }),
   ]);
   win.open();
@@ -237,10 +254,18 @@ export default {
 
     function serverModelBlock() {
       if (!app.context?.localServer) return null;
-      const current = app.context.localServer.chatModel || "";
-      const owner = modelGroups(report?.models?.models, report?.accounts).find((group) => group.models.includes(current));
+      const roles = app.context.localServer.chatRoles || {};
+      const groups = modelGroups(report?.models?.models, report?.accounts);
       return block({ title: "기억 서버가 쓰는 모델", actions: [button("수정", { onClick: () => openServerModel(report, draw) })] },
-        kv("정리·묻기 모델", current ? [h("span", { class: "mono" }, current), owner ? ` · ${subscription(owner.backend)}` : h("span", { class: "muted" }, " · 게이트웨이에 없음")] : "정해지지 않음"));
+        ROLES.map(([key, name]) => {
+          const { model = "", effort = "" } = roles[key] || {};
+          const owner = groups.find((group) => group.models.includes(model));
+          return kv(name, model ? [
+            h("span", { class: "mono" }, model),
+            owner ? ` · ${subscription(owner.backend)}` : h("span", { class: "muted" }, " · 게이트웨이에 없음"),
+            effort ? ` · effort ${effort}` : null,
+          ] : "정해지지 않음");
+        }));
     }
 
     // The Ollama embedding model. The supervisor keeping it resident starts at login

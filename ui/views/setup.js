@@ -13,6 +13,7 @@
 // were started, and keep going in after the window closes.
 import { gateway, get, post } from "../lib/api.js";
 import { backendAccounts } from "../lib/accounts.js";
+import { defaultRoles, roleRows, ROLES } from "../lib/chat-roles.js";
 import { h, clear, copyText } from "../lib/dom.js";
 import { number } from "../lib/format.js";
 import { counter, field, modal, opt, opts, progressList, stepper, todoList } from "../lib/kit.js";
@@ -43,7 +44,7 @@ const STARTS = [
   ["make", "새 팀 만들기", "팀 관리자가 처음 한 번 합니다.", "만들기"],
   ["solo", "혼자 쓰기", "로그인과 팀 없이 내 컴퓨터에서만 씁니다.", "시작"],
 ];
-const LABELS = { team: "팀 주소", make: "팀 만들기", login: "로그인", server: "서버", model: "모델", agents: "에이전트", past: "지난 대화", projects: "프로젝트", mates: "팀원" };
+const LABELS = { team: "팀 주소", make: "팀 만들기", login: "로그인", server: "서버", subscription: "구독", model: "모델", agents: "에이전트", past: "지난 대화", projects: "프로젝트", mates: "팀원" };
 const BACKENDS = [["codex", "ChatGPT"], ["claude", "Claude"]];
 const TODO_BELL = { title: "알림", text: "팀원이 승인하면 오른쪽 위 종에 알림이 뜹니다. 그 알림에서 연결을 누르세요." };
 // The Cloudflare API token 새 팀 만들기 needs, in the words of Cloudflare's token screen.
@@ -58,7 +59,7 @@ const NEXT_ACTIONS = {
 
 /** What a CLI answer that did not succeed says, in one line. */
 function problem(result, fallback) {
-  const lines = [...(result?.issues || []), result?.error, result?.next].filter(Boolean).map(explainWarning);
+  const lines = [...(result?.issues || []), result?.error, result?.next].filter(Boolean).map(explainWarning).filter(Boolean);
   return lines.join(" ") || fallback;
 }
 
@@ -89,6 +90,10 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     login: { phase: "idle", error: "", tab: null, reopen: null, logouts: null, switchFrom: null, sameAccount: false },
     draft: collectDraft(app.context),
     models: { chosen: new Set(["codex"]), counts: { codex: 1, claude: 1 } },
+    // 추출·드림·묻기, filled on the 모델 step; `picked` holds what the person changed
+    // ("deriver.model", "dream.effort"), the only parts sent: the server fills the rest.
+    roles: null,
+    picked: new Set(),
     mates: new Set(),
     tasks: [],
     applied: null,
@@ -124,7 +129,7 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     ...(state.path === "make" ? ["make"] : []),
     ...(inTeam() ? ["login"] : []),
     "server",
-    ...(needsModel() ? ["model"] : []),
+    ...(needsModel() ? ["subscription", "model"] : []),
     ...(state.draft.server === "none" ? [] : ["agents", "past", "projects"]),
     ...(inTeam() && state.path !== "make" ? ["mates"] : []),
   ];
@@ -381,7 +386,7 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     };
   }
 
-  function modelStep() {
+  function subscriptionStep() {
     const { chosen, counts } = state.models;
     const row = ([backend, title]) => {
       // The number of accounts belongs to a subscription that is ticked; kept in place
@@ -410,6 +415,50 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
         h("div", { class: "hint" }, "하나 이상 고르세요. 계정이 여럿이면 +를 누르세요.")),
       check: () => (chosen.size ? null : "구독을 하나 이상 고르세요."),
     };
+  }
+
+  /**
+   * 추출·드림·묻기 from the chosen subscriptions' models. Nothing is logged in yet, so
+   * the list is the one the app knows (chatModels.setup). A part the person changed
+   * stays while its model is still on offer; the rest follow the subscriptions, so
+   * choosing Claude makes them Opus.
+   */
+  function modelStep() {
+    const catalog = app.context?.chatModels?.setup || {};
+    const groups = BACKENDS.filter(([backend]) => state.models.chosen.has(backend)).map(([backend]) => ({ backend, models: catalog[backend] || [] }));
+    const offered = groups.flatMap((group) => group.models);
+    const fallback = defaultRoles(offered, app.context?.chatModels);
+    const before = state.roles;
+    state.roles = Object.fromEntries(ROLES.map(([key]) => {
+      if (state.picked.has(`${key}.model`) && !offered.includes(before?.[key]?.model)) state.picked.delete(`${key}.model`);
+      return [key, {
+        model: state.picked.has(`${key}.model`) ? before[key].model : fallback[key].model,
+        effort: state.picked.has(`${key}.effort`) ? before[key].effort : fallback[key].effort,
+      }];
+    }));
+    const rows = roleRows(state.roles, {
+      groups,
+      efforts: app.context?.chatModels?.efforts || ["low", "medium", "high", "xhigh", "max"],
+      onChange: (key, part) => state.picked.add(`${key}.${part}`),
+    });
+    return {
+      body: h("div", {},
+        h("h3", {}, "기억 서버가 쓸 모델을 고르세요"),
+        h("p", { class: "lead" }, "추출, 드림, 묻기마다 모델과 effort를 고르세요."),
+        rows.root,
+        h("div", { class: "hint" }, "나중에 서버 → 모델에서 바꿀 수 있습니다.")),
+      check: () => null,
+    };
+  }
+
+  /** The parts of 추출·드림·묻기 the person changed, for `server prepare`. */
+  function chosenRoles() {
+    const roles = {};
+    for (const [key] of ROLES) {
+      const parts = ["model", "effort"].filter((part) => state.picked.has(`${key}.${part}`));
+      if (parts.length) roles[key] = Object.fromEntries(parts.map((part) => [part, state.roles[key][part]]));
+    }
+    return roles;
   }
 
   /** The teammates who have a server: whose memory this computer's agents may ask, once they approve. */
@@ -453,6 +502,7 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     if (key === "team") return teamStep();
     if (key === "make") return makeStep();
     if (key === "login") return loginStep();
+    if (key === "subscription") return subscriptionStep();
     if (key === "model") return modelStep();
     if (key === "mates") return matesStep();
     if (key === "agents") return agentsStep(state.draft);
@@ -605,7 +655,8 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
   }
 
   async function prepare(task) {
-    const result = await post("/api/server/prepare", { profile: "personal" });
+    // With a login already in the gateway (set up again), this prepare writes the models too.
+    const result = await post("/api/server/prepare", { profile: "personal", roles: chosenRoles() });
     if (result.nextAction?.kind === "gateway-login") return;
     if (result.ok && result.ready !== false) return;
     const action = NEXT_ACTIONS[result.nextAction?.kind];
@@ -637,7 +688,7 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
   }
 
   async function prepareAgain() {
-    const result = await post("/api/server/prepare", { profile: "personal" });
+    const result = await post("/api/server/prepare", { profile: "personal", roles: chosenRoles() });
     if (result.nextAction?.kind === "gateway-login") throw new Error("구독 계정이 아직 연결되지 않았습니다. 위의 로그인을 마친 뒤 다시 시도를 누르세요.");
     if (!(result.ok && result.ready !== false)) throw new Error(NEXT_ACTIONS[result.nextAction?.kind] || problem(result, "준비하지 못했습니다."));
   }

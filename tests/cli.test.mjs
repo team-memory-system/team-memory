@@ -35,6 +35,23 @@ test("server verify CLI advertises opt-in completion and routes the profile", as
   );
 });
 
+test("server prepare and start take a model and an effort for each role, and refuse anything else before doing anything", async () => {
+  const help = await runCli(["help"], {});
+  assert.ok(help.usage.some((line) => line.startsWith("server prepare [--profile portable|personal] [--model <id>] [--<role>-model <id>] [--<role>-effort low|medium|high|xhigh|max] (role: deriver, dream, dialectic)")));
+  const refused = async (args, pattern) => {
+    await assert.rejects(runCli(args, {}), (error) => {
+      const output = JSON.parse(String(error.stdout || "{}"));
+      assert.equal(output.ok, false);
+      assert.match(output.error, pattern);
+      return true;
+    });
+  };
+  await refused(["server", "prepare", "--profile", "personal", "--dream-effort", "minimal"], /--dream-effort takes one of low, medium, high, xhigh, max and applies to --profile personal only/);
+  await refused(["server", "start", "--profile", "personal", "--dialectic-effort"], /--dialectic-effort takes one of/);
+  await refused(["server", "prepare", "--profile", "portable", "--deriver-model", "gpt-6-luna"], /--deriver-model takes a model id and applies to --profile personal only/);
+  await refused(["server", "prepare", "--profile", "personal", "--deriver-model"], /--deriver-model takes a model id/);
+});
+
 test("setup apply installs an isolated runtime and preserves unrelated host hooks", async (t) => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "honcho-agent-bridge-cli-"));
   t.after(() => fsp.rm(root, { recursive: true, force: true }));

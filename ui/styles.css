@@ -1235,6 +1235,33 @@ dialog.modal::backdrop { background: rgb(36 33 28 / 42%); }
 .cnt-l { color: var(--ink-3); font-size: 12.5px; }
 .cnt-g { display: inline-flex; align-items: center; gap: 8px; }
 
+/* 추출·드림·묻기 (lib/chat-roles.js): a role, its model, its effort on one line; in a
+   narrower box the effort goes under the model, and on a phone everything stacks. */
+.roles { overflow: hidden; border: 1px solid var(--line); border-radius: 10px; container-type: inline-size; }
+.role { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; align-items: center; gap: 8px 14px; padding: 12px 14px; border-bottom: 1px solid var(--line-soft); }
+.role:last-child { border-bottom: 0; }
+.role .rn { min-width: 0; }
+.role .rn b { display: block; font-weight: 600; }
+.role .rn span { display: block; color: var(--ink-3); font: 12px var(--mono); }
+.role .pick { min-width: 0; }
+.role .pick .select { width: 100%; font-family: var(--mono); font-size: 12.5px; }
+.role .ef { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.role .ef > span { color: var(--ink-3); font: 12px var(--mono); }
+.role .ef .segmented button { padding: 0 9px; font-family: var(--mono); font-size: 12.5px; }
+.role .tried { grid-column: 2 / -1; margin-top: -2px; color: var(--ink-3); font-size: 12.5px; }
+.role .tried:empty { display: none; }
+.role .tried.ok { color: var(--ok); }
+.role .tried.bad { color: var(--bad); }
+@container (max-width: 600px) {
+  .role { grid-template-columns: 96px minmax(0, 1fr); }
+  .role .ef, .role .tried { grid-column: 2; }
+}
+@container (max-width: 400px) {
+  .role { grid-template-columns: minmax(0, 1fr); }
+  .role .ef, .role .tried { grid-column: 1; }
+  .role .ef .segmented button { padding: 0 7px; }
+}
+
 /* Folders to tick, one column per server when several take them. */
 .pt { overflow: hidden; border: 1px solid var(--line); border-radius: 10px; }
 .pr { display: grid; grid-template-columns: 24px minmax(0, 1fr) 84px; align-items: center; gap: 10px; padding: 9px 14px; border-bottom: 1px solid var(--line-soft); }

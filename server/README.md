@@ -83,8 +83,9 @@ Jev could not judge. `.env.example` describes each.
 `env.personal.example` is the personal profile's template. Every chat model
 points at the subscription gateway's router (`host.docker.internal:11400`) and
 embeddings at Ollama; secret-looking values are always blank. `server prepare
---profile personal` writes the router address, key and chat model that the
-installed gateway reports over those defaults. `gateway-source.json` names the
+--profile personal` writes the router address and key that the installed
+gateway reports, and the model and effort of each role (deriver, dream,
+dialectic), over those defaults. `gateway-source.json` names the
 `team-memory-system/subscription-gateway` repository and a full commit hash, so a
 plugin release always installs the same gateway revision. The gateway is fetched
 into the app directory's `runtime/subscription-gateway`, not here: it runs as its

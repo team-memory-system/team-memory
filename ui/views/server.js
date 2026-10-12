@@ -4,6 +4,7 @@
 // is a deployment, so every button that does that says so first. Sharing it is the
 // 공유 tab (share.js), and the team it opens to is 관리자 (admin.js).
 import { cli, gateway, post } from "../lib/api.js";
+import { ROLES } from "../lib/chat-roles.js";
 import { h, clear } from "../lib/dom.js";
 import { number } from "../lib/format.js";
 import { kv } from "../lib/kit.js";
@@ -87,6 +88,13 @@ const NEXT_ACTIONS = {
   "docker-install-approval": ["관리자 허락이 필요합니다.", "Docker Desktop을 설치하려면 Windows가 묻는 창에서 예를 눌러야 합니다. 이어서 준비를 다시 누르세요."],
 };
 
+/** The models a ready prepare wrote: one name when all three jobs use it, else each job's. */
+function modelsText(roles) {
+  const models = ROLES.map(([key]) => roles?.[key]?.model).filter(Boolean);
+  if (models.length < ROLES.length) return "";
+  return new Set(models).size === 1 ? models[0] : ROLES.map(([key, name]) => `${name} ${roles[key].model}`).join(", ");
+}
+
 function prepareOutcome(result) {
   const action = NEXT_ACTIONS[result.nextAction?.kind];
   if (action) return notice("warn", h("b", {}, action[0]), h("div", {}, action[1]));
@@ -97,7 +105,7 @@ function prepareOutcome(result) {
   }
   if (result.issues?.length) return notice("bad", h("b", {}, "준비하지 못했습니다."), h("ul", {}, result.issues.map((issue) => h("li", {}, issue))), result.next ? h("div", {}, result.next) : null);
   if (result.ok && result.ready !== false) {
-    return notice(result.share?.profileDropped ? "warn" : "ok", h("b", {}, "준비했습니다."), result.chatModel ? ` 모델은 ${result.chatModel}입니다.` : "", " 이제 시작할 수 있습니다.",
+    return notice(result.share?.profileDropped ? "warn" : "ok", h("b", {}, "준비했습니다."), modelsText(result.chatRoles) ? ` 모델은 ${modelsText(result.chatRoles)}입니다.` : "", " 이제 시작할 수 있습니다.",
       result.share?.profileDropped ? h("div", {}, "예전 판에서 켠 공유는 꺼 두었습니다. 서버 → 공유에서 다시 켜세요.") : null);
   }
   return notice("warn", h("b", {}, "끝나지 않았습니다."), result.next || result.error || "");

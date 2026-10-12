@@ -10,7 +10,8 @@ import { promisify } from "node:util";
 import { installPaths, loadConfig } from "./config.mjs";
 import { acquireFileLock, releaseFileLock } from "./file-lock.mjs";
 import {
-  chooseChatModel,
+  CHAT_ROLES,
+  chooseChatRoles,
   DEFAULT_GATEWAY_ROUTER_URL,
   DEFAULT_GATEWAY_UI_URL,
   ensureGatewaySource,
@@ -20,6 +21,7 @@ import {
   gatewayLoginAction,
   gatewaySourceProbe,
   installedChatModel,
+  installedChatRoles,
   loopbackUrl,
   prepareGateway,
 } from "./gateway.mjs";
@@ -284,12 +286,21 @@ export async function installedServerPorts(directory = installedServerDir()) {
   };
 }
 
-/** The chat model the installed server's .env points every chat setting at. */
+/** The chat model the installed server's .env gives its deriver. */
 export async function installedServerModel(directory = installedServerDir()) {
   try {
     return installedChatModel(await readEnvironmentFile(path.join(directory, ".env"))) || "";
   } catch {
     return "";
+  }
+}
+
+/** The model and effort the installed server's .env gives each role, or null without one. */
+export async function installedServerRoles(directory = installedServerDir()) {
+  try {
+    return installedChatRoles(await readEnvironmentFile(path.join(directory, ".env")));
+  } catch {
+    return null;
   }
 }
 
@@ -585,7 +596,7 @@ function personalOperations({ honchoSource, gateway, bundle, installDirectory, e
     {
       type: "write-environment",
       target: path.join(installDirectory, ".env"),
-      note: "the router address, its key and the chosen chat model for every chat setting; embeddings stay on Ollama",
+      note: "the router address, its key and the chosen model and effort of deriver, dream and dialectic; embeddings stay on Ollama",
     },
     { type: "install-bundle", source: bundle.directory, destination: installDirectory },
     {
@@ -1107,7 +1118,7 @@ async function recoverPersonalUpdate({
  *
  * `values` carries the router key; it goes to initializeEnvironment and nowhere else.
  */
-async function connectGateway({ plan, installed, model, sourceFetcher, runner, env, firstSetup }) {
+async function connectGateway({ plan, installed, model, roles, sourceFetcher, runner, env, firstSetup }) {
   const directory = gatewayDirectory(installed);
   const stopped = { ok: false, ready: false, mode: "local-docker", profile: "personal" };
   const prepared = await prepareGateway({ pinDirectory: plan.bundle.directory, directory, sourceFetcher, runner, env });
@@ -1140,10 +1151,15 @@ async function connectGateway({ plan, installed, model, sourceFetcher, runner, e
       stop: { ...stopped, ok: true, gateway: { ...report, reason: connection.reason }, nextAction, next: nextAction.message },
     };
   }
-  // The model the installed .env already uses is kept while the gateway offers it,
-  // so `server start`, which prepares again, does not undo an earlier --model.
+  // What the installed .env already gives each role is kept while the gateway offers
+  // it, so `server start`, which prepares again, does not undo an earlier choice.
+  // --model asks for one model for every role; a role's own option wins over it.
   const previous = await readEnvironmentFile(path.join(installed, ".env"));
-  const choice = chooseChatModel(connection.models, { requested: model, installed: installedChatModel(previous) });
+  const requested = Object.fromEntries(CHAT_ROLES.map((role) => [role, {
+    model: roles?.[role]?.model || model || "",
+    effort: roles?.[role]?.effort || "",
+  }]));
+  const choice = chooseChatRoles(connection.models, { requested, installed: installedChatRoles(previous) });
   if (choice.noChatModel) {
     // Ready, but with nothing that can chat: the fix is the same login step.
     const nextAction = gatewayLoginAction(report.uiUrl, "run server prepare --profile personal again", choice.reason, { firstSetup });
@@ -1157,14 +1173,13 @@ async function connectGateway({ plan, installed, model, sourceFetcher, runner, e
         ...stopped,
         gateway: report,
         issues: [choice.error],
-        next: "Choose one of the models the gateway offers with --model, or leave --model out",
+        next: "Choose one of the models the gateway offers (--model, --deriver-model, --dream-model, --dialectic-model) and an effort of low, medium, high, xhigh or max, or leave them out",
       },
     };
   }
   return {
-    values: gatewayEnvironment({ routerUrl: connection.baseUrl, apiKey: connection.apiKey, model: choice.model }),
-    model: choice.model,
-    modelSource: choice.source,
+    values: gatewayEnvironment({ routerUrl: connection.baseUrl, apiKey: connection.apiKey, roles: choice.roles }),
+    roles: choice.roles,
     report: {
       ...report,
       routerUrl: connection.baseUrl,
@@ -1186,6 +1201,7 @@ async function serverPrepareUnlocked({
   gatewaySourceFetcher = ensureGatewaySource,
   gatewayRunner,
   model = "",
+  roles = {},
   dockerStarter = ensureDockerRunning,
   portChooser = chooseServerPorts,
   arch = os.arch(),
@@ -1320,6 +1336,7 @@ async function serverPrepareUnlocked({
     plan,
     installed,
     model,
+    roles,
     sourceFetcher: gatewaySourceFetcher,
     runner: gatewayRunner,
     env,
@@ -1499,8 +1516,7 @@ async function serverPrepareUnlocked({
     },
     environment,
     missingSecretFields,
-    chatModel: gateway.model,
-    chatModelSource: gateway.modelSource,
+    chatRoles: gateway.roles,
     gateway: gateway.report,
     ...(committed.issues.length ? { issues: committed.issues, retainedPaths: committed.retainedPaths } : {}),
     next: committed.ok
@@ -1632,12 +1648,13 @@ async function serverStartUnlocked({
   gatewaySourceFetcher,
   gatewayRunner,
   model,
+  roles,
   shareOptions = {},
 } = {}) {
   requireServerProfile(profile);
   const installed = path.resolve(serverDirectory || installedServerDir());
-  // Start prepares again. The installed chat model is kept; a --model given here
-  // replaces it.
+  // Start prepares again. What the installed .env gives each role is kept; a model
+  // or effort given here replaces it.
   const prepared = preparedServer || await serverPrepareUnlocked({
     profile,
     hostRuntime,
@@ -1647,6 +1664,7 @@ async function serverStartUnlocked({
     gatewaySourceFetcher,
     gatewayRunner,
     model,
+    roles,
     shareOptions,
   });
   if (!prepared.ok || !prepared.ready) return prepared;

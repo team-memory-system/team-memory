@@ -66,7 +66,7 @@ import {
   teammatesList,
   teammateUnshare,
 } from "./team-access.mjs";
-import { gatewayDirectory, gatewayOpen } from "./gateway.mjs";
+import { CHAT_ROLES, gatewayDirectory, gatewayOpen, THINKING_EFFORTS } from "./gateway.mjs";
 import { hostPluginPlan, installHostPlugins } from "./host-plugins.mjs";
 import { getProvider } from "./providers/index.mjs";
 import {
@@ -1700,8 +1700,8 @@ function usage() {
       "detect",
       "prereqs [--features server,sync]",
       "server plan [--profile portable|personal]",
-      "server prepare [--profile portable|personal] [--model <id>]",
-      "server start [--profile portable|personal] [--no-build] [--model <id>]",
+      "server prepare [--profile portable|personal] [--model <id>] [--<role>-model <id>] [--<role>-effort low|medium|high|xhigh|max] (role: deriver, dream, dialectic)",
+      "server start [--profile portable|personal] [--no-build] [--model <id>] [--<role>-model <id>] [--<role>-effort low|medium|high|xhigh|max]",
       "server status [--profile portable|personal]",
       "server stop [--profile portable|personal]",
       "server verify [--profile personal] [--live-completion]",
@@ -1944,18 +1944,33 @@ async function main() {
     if (subcommand === "share") return serverShare(args);
     const options = parseOptions(args);
     const profile = optionString(options.profile, "portable");
-    // The chat model is chosen from what the gateway offers, so it only means
+    // The chat models are chosen from what the gateway offers, so they only mean
     // something for the personal profile.
     if (options.model !== undefined && (typeof options.model !== "string" || profile !== "personal")) {
       return { ok: false, error: "--model takes a model id and applies to --profile personal only" };
     }
     const model = optionString(options.model, "");
+    const roles = {};
+    for (const role of CHAT_ROLES) {
+      const roleModel = options[`${role}Model`];
+      const roleEffort = options[`${role}Effort`];
+      if (roleModel !== undefined && (typeof roleModel !== "string" || profile !== "personal")) {
+        return { ok: false, error: `--${role}-model takes a model id and applies to --profile personal only` };
+      }
+      if (roleEffort !== undefined && (!THINKING_EFFORTS.includes(roleEffort) || profile !== "personal")) {
+        return { ok: false, error: `--${role}-effort takes one of ${THINKING_EFFORTS.join(", ")} and applies to --profile personal only` };
+      }
+      if (roleModel !== undefined || roleEffort !== undefined) {
+        roles[role] = { model: optionString(roleModel, ""), effort: optionString(roleEffort, "") };
+      }
+    }
     if (subcommand === "plan") return serverPlan({ profile });
-    if (subcommand === "prepare") return serverPrepare({ profile, model });
+    if (subcommand === "prepare") return serverPrepare({ profile, model, roles });
     if (subcommand === "start") return serverStart({
       profile,
       build: options.noBuild !== true,
       model,
+      roles,
     });
     if (subcommand === "status") return serverStatus({ profile: optionString(options.profile, "portable") });
     if (subcommand === "stop") return serverStop({ profile: optionString(options.profile, "portable") });

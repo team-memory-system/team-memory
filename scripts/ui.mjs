@@ -20,6 +20,7 @@ import { appContext, appFlow, localTools, relayDashboard, relayGateway, relayHon
 import { loadConfig, userHome } from "./config.mjs";
 import { listFolders } from "./folders.mjs";
 import { ACCESS_ENV } from "./honcho-access.mjs";
+import { CHAT_ROLES, THINKING_EFFORTS } from "./gateway.mjs";
 import { FEATURES, parseFeatures } from "./prereqs.mjs";
 import { securePrivateFile } from "./private-file-permissions.mjs";
 import { addChatGpt } from "./past.mjs";
@@ -577,10 +578,24 @@ function profileOption(body, fallback = "portable") {
   return ["--profile", profile];
 }
 
-/** The chat model Honcho is set to use, as the gateway names it. */
-function modelOption(body) {
-  const model = typeof body?.model === "string" ? body.model.trim() : "";
-  return /^[\w.:/-]{1,120}$/.test(model) ? ["--model", model] : [];
+/**
+ * The chat models Honcho is set to use, as the gateway names them: `model` for every
+ * role, and `roles` ({ deriver: { model, effort }, ... }) for each one, any part
+ * left out.
+ */
+export function modelOption(body) {
+  const id = (value) => {
+    const model = typeof value === "string" ? value.trim() : "";
+    // Never one that starts with a dash, which the CLI would read as an option.
+    return /^[A-Za-z0-9][\w.:/+-]{0,119}$/.test(model) ? model : "";
+  };
+  const args = id(body?.model) ? ["--model", id(body.model)] : [];
+  for (const role of CHAT_ROLES) {
+    const chosen = body?.roles?.[role];
+    if (id(chosen?.model)) args.push(`--${role}-model`, id(chosen.model));
+    if (THINKING_EFFORTS.includes(chosen?.effort)) args.push(`--${role}-effort`, chosen.effort);
+  }
+  return args;
 }
 
 /**
