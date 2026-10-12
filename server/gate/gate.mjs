@@ -14,7 +14,7 @@
 // What a person may do is in HONCHO_GATE_STATE_DIR (/gate-state):
 //   - access.json, written by the owner's app and read again when it changes
 //     (looked at once a second at most): the owners, the teammates who may `chat`
-//     (with the projects opened to them) and those who collect into this server.
+//     (with the folders opened to them) and those who collect into this server.
 //     Missing or unreadable, it lets nobody in but the gate token.
 //   - devices.json, written by the gate alone. A computer that writes here
 //     registers once and then sends `X-Team-Memory-Device: <id>.<secret>`; only the
@@ -28,8 +28,8 @@
 //   /v3/*                             a person's registered device: an owner's
 //                                     requests as sent; a collector's only when they
 //                                     write or read back their own conversations
-//   /mcp, /mcp/*                      an owner (every project) or a person with chat
-//                                     (the projects opened to them), to the MCP
+//   /mcp, /mcp/*                      an owner (all of it) or a person with chat
+//                                     (the folders opened to them), to the MCP
 //                                     bridge (HONCHO_GATE_MCP_UPSTREAM) with
 //                                     HONCHO_TEAM_MCP_TOKEN, the verified email and
 //                                     the scope headers. Until upstream, team domain,
@@ -85,7 +85,13 @@ const DEVICE_HEADER = "x-team-memory-device";
 const DEVICE_KEY = /^(d-[0-9a-f]{16})\.([A-Za-z0-9_-]{43})$/;
 const DEVICE_ID = /^d-[0-9a-f]{16}$/;
 const DEVICE_PATH = /^\/team-memory\/devices\/(d-[0-9a-f]{16})$/;
-const SCOPE_ID = /^p-[0-9a-f]{12}$/;
+// An opened folder: the path conversations started in, as a collector recorded it.
+const MAX_FOLDERS = 100;
+const MAX_FOLDER_LENGTH = 1024;
+// The folders go to the MCP bridge in one header. Its HTTP server reads a request's
+// headers whole up to 16 KiB, so the list stays well under that; the app keeps a
+// teammate's list short by opening a folder above many instead of each of them.
+const MAX_FOLDERS_HEADER = 12_000;
 // Honcho's own rule for workspace and session names, so none needs escaping in a path.
 const RESOURCE_NAME = /^[A-Za-z0-9_-]+$/;
 const MAX_SESSION_ID_LENGTH = 512;
@@ -354,12 +360,15 @@ function policyFrom(raw) {
     if (!isObject(entry)) continue;
     let chat = null;
     if (isObject(entry.chat)) {
-      // Each project goes to the MCP bridge as a scope, so only well-formed ones.
-      const projects = Array.isArray(entry.chat.projects) ? entry.chat.projects : [];
+      // The folders go to the MCP bridge as they are, so only well-formed ones. A
+      // grant from before folders (`projects`) opens nothing until it is opened again.
+      const folders = Array.isArray(entry.chat.folders) ? entry.chat.folders : [];
       chat = {
-        projects: projects
-          .filter((project) => isObject(project) && typeof project.id === "string" && SCOPE_ID.test(project.id) && typeof project.name === "string")
-          .map(({ id, name }) => ({ id, name })),
+        folders: folders
+          .filter((folder) => isObject(folder) && typeof folder.path === "string" && folder.path !== ""
+            && folder.path.length <= MAX_FOLDER_LENGTH && !/[\u0000-\u001f\u007f]/.test(folder.path) && typeof folder.subfolders === "boolean")
+          .slice(0, MAX_FOLDERS)
+          .map(({ path: folder, subfolders }) => ({ path: folder, subfolders })),
       };
     }
     let collect = null;
@@ -613,7 +622,7 @@ const COLLECT_REFUSED = Object.freeze({ error: "forbidden", detail: "This server
 // The three requests a collector may send, to POST: a session, its messages, and
 // reading those back. Raw segments only: an escaped one is never one of these.
 const COLLECT_PATH = /^\/v3\/workspaces\/([A-Za-z0-9_-]+)\/sessions(?:\/([A-Za-z0-9_-]+)\/messages(\/list)?)?$/;
-const SESSION_KEYS = ["id", "metadata", "peers", "configuration", "scopes"];
+const SESSION_KEYS = ["id", "metadata", "peers", "configuration"];
 const MESSAGE_KEYS = ["peer_id", "content", "metadata", "created_at", "configuration"];
 const LIST_QUERY = ["page", "size", "reverse"];
 
@@ -693,9 +702,6 @@ function collectBody(kind, raw, roles, prefix) {
   if (body.peers != null && (!isObject(body.peers) || !Object.keys(body.peers).every((peer) => peerAllowed(peer, roles)))) {
     return { reason: "collect_peer" };
   }
-  if (body.scopes != null && (!Array.isArray(body.scopes) || !body.scopes.every((scope) => typeof scope === "string" && SCOPE_ID.test(scope)))) {
-    return { reason: "collect_scope" };
-  }
   body.id = own;
   return { text: JSON.stringify(body) };
 }
@@ -726,8 +732,8 @@ async function collect(req, res, email, roles, deviceId) {
 
 // ------------------------------------------------------------------------ doors
 
-/** The projects opened to a chat person, as the MCP bridge reads them: base64url of the JSON list. */
-const allowedScopes = (projects) => Buffer.from(JSON.stringify(projects)).toString("base64url");
+/** The folders opened to a chat person, as the MCP bridge reads them: base64url of the JSON list. */
+const allowedFolders = (folders) => Buffer.from(JSON.stringify(folders)).toString("base64url");
 
 const LET_IN_NOWHERE = Object.freeze({ error: "forbidden", detail: "This server's owner has not let you in." });
 
@@ -768,7 +774,7 @@ async function handle(req, res) {
       return reply(res, 200, {
         email,
         owner: roles.owner,
-        chat: roles.chat ? { projects: roles.chat.projects } : null,
+        chat: roles.chat ? { folders: roles.chat.folders } : null,
         collect: Boolean(roles.collect),
         device: device.id ? { id: device.id, name: device.device.name } : null,
       });
@@ -798,8 +804,16 @@ async function handle(req, res) {
     case "mcp": {
       let scope;
       if (roles.owner) scope = { "x-honcho-scope-mode": "all" };
-      else if (roles.chat) scope = { "x-honcho-scope-mode": "projects", "x-honcho-allowed-scopes": allowedScopes(roles.chat.projects) };
-      else return refuse(res, route, 403, { error: "forbidden", detail: "This server's owner has not opened its memory to you." }, "not_allowed");
+      else if (roles.chat) {
+        const folders = allowedFolders(roles.chat.folders);
+        if (folders.length > MAX_FOLDERS_HEADER) {
+          return refuse(res, route, 403, {
+            error: "forbidden",
+            detail: "This server's owner opened too many separate folders to you. Ask them to open a folder that holds them instead.",
+          }, "too_many_folders");
+        }
+        scope = { "x-honcho-scope-mode": "folders", "x-honcho-allowed-folders": folders };
+      } else return refuse(res, route, 403, { error: "forbidden", detail: "This server's owner has not opened its memory to you." }, "not_allowed");
       return forward(req, res, MCP_UPSTREAM, forwardHeaders(req.headers, {
         host: MCP_UPSTREAM.host,
         authorization: `Bearer ${TEAM_MCP_TOKEN}`,

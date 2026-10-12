@@ -207,11 +207,14 @@ question and gets an answer, without reading the underlying messages.
   `scripts/honcho-access.mjs`, and goes through `fetchHoncho`, which follows
   redirects only within that origin so an Access login redirect is seen, not
   followed.
-- **Everyone on the team list can ask about the whole memory.** A shared server's
-  `chat` is pinned to the owner's workspace and peer, and the bridge refuses any
-  other `workspace_id`, peer or filter, but nothing yet limits a question to a
-  project: whoever passes the Access login can ask about anything that peer's
-  memory holds.
+- **A teammate's answer draws on less than the owner's.** A shared server's `chat`
+  is pinned to the owner's workspace and peer, and the bridge refuses any other
+  `workspace_id`, peer or filter. Behind the gate, a teammate's `chat` is one
+  Honcho call confined to the sessions of the folders opened to them
+  (`filters.session_id`): Honcho then reads only the conclusions drawn in those
+  sessions (`explicit`), none of the dreamer's, and no peer card (honcho-selfhost
+  patch 0002). More than 1000 such sessions is refused; the owner opens fewer
+  folders.
 - **An install shared under 0.3.28 or before stops sharing on update.** Its tunnel
   ran on the host. `server prepare` and `server start` remove that autostart
   (moving its token into the `.env` when the `.env` has none), and drop `share` from
@@ -555,8 +558,6 @@ in the order they started, beside the one in use:
   the deriver marks a refused message and goes on to the next. Work that failed at
   the end is given back three times; if it is still refused after that, it is waited
   out the same way, and only messages the model cannot take are left out.
-- It opens the new memory to the same projects as the one in use (the scopes and
-  their sessions, which Honcho then copies into each scope).
 - Then it switches: the `.env` gets `DB_SCHEMA` and `NAMESPACE` of the new schema, the
   api and deriver restart over it (about a minute without memory search; the hooks
   keep their turns and send them after), the second pair is removed, and what reached
@@ -765,22 +766,20 @@ do what on it.
 - **Each server's gate** (`server/gate/gate.mjs`) reads `runtime/gate/access.json`,
   which the server's owner writes (`scripts/gate-access.mjs`): the owners (every
   computer of theirs may register and write), the people chat is opened to with the
-  projects opened to each, the people who may collect into it, and the computers cut
+  folders opened to each, the people who may collect into it, and the computers cut
   off. It writes `runtime/gate/devices.json` itself: each registered computer, its
   email, its name, a hash of its key and when it was last seen.
-- **Projects.** The collector tags each session with its project (`project_id`,
-  `project_name` in the session's metadata): `p-` and 12 hex of a hash of the
-  repository's origin remote, so a repository has the same id on every computer that
-  cloned it, or of the folder's name without one. When the owner opens a project to
-  someone, `team scopes` (`scripts/scope-sync.mjs`) puts its sessions into the
-  Honcho scope of that id, and keeps adding new ones. A session sent before the tag
-  goes to one project only, by the folder it ran in: on the server's computer, the
-  project the app's project list puts that folder in (its repository, else the
-  folder that holds one-off folders, else the folder itself), never one in a folder
-  above it, so opening `~` gives only what ran in the home folder itself; from
-  another computer, the project of that folder's name. A teammate's `chat` then
-  answers from one scope at a time (the MCP bridge sends `scope`), never from the
-  owner's whole memory.
+- **Folders.** Each session keeps the folder it started in (`cwd` in its metadata,
+  as the collector recorded it on the computer it ran on). The owner opens folders
+  to a teammate, each a path and whether the folders inside it open too, those made
+  later included (`subfolders`). When the teammate's `chat` comes, the MCP bridge
+  lists the workspace's sessions (kept a minute, so a conversation started now is
+  open within one), takes those whose folder is open, and asks Honcho once with
+  them as `filters.session_id`; it is never answered from the owner's whole memory.
+  Nothing is filled in ahead of time. The collector also tags each session with its
+  project (`project_id`, `project_name`: `p-` and 12 hex of a hash of the
+  repository's origin remote, or of the folder's name without one), which nothing
+  reads yet.
 
 ### Making a team (the admin, once) / 새 팀 만들기
 
@@ -861,21 +860,26 @@ Everything one member opens to another starts with a request, kept by the hub, a
 everything the owner has to answer, or the asker has to press, goes to the bell.
 
 - **chat.** The 팀 page's 팀원 기억 lists the members; chat 요청 goes to the owner.
-  Their 승인 opens a window with the projects this server holds conversations of
-  (`POST /api/team/projects`, `serverProjects` in `scripts/scope-sync.mjs`), not
-  every folder in this computer's history: each with the sessions `team scopes`
-  would put in its scope (tagged, and earlier ones found by folder) and their count
-  on the server, newest first by the last turn received. A server that cannot be
-  read shows why instead of a list. The chosen ones go into `access.json` for that
-  email, their sessions into their scopes, and only then does the hub hear
-  "approved", with the project names. The asker's bell shows 연결,
-  which adds `team-<peer>` to Claude Code and Codex (`teammates connect`); each agent
-  logs in to the servers application itself. The gate passes such a person's `/mcp`
-  to the MCP bridge with `x-honcho-scope-mode: projects` and the opened projects, and
-  the bridge answers `chat` from one project's scope at a time. 내 기억을 여는 팀원
-  lists who has what, with 수정 for the projects and for closing it; 수정's window
-  keeps the projects already open to that person, even ones the server now has no
-  sessions of.
+  Their 승인 opens a window with the folders this server holds conversations of
+  (`POST /api/team/folders`, `scripts/server-folders.mjs`), as a tree: the home
+  folder as ~, the same folder of the owner's several computers one row, each with
+  its count of conversations. A ticked folder opens the folders inside it too,
+  those made later included; a folder's own row (<폴더>에서 바로 시작한 대화)
+  opens it alone. The ticks become the fewest entries (`ui/lib/folder-grants.js`),
+  never a folder that holds a home (`/`, `/Users`, `C:\`), at most 100. A server
+  that cannot be read shows why instead of a list. The entries go into
+  `access.json` for that email, and only then does the hub hear "approved", with
+  the folders' names (in the request's `projects`, which predates folders). The
+  asker's bell shows 연결, which adds `team-<peer>` to Claude Code and Codex
+  (`teammates connect`); each agent logs in to the servers application itself. The
+  gate passes such a person's `/mcp` to the MCP bridge with
+  `x-honcho-scope-mode: folders` and the opened folders in `x-honcho-allowed-folders`
+  (base64url JSON; a list too long for the header is refused at the gate), and the
+  bridge answers `chat` once from the sessions in them. 내 기억을 여는 팀원 lists
+  who has what, with 수정 for the folders and for closing it; 수정's window keeps
+  the folders already open to that person, even ones the server now has no
+  conversations in. A grant made before 0.6.4, of projects, opens nothing until the
+  owner opens folders again.
 - **Collecting into the company server.** 함께 쌓을 서버 → 회사 in the server step,
   with the folders in the project step's 회사 서버 column, sends a collect request and
   keeps that server off (`target add --team`). Once the owner approves, the asker's
@@ -973,7 +977,7 @@ Then it writes `HONCHO_TUNNEL_TOKEN`, `HONCHO_ACCESS_TEAM_DOMAIN`, `HONCHO_ACCES
 
 Jev judges each teammate's `chat` before it reaches the memory, and refuses a question about the owner's private life rather than shared work. A question longer than Jev reads at once (16,000 characters) is refused without a judgment, so padding cannot carry one past it. Once the memory has answered, Jev judges the answer too, since a harmless question can still draw private matters out: an answer that gives away the private life, credentials, finances or health of the owner or anyone else is withheld, and the teammate gets the same refusal a question gets, so they cannot tell the memory held anything. A long answer is judged in overlapping pieces. A refused question or withheld answer is recorded as `denied`; each row carries the question's score (Jev) and the answer's (답), and a call let through without a judgment carries the reason.
 
-가드 시험, one line at the top of 조회 기록, tries a question as a teammate's: Enter sends it to `/api/dashboard/guard-trial`, the dashboard to the bridge's `POST /guard-trial` beside `/audit` (same token, outside `/mcp`), and the bridge judges it as a teammate's call, makes the answer from the chosen project's memory (or takes the one typed under the question), judges that, and says what the teammate would get. A trial is not recorded; the page keeps this visit's trials under the line, the newest open. It needs sharing on, like 조회 기록, and a server whose bridge knows the trial; an older one says to update and restart.
+가드 시험, one line at the top of 조회 기록, tries a question as a teammate's: Enter sends it to `/api/dashboard/guard-trial`, the dashboard to the bridge's `POST /guard-trial` beside `/audit` (same token, outside `/mcp`), and the bridge judges it as a teammate's call, makes the answer from the memory of the folders open to a chosen teammate, or of every folder (or takes the one typed under the question), judges that, and says what the teammate would get. A trial is not recorded; the page keeps this visit's trials under the line, the newest open. It needs sharing on, like 조회 기록, and a server whose bridge knows the trial; an older one says to update and restart.
 
 In a team the judging is the hub's (관리자 → Jev 키). Whenever sharing through the team is turned on (`team share`), and on every `server start` while so shared, the owner's app asks the hub for this server's guard token (`POST /api/me/guard`, with the owner's own team login) and writes `HONCHO_JEV_GATE=1`, `HONCHO_JEV_GUARD_URL=https://team.<zone>/guard` and `HONCHO_JEV_GUARD_TOKEN` into the installed `.env` before Compose starts `mcp`. Each new token ends the one before it, and the hub keeps only its SHA-256. The request names the tunnel this computer runs (`{tunnelId}`, read from the tunnel token in the `.env`), and the hub gives a token only to the computer running the server's current tunnel: a server moved to another computer keeps its address, and the computer it left must not end the new one's token (`409 other_computer`). A server shared another way (its own address, its own Cloudflare account, an invite) asks the hub nothing. The bridge then sends each question with the tool, the caller's email and the workspace to `/guard`, and after the memory answers, the answer with the question (`answer` in the body); the hub asks Jev with the team's key (`jev-latest`), the question's own Jev question for each, refuses at a score of 0.7 or more, and answers `{judged, checked, allowed, score}`, `checked` saying which it judged, keeping neither the question nor the answer. Jev's 5xx or a dropped connection is asked once more. While the hub has no key, questions and answers pass unjudged, and their rows say so; a hub from before answers were judged does not say `checked: "answer"`, and the answer goes out unjudged with its row saying so. The hub refuses a token it did not give out or has replaced, a server whose owner left the roster or moved the server to another computer, and more than 240 calls a minute from one server (a question and its answer are two); then, as when the hub or Jev cannot answer, `HONCHO_JEV_FAIL_MODE` (`open`) decides for a question and `HONCHO_JEV_ANSWER_FAIL_MODE` (`closed`) for an answer. Without a team login on that computer, without a server in the team, or when the hub cannot be reached or refuses, the `.env` stays as it is and the result's `jev` says why (`no_hub_login`, `no_server`, `other_computer`, `no_tunnel`, `hub_unreachable`, `hub_refused` with the hub's code); sharing and starting go on either way. No result, command or log holds the token.
 

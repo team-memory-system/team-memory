@@ -11,10 +11,12 @@
 import { post } from "./api.js";
 import { bellSource, refreshBell } from "./bell.js";
 import { h, clear } from "./dom.js";
-import { folderTable, listItem, modal } from "./kit.js";
+import { folderRowsOf, grantFromTicked, grantedPaths } from "./folder-grants.js";
+import { folderTree, folderTreeTable, openAtFirst } from "./folder-tree.js";
+import { number } from "./format.js";
+import { listItem, modal } from "./kit.js";
 import { ago, clientOutcome, connectTeammate, mateName, registerWith, teamCall, teamDirectory, teamRequests, teamStatus } from "./team.js";
 import { app, loadContext, refreshStatus } from "./state.js";
-import { shortPath } from "./collect.js";
 import { button, busy, notice, spinner, tag, toast } from "./ui.js";
 
 let latest = null;
@@ -23,6 +25,10 @@ let refused = null;
 const starting = new Set();
 const CODEX_POLL_MS = 2_000;
 const CODEX_WAIT_MS = 10 * 60_000;
+// What the gate keeps open to one teammate (gate-access.mjs MAX_FOLDERS) and what
+// fits the header it hands the MCP bridge (gate.mjs MAX_FOLDERS_HEADER, base64url).
+const MAX_GRANT_FOLDERS = 100;
+const MAX_GRANT_BYTES = 8_000;
 
 /**
  * The hub's requests with this server's own grants and computers, asked at most once
@@ -58,70 +64,66 @@ function personName(request, field = "from") {
 }
 
 /**
- * The projects this server holds conversations of, to open to a teammate: one row
- * per scope, newest first, with the server's count, and what is open now (`chosen`)
- * even with none. Throws when the server cannot be read.
+ * The folders window: which folders a teammate's chat answers from. Used to approve a
+ * request (T2) and to change what is open later (T4). Resolves the entries to open
+ * ([{ path, subfolders }], folder-grants.js), or null when closed.
  */
-async function scopedProjects(chosen) {
-  const result = await teamCall("/api/team/projects", { keep: chosen });
-  return (result.projects || []).map((project) => ({
-    path: project.id,
-    name: project.name,
-    count: project.sessions,
-    display: project.folder ? shortPath(project.folder) : "이 서버에 대화가 아직 없습니다",
-    scope: project.id,
-  }));
-}
-
-/**
- * The projects window: which projects a teammate's chat answers from. Used to
- * approve a request (T2) and to change what is open later (T4). Resolves the
- * chosen [{ id, name }], or null when closed.
- */
-export function chooseProjects({ title, lead, chosen = [], confirm = "승인", extra = null }) {
+export function chooseFolders({ title, lead, chosen = [], confirm = "승인", extra = null }) {
   return new Promise((resolve) => {
-    const win = modal({ title, big: true, small: true, onClose: (value) => resolve(value === "ok" ? picked() : null) });
+    let entries = null;
+    const win = modal({ title, big: true, small: true, onClose: (value) => resolve(value === "ok" ? entries : null) });
     const box = h("div", {}, spinner());
+    const summary = h("p", { class: "hint" });
     const problem = h("div", {});
-    let projects = [];
+    let rows = null;
+    let tree = [];
     const checked = new Set();
-    const picked = () => {
-      const seen = new Set();
-      return projects.filter((project) => checked.has(project.path) && !seen.has(project.scope) && seen.add(project.scope))
-        .map((project) => ({ id: project.scope, name: project.name }));
+    const tooMany = (list) => list.length > MAX_GRANT_FOLDERS || new TextEncoder().encode(JSON.stringify(list)).length > MAX_GRANT_BYTES;
+    const drawSummary = () => {
+      clear(problem);
+      const ticked = (rows || []).filter((row) => checked.has(row.path));
+      const conversations = ticked.reduce((sum, row) => sum + row.count, 0);
+      clear(summary, ticked.length ? `폴더 ${number(ticked.length)}개 · 대화 ${number(conversations)}개를 엽니다.` : "");
     };
-    win.body(h("p", { class: "lead", style: { marginTop: "4px" } }, lead), box, problem);
+    win.body(
+      h("p", { class: "lead", style: { marginTop: "4px" } }, lead),
+      h("p", { class: "hint" }, "폴더를 고르면 그 안의 폴더도 같이 열립니다. 나중에 그 안에 생기는 폴더도 열립니다."),
+      box, summary, problem);
     win.foot(extra, [
       button("취소", { kind: "quiet", onClick: () => win.close() }),
       button(confirm, { kind: "primary", onClick: () => {
-        if (!picked().length) { clear(problem, notice("warn", "프로젝트를 하나 이상 고르세요.")); return; }
+        if (!rows) return;
+        const picked = grantFromTicked(tree, checked);
+        if (!picked.length) { clear(problem, notice("warn", "폴더를 하나 이상 고르세요.")); return; }
+        if (tooMany(picked)) { clear(problem, notice("warn", "고른 폴더가 너무 많습니다. 위쪽 폴더를 통째로 고르면 줄어듭니다.")); return; }
+        entries = picked;
         win.close("ok");
       } }),
     ]);
     win.open();
-    scopedProjects(chosen).then((list) => {
-      projects = list;
-      const open = new Set(chosen.map((item) => item.id));
-      for (const project of projects) if (open.has(project.scope)) checked.add(project.path);
-      clear(box, projects.length
-        ? folderTable(projects, checked, { scroll: true, heading: "프로젝트" })
-        : notice("warn", "이 서버에 대화가 쌓인 프로젝트가 아직 없습니다. 대화가 쌓이면 여기에 나옵니다."));
+    teamCall("/api/team/folders", {}).then((result) => {
+      const list = folderRowsOf(result.folders || [], chosen);
+      rows = list;
+      tree = folderTree(rows);
+      for (const path of grantedPaths(rows, chosen)) checked.add(path);
+      clear(box, rows.length
+        ? folderTreeTable(rows, checked, { open: openAtFirst(rows), onChange: drawSummary })
+        : notice("warn", "이 서버에 쌓인 대화가 아직 없습니다. 대화가 쌓이면 그 폴더가 여기에 나옵니다."));
+      drawSummary();
     }, (error) => clear(box, notice("bad", h("b", {}, error.message), h("div", {}, "서버 화면에서 기억 서버가 켜져 있는지 확인하고, 이 창을 닫았다가 다시 여세요."))));
   });
 }
 
-/** 승인 on a chat request: the projects first, then the server opens and the hub hears. */
+/** 승인 on a chat request: the folders first, then the server opens and the hub hears. */
 export async function approveChat(request) {
   const who = personName(request);
-  const projects = await chooseProjects({
+  const folders = await chooseFolders({
     title: `${who}에게 내 기억 열기`,
-    lead: `${who}가 chat으로 물을 때 답에 쓸 프로젝트를 고르세요.`,
+    lead: `${who}가 chat으로 물을 때 답에 쓸 폴더를 고르세요.`,
   });
-  if (!projects) return false;
-  await teamCall("/api/team/decide", { id: request.id, approve: true, kind: "chat", email: request.from, peer: request.fromPeer, projects });
-  // The chosen projects' past conversations go into their scopes in the background.
-  post("/api/team/scopes", {}).catch(() => {});
-  toast(`${who}에게 프로젝트 ${projects.length}개를 열었습니다.`, "ok");
+  if (!folders) return false;
+  await teamCall("/api/team/decide", { id: request.id, approve: true, kind: "chat", email: request.from, peer: request.fromPeer, folders });
+  toast(`${who}에게 폴더를 열었습니다.`, "ok");
   return true;
 }
 
@@ -224,7 +226,7 @@ export async function connectApproved(request) {
   const name = mateName({ peer: request.ownerPeer, email: request.owner });
   const result = await connectTeammate({ name, host: request.server });
   if (!result.ok) throw new Error(result.error || clientOutcome(result).join(" · ") || "연결하지 못했습니다.");
-  // The request stays, with its projects, for the 팀 page; the bell stops showing it
+  // The request stays, with its folders, for the 팀 page; the bell stops showing it
   // because Claude Code or Codex now has that server.
   await loadContext();
   refreshStatus();
@@ -296,7 +298,7 @@ async function bellRows() {
     if (request.status === "approved" && request.kind === "chat") {
       rows.push(listItem({
         title: owner,
-        sub: `chat 요청을 승인했습니다 · 열린 프로젝트 ${(request.projects || []).length}개 · ${ago(request.decidedAt)}`,
+        sub: `chat 요청을 승인했습니다 · 열린 폴더 ${(request.projects || []).length}개 · ${ago(request.decidedAt)}`,
         end: act("연결", "primary small", () => connectApproved(request)),
       }));
     } else if (request.status === "approved" && request.kind === "collect") {

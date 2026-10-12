@@ -62,7 +62,6 @@ export function rebuildLine(job) {
     if (derive?.etaSec && !derive.paused?.until && !job.error) parts.push(`${etaText(derive.etaSec)} 남음`);
     return parts.join(" · ") || "새 기억을 만드는 중";
   }
-  if (job.phase === "scopes") return "마무리하는 중";
   if (!undo) return "새 기억으로 바꾸는 중";
   return job.toRebuilt ? "새 기억으로 다시 바꾸는 중" : "이전 기억으로 바꾸는 중";
 }

@@ -303,16 +303,13 @@ export async function gitRemote(root) {
   return null;
 }
 
-/** A project's scope id: `p-` and 12 hex. */
-export const PROJECT_SCOPE = /^p-[0-9a-f]{12}$/;
-
 /**
- * The Honcho scope a project's conversations go to when its owner opens it to a
- * teammate: `p-` and 12 hex of a hash of the repository's origin remote, so a
- * repository has the same scope on every computer that cloned it. A folder with no
- * remote is known by its name.
+ * A project's id and name, which the collector puts in a session's metadata
+ * (project_id, project_name): `p-` and 12 hex of a hash of the repository's origin
+ * remote, so a repository has the same id on every computer that cloned it. A folder
+ * with no remote is known by its name.
  */
-export async function projectScope(projectPath) {
+export async function projectIdentity(projectPath) {
   const name = path.basename(projectPath) || projectPath;
   const remote = await gitRemote(projectPath);
   const key = remote ? `git:${remote}` : `name:${name.toLowerCase()}`;
@@ -399,8 +396,7 @@ export async function conversationProjects({ config, home: given, temp } = {}) {
 
   const sorted = [...projects.values()]
     .sort((left, right) => right.lastMs - left.lastMs || left.path.localeCompare(right.path));
-  const scopes = await mapLimit(sorted, CONCURRENCY, (project) => projectScope(project.path));
-  const list = sorted.map((project, index) => ({
+  const list = sorted.map((project) => ({
     path: project.path,
     name: project.name,
     sessions: project.sessions,
@@ -411,8 +407,6 @@ export async function conversationProjects({ config, home: given, temp } = {}) {
     folded: project.folded,
     folders: project.folders,
     temp: temps.some(([, folder]) => folder === project.path),
-    // The scope the project's conversations go to when it is opened to a teammate.
-    scope: scopes[index].id,
   }));
   return { ok: true, projects: list, scanned, withoutFolder, automation };
 }

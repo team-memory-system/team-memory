@@ -1,5 +1,5 @@
 // The app's own read-only routes for the folder picker, the project list and the
-// dashboard's flow, the projects the memory server can open to a teammate, and the
+// dashboard's flow, the folders the memory server can open to a teammate, and the
 // hour the nightly backup runs at.
 import assert from "node:assert/strict";
 import fsp from "node:fs/promises";
@@ -123,12 +123,14 @@ test("the project route reads the transcripts the configuration names", async ()
   assert.match(listed.lastAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 });
 
-test("the projects to open to a teammate are the memory server's, and one that cannot be read says so", async () => {
-  // A stand-in memory server: one project's session from another computer, and one
-  // an automation ran at /.
+test("the folders to open to a teammate are the memory server's, and one that cannot be read says so", async () => {
+  // A stand-in memory server: one folder's sessions from two computers, one of them
+  // twice, and a browser chat with no folder.
   const sessions = [
-    { id: "a", metadata: { project_id: "p-0123456789ab", project_name: "flypiano", cwd: "/Users/someone/dev/flypiano", last_imported_at: "2026-10-07T10:00:00.000Z" } },
-    { id: "b", metadata: { cwd: "/" } },
+    { id: "a", created_at: "2026-10-01T00:00:00.000Z", metadata: { cwd: "/Users/someone/dev/flypiano", last_imported_at: "2026-10-07T10:00:00.000Z" } },
+    { id: "b", created_at: "2026-10-02T00:00:00.000Z", metadata: { cwd: "/Users/someone/dev/flypiano", last_imported_at: "2026-10-08T10:00:00.000Z" } },
+    { id: "c", created_at: "2026-10-03T00:00:00.000Z", metadata: { cwd: "C:\\Users\\someone\\dev\\flypiano" } },
+    { id: "d", created_at: "2026-10-04T00:00:00.000Z", metadata: { source: "chatgpt" } },
   ];
   const honcho = http.createServer((request, response) => {
     request.resume();
@@ -143,76 +145,31 @@ test("the projects to open to a teammate are the memory server's, and one that c
     });
   });
   await new Promise((resolve) => honcho.listen(0, "127.0.0.1", resolve));
-  const empty = path.join(workdir, "no-transcripts");
-  await fsp.mkdir(empty, { recursive: true });
   await fsp.mkdir(process.env.HONCHO_AGENT_BRIDGE_HOME, { recursive: true });
   await fsp.writeFile(path.join(process.env.HONCHO_AGENT_BRIDGE_HOME, "config.json"), JSON.stringify({
     version: 1,
     honcho: { baseUrl: `http://127.0.0.1:${honcho.address().port}`, workspaceId: "memory" },
-    sources: { claude: { root: empty }, codex: { root: empty } },
   }));
 
-  assert.equal((await send("/api/team/projects")).status, 405);
-  const listed = await send("/api/team/projects", { method: "POST", body: { keep: [{ id: "p-abcdef012345", name: "kept" }, { id: "nope" }] } });
+  assert.equal((await send("/api/team/folders")).status, 405);
+  const listed = await send("/api/team/folders", { method: "POST", body: {} });
   assert.equal(listed.status, 200);
-  assert.equal(listed.body.ok, true);
-  assert.deepEqual(listed.body.projects, [
-    { id: "p-0123456789ab", name: "flypiano", sessions: 1, lastAt: "2026-10-07T10:00:00.000Z", folder: "/Users/someone/dev/flypiano" },
-    { id: "p-abcdef012345", name: "kept", sessions: 0, lastAt: null, folder: null },
-  ]);
-
-  await new Promise((resolve) => honcho.close(resolve));
-  const down = await send("/api/team/projects", { method: "POST", body: {} });
-  assert.equal(down.body.ok, false);
-  assert.equal(down.body.projects, undefined);
-  assert.match(down.body.error, /^기억 서버에서 프로젝트를 읽지 못했습니다 \(ECONNREFUSED\)\.$/);
-});
-
-test("가드 시험 fills one project's scope first and waits for Honcho to copy it", async () => {
-  const asked = [];
-  let statusCalls = 0;
-  const honcho = http.createServer((request, response) => {
-    let raw = "";
-    request.on("data", (chunk) => { raw += chunk; });
-    request.on("end", () => {
-      const url = new URL(request.url, "http://honcho");
-      asked.push(`${request.method} ${url.pathname}`);
-      const json = (value, status = 200) => { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify(value)); };
-      if (url.pathname === "/v3/workspaces/memory/scopes") return json({ id: JSON.parse(raw).id }, 201);
-      if (url.pathname === "/v3/workspaces/memory/sessions/list") {
-        const wanted = JSON.parse(raw || "{}").filters?.metadata?.project_id;
-        const items = wanted === "p-0123456789ab" ? [{ id: "a", metadata: { project_id: wanted } }] : [];
-        return json({ items, total: items.length, page: 1, size: 100, pages: 1 });
-      }
-      if (url.pathname === "/v3/workspaces/memory/scopes/p-0123456789ab/sessions") { response.writeHead(204).end(); return undefined; }
-      if (url.pathname === "/v3/workspaces/memory/scopes/p-0123456789ab/status") {
-        statusCalls += 1;
-        return json({ backfill_status: { a: { state: statusCalls > 1 ? "completed" : "pending" } } });
-      }
-      return json({ detail: "not found" }, 404);
-    });
+  assert.deepEqual(listed.body, {
+    ok: true,
+    workspace: "memory",
+    sessions: 4,
+    noFolder: 1,
+    folders: [
+      { path: "/Users/someone/dev/flypiano", sessions: 2, lastAt: "2026-10-08T10:00:00.000Z" },
+      { path: "C:\\Users\\someone\\dev\\flypiano", sessions: 1, lastAt: "2026-10-03T00:00:00.000Z" },
+    ],
   });
-  await new Promise((resolve) => honcho.listen(0, "127.0.0.1", resolve));
-  const empty = path.join(workdir, "no-transcripts-scope");
-  await fsp.mkdir(empty, { recursive: true });
-  await fsp.mkdir(process.env.HONCHO_AGENT_BRIDGE_HOME, { recursive: true });
-  await fsp.writeFile(path.join(process.env.HONCHO_AGENT_BRIDGE_HOME, "config.json"), JSON.stringify({
-    version: 1,
-    honcho: { baseUrl: `http://127.0.0.1:${honcho.address().port}`, workspaceId: "memory" },
-    sources: { claude: { root: empty }, codex: { root: empty } },
-    paths: { dataDir: path.join(workdir, "scope-data") },
-  }));
 
-  const none = await send("/api/team/scope", { method: "POST", body: { project: { id: "nope" } } });
-  assert.deepEqual(none.body, { ok: false, error: "프로젝트를 고르세요." });
-  const filled = await send("/api/team/scope", { method: "POST", body: { project: { id: "p-0123456789ab", name: "jev" } } });
-  assert.equal(filled.body.ok, true);
-  assert.equal(filled.body.settled, true);
-  assert.deepEqual(filled.body.scope, { id: "p-0123456789ab", name: "jev", added: 1, sessions: 1 });
-  assert.ok(asked.includes("POST /v3/workspaces/memory/scopes"));
-  assert.ok(asked.includes("POST /v3/workspaces/memory/scopes/p-0123456789ab/sessions"));
-  assert.equal(statusCalls, 2);
   await new Promise((resolve) => honcho.close(resolve));
+  const down = await send("/api/team/folders", { method: "POST", body: {} });
+  assert.equal(down.body.ok, false);
+  assert.equal(down.body.folders, undefined);
+  assert.match(down.body.error, /^기억 서버에서 폴더를 읽지 못했습니다 \(ECONNREFUSED\)\.$/);
 });
 
 test("the flow route counts what waits to go and what went, for the agents that collect", async () => {

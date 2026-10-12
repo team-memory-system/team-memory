@@ -1,6 +1,7 @@
 // 가드 시험: the owner asks a question as a teammate would and sees each step the
-// team server takes with it: the question judged, the answer made from one
-// project's memory or written here, the answer judged, and what the teammate gets.
+// team server takes with it: the question judged, the answer made from the memory of
+// the folders a teammate has open (or of every folder) or written here, the answer
+// judged, and what the teammate gets.
 // It is one line at the top of 조회 기록, a question and a chip for the answer, and
 // Enter judges it. This visit's trials stay under it, newest first, the earlier
 // ones folded to a line. The memory server's own MCP bridge runs it (the dashboard
@@ -8,10 +9,13 @@
 // by the same hub with the same token. Nothing of it is recorded.
 import { post } from "./api.js";
 import { h, clear } from "./dom.js";
+import { folderOpens, folderRowsOf, grantFromTicked } from "./folder-grants.js";
+import { folderTree } from "./folder-tree.js";
 import { number } from "./format.js";
 import { callScores, reasonText, scoreText, trialOutcome, trialTag, verdictTag } from "./guard.js";
 import { icon } from "./icons.js";
 import { kv } from "./kit.js";
+import { loadRequests } from "./requests.js";
 import { app, savePrefs } from "./state.js";
 import { teamCall } from "./team.js";
 import { details, errorNotice, notice, spinner, tag } from "./ui.js";
@@ -52,7 +56,7 @@ function drawTrial(trial, asked) {
   const gate = trial.gate !== false;
   const outcome = trialOutcome(trial);
   const skipped = trial.outcome === "refused" ? "질문에서 막혀 답을 만들지 않았습니다." : "하지 않았습니다.";
-  const source = asked.answer != null ? "직접 쓴 답" : `${asked.project?.name || "프로젝트"}의 기억에서 만든 답`;
+  const source = asked.answer != null ? "직접 쓴 답" : `${asked.target?.name || "기억"}에서 만든 답`;
   return h("div", { class: "trial-result" },
     h("div", { class: "audit-facts" },
       step("질문 검사", trial.query, "query", gate),
@@ -65,12 +69,13 @@ function drawTrial(trial, asked) {
 
 /** The line to try a question in, with this visit's trials under it. */
 export function guardTrial() {
-  // "memory" makes the answer from a project's memory, "typed" sends the answer
-  // written here, "none" judges the question alone. The last choice is kept.
+  // "memory" makes the answer from the memory of some folders, "typed" sends the
+  // answer written here, "none" judges the question alone. The last choice is kept.
   let source = SOURCES.includes(app.prefs.trialSource) ? app.prefs.trialSource : "memory";
-  let projectId = app.prefs.trialProject || "";
-  // null while they load, then the projects this server holds conversations of.
-  let projects = null;
+  let targetKey = app.prefs.trialTarget || "";
+  // null while they load, then what to answer from: the folders open to each
+  // teammate who may chat, and every folder of this server.
+  let targets = null;
   let running = false;
 
   const question = h("textarea", { class: "trial-text", rows: "1", placeholder: "팀원이 물을 질문을 쓰고 Enter", "aria-label": "질문", enterkeyhint: "go" });
@@ -85,32 +90,32 @@ export function guardTrial() {
     writtenRow,
     note);
 
-  const chosen = () => projects?.find((project) => project.id === projectId) || null;
+  const chosen = () => targets?.find((target) => target.key === targetKey) || null;
 
   /** The answer's chip: what it shows is text; a native select over it does the choosing. */
   function drawChip() {
     const control = h("select", { class: "cchip-select", "aria-label": "답" },
-      projects === null ? h("option", { value: "loading", disabled: true }, "프로젝트를 읽는 중…")
-        : projects.length ? h("optgroup", { label: "기억에서 만들기" },
-          projects.map((project) => h("option", { value: `p:${project.id}` }, `${project.name} · 대화 ${number(project.sessions)}개`)))
+      targets === null ? h("option", { value: "loading", disabled: true }, "폴더를 읽는 중…")
+        : targets.length ? h("optgroup", { label: "기억에서 만들기" },
+          targets.map((target) => h("option", { value: `m:${target.key}` }, `${target.name} · 대화 ${number(target.sessions)}개`)))
           : null,
       h("option", { value: "typed" }, "직접 쓰기"),
       h("option", { value: "none" }, "질문만"));
-    control.value = source !== "memory" ? source : projects === null ? "loading" : `p:${projectId}`;
+    control.value = source !== "memory" ? source : targets === null ? "loading" : `m:${targetKey}`;
     control.addEventListener("change", () => {
-      if (control.value.startsWith("p:")) {
+      if (control.value.startsWith("m:")) {
         source = "memory";
-        projectId = control.value.slice(2);
+        targetKey = control.value.slice(2);
       } else {
         source = control.value;
       }
-      savePrefs({ trialSource: source, trialProject: projectId });
+      savePrefs({ trialSource: source, trialTarget: targetKey });
       draw();
       (source === "typed" && !written.value.trim() && question.value.trim() ? written : question).focus();
     });
     const shown = source === "typed" ? "직접 쓰기"
       : source === "none" ? "질문만"
-        : projects === null ? "프로젝트를 읽는 중…" : `기억에서 만들기 · ${chosen()?.name || "프로젝트"}`;
+        : targets === null ? "폴더를 읽는 중…" : `기억에서 만들기 · ${chosen()?.name || "폴더"}`;
     clear(chip, h("span", { class: "trial-chip-k" }, "답"), h("span", { class: "cchip-v" }, shown), icon("chevron", "icon chev"), control);
   }
 
@@ -133,26 +138,39 @@ export function guardTrial() {
     area.style.height = `${area.scrollHeight}px`;
   }
 
-  async function loadProjects() {
+  async function loadTargets() {
     try {
-      const listed = await teamCall("/api/team/projects", {});
-      projects = listed.projects || [];
-      if (!projects.length) clear(note, icon("warn"), "이 서버에 대화가 쌓인 프로젝트가 아직 없습니다. 직접 쓰기나 질문만으로 시험하세요.");
+      const [listed, requests] = await Promise.all([teamCall("/api/team/folders", {}), loadRequests().catch(() => null)]);
+      const folders = listed.folders || [];
+      const sessions = (entries) => folders
+        .filter((folder) => entries.some((entry) => folderOpens(entry, folder.path)))
+        .reduce((sum, folder) => sum + Number(folder.sessions || 0), 0);
+      const rows = folderRowsOf(folders);
+      const every = grantFromTicked(folderTree(rows), new Set(rows.map((row) => row.path)));
+      targets = [
+        ...(requests?.grants || []).filter((grant) => grant.chat?.folders?.length).map((grant) => ({
+          key: `mate:${grant.email}`,
+          name: `${grant.peer || grant.email.split("@")[0]}에게 연 폴더`,
+          folders: grant.chat.folders,
+        })),
+        ...(every.length ? [{ key: "all", name: "모든 폴더", folders: every }] : []),
+      ].map((target) => ({ ...target, sessions: sessions(target.folders) }));
+      if (!targets.length) clear(note, icon("warn"), "이 서버에 쌓인 대화가 아직 없습니다. 직접 쓰기나 질문만으로 시험하세요.");
     } catch (error) {
-      projects = [];
-      clear(note, icon("warn"), `프로젝트를 읽지 못해 기억에서 답을 만들 수 없습니다. ${error.message}`);
+      targets = [];
+      clear(note, icon("warn"), `폴더를 읽지 못해 기억에서 답을 만들 수 없습니다. ${error.message}`);
     }
-    if (!chosen()) projectId = projects[0]?.id || "";
-    // With no project to answer from, the question alone is judged; the saved
-    // choice stays for a server that has one.
-    if (source === "memory" && !projects.length) source = "none";
+    if (!chosen()) targetKey = targets[0]?.key || "";
+    // With nothing to answer from, the question alone is judged; the saved choice
+    // stays for a server that has some.
+    if (source === "memory" && !targets.length) source = "none";
     draw();
   }
 
   /** One trial's line, open while it runs and once it has its result. */
   function trialItem(asked) {
     for (const other of items.children) other.open = false;
-    const from = asked.answer != null ? "직접 쓴 답" : asked.project ? `${asked.project.name}의 기억` : "질문만";
+    const from = asked.answer != null ? "직접 쓴 답" : asked.target ? asked.target.name : "질문만";
     const status = h("span", { class: "trial-status" }, tag("판정 중"));
     const meta = h("span", { class: "trial-meta" }, from);
     const body = h("div", { class: "trial-body" });
@@ -184,20 +202,18 @@ export function guardTrial() {
     if (send.disabled) return;
     const asked = { query: question.value };
     if (source === "typed") asked.answer = written.value;
-    if (source === "memory") asked.project = { id: chosen().id, name: chosen().name };
+    if (source === "memory") asked.target = chosen();
     running = true;
     updateSend();
     const item = trialItem(asked);
     const started = performance.now();
     try {
-      // A teammate's chat answers from the project's scope, which a project not opened
-      // to anyone does not have yet: filled first, the trial answers the same way.
-      if (asked.project) {
-        item.wait("프로젝트의 대화를 모으는 중입니다. 처음에는 수십 초 걸릴 수 있습니다.");
-        await teamCall("/api/team/scope", { project: asked.project });
-      }
-      item.wait(asked.project ? "질문을 판정하고 기억에서 답을 만드는 중입니다. 수십 초 걸릴 수 있습니다." : "판정하는 중입니다.");
-      const trial = await post("/api/dashboard/guard-trial", asked);
+      item.wait(asked.target ? "질문을 판정하고 기억에서 답을 만드는 중입니다. 수십 초 걸릴 수 있습니다." : "판정하는 중입니다.");
+      const trial = await post("/api/dashboard/guard-trial", {
+        query: asked.query,
+        ...(asked.answer != null ? { answer: asked.answer } : {}),
+        ...(asked.target ? { folders: asked.target.folders } : {}),
+      });
       if (trial.enabled === false) {
         item.failed(notice("warn", h("b", {}, "이 기억 서버는 아직 가드 시험을 보여 주지 않습니다."), " 서버에서 기억 서버를 멈췄다가 다시 시작하면 됩니다."));
       } else {
@@ -228,7 +244,7 @@ export function guardTrial() {
   });
 
   draw();
-  loadProjects();
+  loadTargets();
   return h("section", { class: "trial", "aria-label": "가드 시험" },
     h("div", { class: "trial-h" }, h("b", {}, "가드 시험"), h("span", {}, "시험은 조회 기록에 남지 않습니다.")),
     box,

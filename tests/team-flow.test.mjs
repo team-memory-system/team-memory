@@ -5,7 +5,7 @@
 // app runs it. What matters: one Google login per application and no token anyone
 // copies; the owner's other computer writes through its own device key; a teammate
 // asks before anything opens, writes only their own sessions into the company
-// server, and asks only the projects opened to them; one computer is cut off on its
+// server, and asks only the folders opened to them; one computer is cut off on its
 // own; and leaving the team ends it all.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -294,16 +294,16 @@ test("a team from its admin's first login to a teammate leaving it", async () =>
   const reading = await teamFetch(`https://${company}/v3/workspaces/memory/sessions/list`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }, { paths: alicePc, fetchImpl: fake.fetch });
   assert.equal(reading.status, 403);
 
-  // ── She asks for chat; the admin opens one project ──
+  // ── She asks for chat; the admin opens one folder ──
   const chat = await hubCall("POST", "/api/requests", { kind: "chat", server: company }, { paths: alicePc, fetchImpl: fake.fetch });
-  await grantChat(companyGate, { email: ALICE, peer: "alice", projects: [{ id: "p-0123456789ab", name: "honcho" }] });
+  await grantChat(companyGate, { email: ALICE, peer: "alice", folders: [{ path: "/Users/admin/dev/honcho", subfolders: true }] });
   await reread();
-  await hubCall("POST", `/api/requests/${(chat.request || chat).id}/decide`, { approve: true, projects: ["honcho"] }, { paths: desk, fetchImpl: fake.fetch });
+  await hubCall("POST", `/api/requests/${(chat.request || chat).id}/decide`, { approve: true, projects: ["~/dev/honcho"] }, { paths: desk, fetchImpl: fake.fetch });
   const asking = await teamFetch(`https://${company}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }, { paths: alicePc, fetchImpl: fake.fetch, device: false });
   assert.equal(asking.status, 200);
   const seen = mcpSeen.at(-1).headers;
-  assert.equal(seen["x-honcho-scope-mode"], "projects");
-  assert.deepEqual(JSON.parse(Buffer.from(seen["x-honcho-allowed-scopes"], "base64url").toString("utf8")), [{ id: "p-0123456789ab", name: "honcho" }]);
+  assert.equal(seen["x-honcho-scope-mode"], "folders");
+  assert.deepEqual(JSON.parse(Buffer.from(seen["x-honcho-allowed-folders"], "base64url").toString("utf8")), [{ path: "/Users/admin/dev/honcho", subfolders: true }]);
   assert.equal(seen["cf-access-authenticated-user-email"], ALICE);
   assert.equal(seen.authorization, "Bearer team-mcp-token-0123456789", "the bridge sees the gate's token, never the caller's");
 

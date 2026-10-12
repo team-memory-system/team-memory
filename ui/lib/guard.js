@@ -12,7 +12,10 @@ export function reasonText(reason, allowed, { cause = false } = {}) {
   const text = String(reason || "").trim();
   const said = (whole, why) => (cause ? why : whole);
   if (text === "out of scope") return "사적인 질문으로 판정";
-  if (text.startsWith("That project is not open")) return "열지 않은 프로젝트";
+  if (text.startsWith("No conversation in the folders open")) return "열린 폴더에 대화 없음";
+  if (text.startsWith("The folders open to you on this MCP server hold more than")) return "열린 폴더의 대화가 너무 많음";
+  if (text.startsWith("The conversations in the folders open to you could not be listed")) return "열린 폴더의 대화를 읽지 못함";
+  if (text.includes("cannot be used with folders")) return "팀원은 chat만 씀";
   if (text === "query too long to judge") return said("너무 길어 판정하지 않고 거부", "너무 길어 판정하지 않음");
   if (text.startsWith("answer withheld")) return said("답에 민감한 내용이 있어 막음", "민감한 내용이 든 답으로 판정");
   if (text === "answer too long to judge") return said("답이 너무 길어 판정하지 않고 막음", "너무 길어 판정하지 않음");
@@ -28,14 +31,16 @@ export function reasonText(reason, allowed, { cause = false } = {}) {
 /**
  * Why a call in the audit log was refused, failed or went through without a
  * judgment, in a few words; null for a plain pass. A call let through can carry a
- * reason for its question and another for its answer, joined by "; ".
+ * reason for its question and another for its answer, joined by "; ". A refusal's
+ * own "; " (…; omit it) stays inside it: only a Jev reason starts a second one.
  */
 export function callReason(row) {
   const error = String(row?.error || "").split("\n")[0].trim();
   if (!error) return null;
   if (row.status === "error") return error;
   const allowed = row.status !== "denied";
-  return [...new Set(error.split("; ").map((part) => reasonText(part, allowed)))].join(" · ");
+  const parts = error.split(/; (?=out of scope|query too long|answer |not judged|jev unavailable)/);
+  return [...new Set(parts.map((part) => reasonText(part, allowed)))].join(" · ");
 }
 
 export const scoreText = (value) => Number(value).toFixed(2);
@@ -99,7 +104,7 @@ export function trialOutcome(trial) {
         message: trial.message,
       };
     case "no_answer":
-      return { kind: "warn", title: "기억 서버가 답을 만들지 못했습니다.", text: "그 프로젝트에 아직 기억이 없거나, 기억 서버가 답하지 못했습니다." };
+      return { kind: "warn", title: "기억 서버가 답을 만들지 못했습니다.", text: "고른 폴더에 아직 대화가 없거나, 기억 서버가 답하지 못했습니다." };
     case "passed":
       if (trial.answer == null) {
         return { kind: off ? "warn" : "ok", title: "질문은 통과합니다.", text: off ? "이 서버는 Jev 판정이 꺼져 있어 판정 없이 통과합니다." : "답은 만들지 않아 답 검사는 하지 않았습니다." };

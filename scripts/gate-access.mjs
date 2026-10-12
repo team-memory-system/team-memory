@@ -4,13 +4,13 @@
 //   access.json   written here, read by the gate whenever it changes: the owners
 //                 (every computer of theirs may register and write), the workspace
 //                 teammates write into, and per teammate email what is opened to
-//                 them: chat with a list of projects, or collecting into this
+//                 them: chat with a list of folders, or collecting into this
 //                 server. Devices cut off are listed under revokedDevices.
 //   devices.json  written by the gate only: every computer that registered (an
 //                 email, its name, a hash of its key, when it was last seen). Read
 //                 here for the list of computers that write to this server.
 //
-// access.json holds emails and project names, no secret, and the gate's container
+// access.json holds emails and folder paths, no secret, and the gate's container
 // user must be able to read it, so it is written readable (0644); devices.json holds
 // only hashes. Changes go through one lock so two windows of the app never lose
 // each other's change.
@@ -20,13 +20,14 @@ import path from "node:path";
 
 import { normalizeEmail } from "./cloudflare-api.mjs";
 import { acquireFileLock, releaseFileLock } from "./file-lock.mjs";
-import { PROJECT_SCOPE } from "./projects.mjs";
 import { installedServerDir } from "./server-manager.mjs";
 
 const DEVICE_ID = /^d-[0-9a-f]{16}$/;
 const PEER = /^[A-Za-z0-9_.:@-]{1,64}$/;
 const WORKSPACE = /^[A-Za-z0-9_.:-]{1,128}$/;
-const MAX_PROJECTS = 100;
+// The gate's own limits (server/gate/gate.mjs): it drops what is past them.
+export const MAX_FOLDERS = 100;
+const MAX_FOLDER_LENGTH = 1024;
 
 export function gateStatePaths({ serverDirectory, runtimeDirectory } = {}) {
   const serverDir = path.resolve(serverDirectory || installedServerDir());
@@ -49,15 +50,24 @@ async function readJsonFile(file) {
   }
 }
 
-function projectList(value) {
+/**
+ * The folders opened to a teammate: each the path conversations started in, as a
+ * collector recorded it (a session's metadata.cwd), and whether the folders inside
+ * it open too, those made later included. Only `subfolders: true` opens them.
+ */
+export function folderList(value) {
   const seen = new Set();
   const list = [];
   for (const item of Array.isArray(value) ? value : []) {
-    if (!item || !PROJECT_SCOPE.test(String(item.id)) || seen.has(item.id)) continue;
-    seen.add(item.id);
-    list.push({ id: item.id, name: String(item.name || item.id).slice(0, 120) });
+    const folder = typeof item?.path === "string" ? item.path : "";
+    if (!folder || folder.length > MAX_FOLDER_LENGTH || /[\u0000-\u001f\u007f]/.test(folder)) continue;
+    const subfolders = item.subfolders === true;
+    const key = `${subfolders}:${folder}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    list.push({ path: folder, subfolders });
   }
-  return list.slice(0, MAX_PROJECTS);
+  return list.slice(0, MAX_FOLDERS);
 }
 
 /** access.json with every part present and nothing the gate would not read. */
@@ -67,7 +77,7 @@ export function normalizeGateAccess(value) {
     const email = normalizeEmail(key);
     if (!email || !entry || typeof entry !== "object" || !PEER.test(String(entry.peer || ""))) continue;
     const person = { peer: entry.peer };
-    if (entry.chat && typeof entry.chat === "object") person.chat = { projects: projectList(entry.chat.projects), ...(entry.chat.since ? { since: entry.chat.since } : {}) };
+    if (entry.chat && typeof entry.chat === "object") person.chat = { folders: folderList(entry.chat.folders), ...(entry.chat.since ? { since: entry.chat.since } : {}) };
     if (entry.collect && typeof entry.collect === "object") {
       person.collect = { ...(WORKSPACE.test(String(entry.collect.workspace || "")) ? { workspace: entry.collect.workspace } : {}), ...(entry.collect.since ? { since: entry.collect.since } : {}) };
     }
@@ -125,13 +135,13 @@ export async function setGateOwners(paths, { owners, workspace }) {
   return changeGateAccess(paths, (access) => ({ ...access, owners: [...new Set([...owners])], ...(workspace ? { workspace } : {}) }));
 }
 
-/** Opens chat with `projects` to a teammate, or changes which projects are open. */
-export async function grantChat(paths, { email, peer, projects }) {
+/** Opens chat with `folders` to a teammate, or changes which folders are open. */
+export async function grantChat(paths, { email, peer, folders }) {
   const who = normalizeEmail(email);
   if (!who) throw new Error("A teammate's email is needed");
   return changeGateAccess(paths, (access) => {
     const person = access.people[who] || { peer };
-    access.people[who] = { ...person, peer: peer || person.peer, chat: { projects: projectList(projects), since: person.chat?.since || now() } };
+    access.people[who] = { ...person, peer: peer || person.peer, chat: { folders: folderList(folders), since: person.chat?.since || now() } };
     return access;
   });
 }
@@ -196,7 +206,7 @@ export async function gateGrants(paths) {
   return Object.entries(access.people).map(([email, person]) => ({
     email,
     peer: person.peer,
-    chat: person.chat ? { projects: person.chat.projects, since: person.chat.since || null } : null,
+    chat: person.chat ? { folders: person.chat.folders, since: person.chat.since || null } : null,
     collect: person.collect ? { workspace: person.collect.workspace || access.workspace, since: person.collect.since || null } : null,
   }));
 }

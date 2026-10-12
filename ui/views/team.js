@@ -1,17 +1,18 @@
 // 팀: teammates' memories this computer's agents ask, and who may ask mine.
 //
 // 팀원 기억 lists every member from the team hub. Asking a teammate's memory starts
-// with a chat request, which its owner approves with the projects they open; then
+// with a chat request, which its owner approves with the folders they open; then
 // 연결 puts it into Claude Code and Codex as a remote MCP server (team-<name>), and
 // its row's switch takes it out and puts it back. 내 기억을 여는 팀원 is the other
 // way: what this computer's server opened to whom (its gate's access.json), with
-// 수정 for the projects and for closing it again, and who collects into it. Who
+// 수정 for the folders and for closing it again, and who collects into it. Who
 // asked my memory is the 조회 기록 menu (audit.js). A team login that ended says so,
 // with 다시 로그인, instead of the screen.
 import { post } from "../lib/api.js";
 import { h, clear } from "../lib/dom.js";
 import { confirmWindow, list, listItem } from "../lib/kit.js";
-import { chooseProjects, connectApproved, loadRequests, openConnected } from "../lib/requests.js";
+import { shortPath } from "../lib/collect.js";
+import { chooseFolders, connectApproved, loadRequests, openConnected } from "../lib/requests.js";
 import { clientOutcome, connectTeammate, endedLogins, loginNotice, mateName, sendRequest, teamCall, teamDirectory, teamErrorNotice, teamStatus } from "../lib/team.js";
 import { refreshBell } from "../lib/bell.js";
 import { app, go, loadContext, refreshStatus } from "../lib/state.js";
@@ -22,6 +23,13 @@ const CLIENTS = { claude: "Claude Code", codex: "Codex" };
 /** The person's name as the team shows it: their peer, else the start of their email. */
 function nameOf(person) {
   return person.peer || person.email.split("@")[0];
+}
+
+/** The folders open to a teammate, the first few by name. */
+function foldersText(folders) {
+  if (!folders.length) return "열린 폴더 없음";
+  const names = folders.slice(0, 3).map((entry) => `${shortPath(entry.path)}${entry.subfolders ? "" : " (그 폴더만)"}`);
+  return `열린 폴더: ${names.join(" · ")}${folders.length > 3 ? ` 외 ${folders.length - 3}개` : ""}`;
 }
 
 export default {
@@ -70,14 +78,14 @@ export default {
         const request = outgoing.get(server.host);
         const local = registered.get(server.host);
         const agents = local ? Object.keys(CLIENTS).filter((key) => local[key]?.registered) : [];
-        const projects = request?.projects?.length ? ` · 열린 프로젝트 ${request.projects.length}개` : "";
+        const opened = request?.projects?.length ? ` · 열린 폴더 ${request.projects.length}개` : "";
         const name = mateName(person);
         // Connected once: the switch takes it out of the agents and puts it back.
         if (agents.length || local) {
           const on = agents.length > 0;
           return listItem({
             title: nameOf(person),
-            sub: on ? `${agents.map((key) => CLIENTS[key]).join("·")}${projects}` : `꺼 둠${projects}`,
+            sub: on ? `${agents.map((key) => CLIENTS[key]).join("·")}${opened}` : `꺼 둠${opened}`,
             end: [
               on && local?.codex?.registered ? button("로그인 안내", { kind: "small quiet", onClick: () => openConnected({ name, entry: local.entry }) }) : null,
               toggle(on, async (next) => {
@@ -121,7 +129,7 @@ export default {
           return listItem({
             title: nameOf(person),
             tags: [" ", tag("승인됨", "ok")],
-            sub: `열린 프로젝트 ${(request.projects || []).length}개`,
+            sub: `열린 폴더 ${(request.projects || []).length}개`,
             end: button("연결", { kind: "primary small", onClick: (event) => busy(event.currentTarget, async () => {
               await connectApproved({ ...request, ownerPeer: person.peer });
               refreshBell();
@@ -151,7 +159,7 @@ export default {
         granted ? list({ title: "내 기억을 여는 팀원", empty: "아직 없습니다." }, granted) : null);
     }
 
-    /** What this computer's server opened to whom: chat with its projects, or collecting into it. */
+    /** What this computer's server opened to whom: chat with its folders, or collecting into it. */
     function grantRows(requests, directory) {
       const people = new Map((directory.people || []).map((person) => [person.email, person]));
       const approved = new Map();
@@ -164,7 +172,7 @@ export default {
           rows.push(listItem({
             title: nameOf(person),
             tags: [" ", tag("chat")],
-            sub: grant.chat.projects.length ? `열린 프로젝트: ${grant.chat.projects.map((project) => project.name).join(" · ")}` : "열린 프로젝트 없음",
+            sub: foldersText(grant.chat.folders || []),
             end: button("수정", { kind: "small", onClick: (event) => busy(event.currentTarget, async () => {
               await editGrant(person, grant, request);
             }) }),
@@ -190,7 +198,7 @@ export default {
       });
     }
 
-    /** 수정: the projects open to a teammate, or 끊기 to close chat to them. */
+    /** 수정: the folders open to a teammate, or 끊기 to close chat to them. */
     async function editGrant(person, grant, request) {
       let closed = false;
       const name = nameOf(person);
@@ -204,17 +212,14 @@ export default {
           target.closest("dialog")?.close();
         }, { done: `${name}을 끊었습니다` });
       } });
-      const projects = await chooseProjects({
-        title: `${name}에게 연 프로젝트`,
-        lead: `${name}가 chat으로 물을 때 답에 쓸 프로젝트입니다.`,
-        chosen: grant.chat.projects,
+      const folders = await chooseFolders({
+        title: `${name}에게 연 폴더`,
+        lead: `${name}가 chat으로 물을 때 답에 쓸 폴더입니다.`,
+        chosen: grant.chat.folders || [],
         confirm: "적용",
         extra: close,
       });
-      if (projects && !closed) {
-        await teamCall("/api/team/grant", { email: grant.email, peer: grant.peer, projects, request: request?.id || "" });
-        post("/api/team/scopes", {}).catch(() => {});
-      }
+      if (folders && !closed) await teamCall("/api/team/grant", { email: grant.email, peer: grant.peer, folders, request: request?.id || "" });
       await draw();
     }
 

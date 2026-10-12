@@ -169,7 +169,7 @@ services:
   # computer. /health and /v3/* go to the API: with the gate token as before (the
   # health check below holds it), from an owner's registered computer as sent, and
   # from a collecting teammate's only their own conversations. /mcp goes to the mcp
-  # service for an owner or a teammate allowed to chat, with the projects they may
+  # service for an owner or a teammate allowed to chat, with the folders they may
   # ask in the scope headers; until the Access team domain, audience and team MCP
   # token are set, /mcp is not found.
   gate:
@@ -202,10 +202,10 @@ services:
   # Teammates asking this server's memory over MCP. Reached only through the gate's
   # /mcp, which has already verified the caller's Cloudflare Access login, found
   # them in access.json, and sends the team MCP token, the verified email and the
-  # scope headers: x-honcho-scope-mode `all` for an owner, `projects` with
-  # x-honcho-allowed-scopes for a teammate. The gate drops any x-honcho-* header a
+  # scope headers: x-honcho-scope-mode `all` for an owner, `folders` with
+  # x-honcho-allowed-folders for a teammate. The gate drops any x-honcho-* header a
   # caller sent, so with HONCHO_MCP_SCOPE_FROM_GATE the bridge trusts these, and a
-  # teammate's `chat` answers only from the projects opened to them. It answers
+  # teammate's `chat` answers only from the folders opened to them. It answers
   # `chat` alone, over one workspace as one peer; callers cannot point it at another
   # by header or argument. Its /audit, the record of those calls, and /guard-trial,
   # where the owner tries a question as a teammate's, are for the dashboard only:

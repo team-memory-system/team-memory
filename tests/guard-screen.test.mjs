@@ -10,7 +10,10 @@ test("each reason the bridge records reads as a few words, by how the call went"
   const passed = (error) => callReason({ status: "ok", error });
 
   assert.equal(denied("out of scope"), "사적인 질문으로 판정");
-  assert.equal(denied("That project is not open to you on this MCP server"), "열지 않은 프로젝트");
+  assert.equal(denied("No conversation in the folders open to you on this MCP server"), "열린 폴더에 대화 없음");
+  assert.equal(denied("The folders open to you on this MCP server hold more than 1000 conversations, more than one answer can draw on; the owner has to open fewer folders"), "열린 폴더의 대화가 너무 많음");
+  assert.equal(denied("The conversations in the folders open to you could not be listed on this MCP server; try again later"), "열린 폴더의 대화를 읽지 못함");
+  assert.equal(denied("search cannot be used with folders on this MCP server; use chat"), "팀원은 chat만 씀");
   assert.equal(denied("query too long to judge"), "너무 길어 판정하지 않고 거부");
   assert.equal(denied("answer withheld: it discloses private matters"), "답에 민감한 내용이 있어 막음");
   assert.equal(denied("answer too long to judge"), "답이 너무 길어 판정하지 않고 막음");

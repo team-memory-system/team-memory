@@ -2,7 +2,7 @@
 // only /health, /v3/*, /mcp and the gate's own /team-memory/* answer at all; the
 // gate token opens /health and /v3/* as before and nothing else; anyone else is a
 // person with a verified Cloudflare Access login, who may do only what access.json
-// says (an owner; chat, with the projects opened to them; collect), and on /v3 only
+// says (an owner; chat, with the folders opened to them; collect), and on /v3 only
 // from a computer whose device key the gate gave out. What passes arrives upstream
 // as it was sent and streams back, except a collector's requests, which are checked
 // and rewritten to their own sessions. Neither the API nor the MCP bridge ever sees
@@ -39,7 +39,8 @@ const CHAT_EMAIL = PERSON_EMAIL;
 const COLLECT_EMAIL = "collector@example.com";
 const HELPER_EMAIL = "helper@example.com";
 const STRANGER_EMAIL = "stranger@example.com";
-const PROJECTS = [{ id: "p-0123456789ab", name: "honcho" }, { id: "p-abcdef012345", name: "팀 메모리" }];
+const WIDE_EMAIL = "wide@example.com";
+const FOLDERS = [{ path: "/Users/owner/dev/honcho", subfolders: true }, { path: "C:\\Users\\owner\\팀 메모리", subfolders: false }];
 const prefixOf = (email) => `tm-${crypto.createHash("sha256").update(email).digest("hex").slice(0, 12)}_`;
 const COLLECT_PREFIX = prefixOf(COLLECT_EMAIL);
 const COLLECT_REFUSED = { error: "forbidden", detail: "This server takes only your own conversations" };
@@ -80,8 +81,11 @@ function accessFile(overrides = {}) {
     people: {
       [CHAT_EMAIL]: {
         peer: "teammate",
-        // Anything that is not a well-formed project never reaches the MCP bridge.
-        chat: { projects: [...PROJECTS, { id: "honcho", name: "not a scope id" }, "p-0123456789ab"] },
+        // Anything that is not a well-formed folder never reaches the MCP bridge.
+        chat: {
+          folders: [...FOLDERS, { path: "", subfolders: true }, { path: "/Users/owner/notes" }, { path: "/a\u0000b", subfolders: true },
+            { path: "x".repeat(1025), subfolders: true }, "/Users/owner/dev"],
+        },
       },
       [COLLECT_EMAIL]: { peer: "collector", collect: { workspace: "company" } },
       [HELPER_EMAIL]: { peer: "helper", collect: {} },
@@ -203,7 +207,7 @@ const assertionHeader = (claims = personClaims(), key = signingKey, header) =>
   ({ "cf-access-jwt-assertion": signAssertion(key, claims, header) });
 const loginAs = (email) => assertionHeader(personClaims({ email }));
 const withDevice = (email, key) => ({ ...loginAs(email), "x-team-memory-device": key });
-const scopesOf = (received) => JSON.parse(Buffer.from(received.headers["x-honcho-allowed-scopes"], "base64url").toString("utf8"));
+const foldersOf = (received) => JSON.parse(Buffer.from(received.headers["x-honcho-allowed-folders"], "base64url").toString("utf8"));
 
 /** A new device key for `email`'s computer. */
 async function register(email, { name = "MacBook Pro", port = gatePort } = {}) {
@@ -368,8 +372,8 @@ test("whoami tells a person what this server lets them do, whatever the case of 
   const nothing = { owner: false, chat: null, collect: false, device: null };
   const cases = [
     [OWNER_EMAIL, { email: OWNER_EMAIL, ...nothing, owner: true }],
-    [CHAT_EMAIL, { email: CHAT_EMAIL, ...nothing, chat: { projects: PROJECTS } }],
-    ["TeamMate@Example.COM", { email: CHAT_EMAIL, ...nothing, chat: { projects: PROJECTS } }],
+    [CHAT_EMAIL, { email: CHAT_EMAIL, ...nothing, chat: { folders: FOLDERS } }],
+    ["TeamMate@Example.COM", { email: CHAT_EMAIL, ...nothing, chat: { folders: FOLDERS } }],
     [COLLECT_EMAIL, { email: COLLECT_EMAIL, ...nothing, collect: true }],
     [HELPER_EMAIL, { email: HELPER_EMAIL, ...nothing, collect: true }],
     [STRANGER_EMAIL, { email: STRANGER_EMAIL, ...nothing }],
@@ -658,7 +662,12 @@ test("access.json is read again when it changes: a device revoked and given back
   const people = accessFile().people;
   await writeAccess(stateDir, accessFile({
     revokedDevices: [owner.id],
-    people: { ...people, [STRANGER_EMAIL]: { peer: "stranger", chat: { projects: [PROJECTS[1]] } } },
+    people: {
+      ...people,
+      [STRANGER_EMAIL]: { peer: "stranger", chat: { folders: [FOLDERS[1]] } },
+      // More separate folders than the bridge's header holds.
+      [WIDE_EMAIL]: { peer: "wide", chat: { folders: Array.from({ length: 100 }, (_, index) => ({ path: `/Users/owner/${"d".repeat(200)}/${index}`, subfolders: false })) } },
+    },
   }));
   await eventually(async () => assert.equal((await ownerCall()).status, 403));
   const whoami = await request("/team-memory/whoami", { port, headers: withDevice(OWNER_EMAIL, owner.key) });
@@ -667,10 +676,16 @@ test("access.json is read again when it changes: a device revoked and given back
   // The owner's other computers are untouched.
   const another = await register(OWNER_EMAIL, { port, name: "another" });
   assert.equal((await ownerCall(another.key)).status, 201);
-  // A person let in to chat asks only the project opened to them.
-  assert.deepEqual((await request("/team-memory/whoami", { port, headers: loginAs(STRANGER_EMAIL) })).json.chat, { projects: [PROJECTS[1]] });
+  // A person let in to chat asks only the folder opened to them.
+  assert.deepEqual((await request("/team-memory/whoami", { port, headers: loginAs(STRANGER_EMAIL) })).json.chat, { folders: [FOLDERS[1]] });
   assert.equal((await request("/mcp", { port, method: "POST", headers: { ...loginAs(STRANGER_EMAIL), ...json }, body: "{}" })).status, 200);
-  assert.deepEqual(scopesOf(mcpSeen.at(-1)), [PROJECTS[1]]);
+  assert.deepEqual(foldersOf(mcpSeen.at(-1)), [FOLDERS[1]]);
+  // Folders that would not fit the bridge's header are refused here, not cut short.
+  const asked = mcpSeen.length;
+  const wide = await request("/mcp", { port, method: "POST", headers: { ...loginAs(WIDE_EMAIL), ...json }, body: "{}" });
+  assert.equal(wide.status, 403);
+  assert.match(wide.json.detail, /too many separate folders/);
+  assert.equal(mcpSeen.length, asked);
 
   // The collector is taken off and the revoked device given back.
   const { [COLLECT_EMAIL]: _collector, ...withoutCollector } = people;
@@ -757,7 +772,6 @@ test("a collector's three requests reach the API rewritten to their own sessions
       automation_claude: { observe_me: false },
     },
     configuration: {},
-    scopes: ["p-0123456789ab", "p-abcdef012345"],
   };
   assert.equal((await send("/v3/workspaces/company/sessions", JSON.stringify(session))).status, 201);
   let received = arrived();
@@ -843,9 +857,7 @@ test("anything else a collector sends is refused, and none of it reaches the API
     ["a path session too long once prefixed", "POST", `${sessions}/${tooLong}/messages`, messages(said)],
     ["another person's peer", "POST", sessions, session({ peers: { owner: {} } })],
     ["the peers as a list", "POST", sessions, session({ peers: ["collector"] })],
-    ["a scope that is no project", "POST", sessions, session({ scopes: ["honcho"] })],
-    ["a scope in capitals", "POST", sessions, session({ scopes: ["p-0123456789AB"] })],
-    ["the scopes as a string", "POST", sessions, session({ scopes: "p-0123456789ab" })],
+    ["scopes to put the session in", "POST", sessions, session({ scopes: ["p-0123456789ab"] })],
     ["a message as another person", "POST", added, messages(said, { peer_id: "owner", content: "hi" })],
     ["a message with no peer", "POST", added, messages({ content: "hi" })],
     ["a message key Honcho does not take", "POST", added, messages({ ...said, session_id: "other" })],
@@ -954,8 +966,8 @@ test("a person's Access login reaches the MCP bridge as that person, with the ca
   assert.equal(received.body, body);
   assert.equal(received.headers.authorization, `Bearer ${TEAM_MCP_TOKEN}`, "the bridge sees the gate's token, never the caller's");
   assert.equal(received.headers["cf-access-authenticated-user-email"], PERSON_EMAIL, "the verified email, not the spoofed one");
-  assert.equal(received.headers["x-honcho-scope-mode"], "projects", "the gate's scope, not the caller's");
-  assert.deepEqual(scopesOf(received), PROJECTS);
+  assert.equal(received.headers["x-honcho-scope-mode"], "folders", "the gate's scope, not the caller's");
+  assert.deepEqual(foldersOf(received), FOLDERS);
   assert.equal(received.headers.host, `127.0.0.1:${mcpPort}`);
   assert.equal(received.headers["mcp-session-id"], "session-1");
   assert.equal(received.headers.accept, "application/json, text/event-stream");
@@ -971,10 +983,10 @@ test("a person's Access login reaches the MCP bridge as that person, with the ca
   assert.equal(mcpSeen.at(-1).url, "/mcp/");
 });
 
-test("/mcp: an owner asks every project, a person with chat only theirs, and anyone else is refused", async () => {
+test("/mcp: an owner asks every folder, a person with chat only theirs, and anyone else is refused", async () => {
   const spoofed = {
     "x-honcho-scope-mode": "all",
-    "x-honcho-allowed-scopes": Buffer.from(JSON.stringify([{ id: "p-ffffffffffff", name: "secret" }])).toString("base64url"),
+    "x-honcho-allowed-folders": Buffer.from(JSON.stringify([{ path: "/", subfolders: true }])).toString("base64url"),
     // Spelled with "_", which some servers read as "-".
     x_honcho_scope_mode: "all",
     cf_access_authenticated_user_email: "boss@example.com",
@@ -984,7 +996,7 @@ test("/mcp: an owner asks every project, a person with chat only theirs, and any
   assert.equal((await ask(OWNER_EMAIL)).status, 200);
   let received = mcpSeen.at(-1);
   assert.equal(received.headers["x-honcho-scope-mode"], "all");
-  assert.equal(received.headers["x-honcho-allowed-scopes"], undefined, "an owner has no list: every project");
+  assert.equal(received.headers["x-honcho-allowed-folders"], undefined, "an owner has no list: every folder");
   for (const name of ["x-team-memory-device", "x_honcho_scope_mode", "cf_access_authenticated_user_email"]) {
     assert.equal(received.headers[name], undefined, `${name} is dropped`);
   }
@@ -992,9 +1004,9 @@ test("/mcp: an owner asks every project, a person with chat only theirs, and any
 
   assert.equal((await ask(CHAT_EMAIL)).status, 200);
   received = mcpSeen.at(-1);
-  assert.equal(received.headers["x-honcho-scope-mode"], "projects");
-  assert.match(received.headers["x-honcho-allowed-scopes"], /^[A-Za-z0-9_-]+$/, "base64url");
-  assert.deepEqual(scopesOf(received), PROJECTS);
+  assert.equal(received.headers["x-honcho-scope-mode"], "folders");
+  assert.match(received.headers["x-honcho-allowed-folders"], /^[A-Za-z0-9_-]+$/, "base64url");
+  assert.deepEqual(foldersOf(received), FOLDERS);
 
   const before = mcpSeen.length;
   for (const email of [COLLECT_EMAIL, STRANGER_EMAIL]) {

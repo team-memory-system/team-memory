@@ -29,7 +29,7 @@ and requires an `email` claim. What that person may do is in `../runtime/gate`,
 mounted at `/gate-state`:
 
 - `access.json`, written by the owner's app: the owners, the teammates who may
-  `chat` (with the projects opened to them) and those who collect into this
+  `chat` (with the folders opened to them) and those who collect into this
   server. The gate reads it again when it changes; without it nobody gets in but
   the gate token.
 - `devices.json`, written by the gate alone (owner-only): every computer that
@@ -47,11 +47,13 @@ The doors:
   registered computer as it is and a collecting teammate's only to write and read
   back their own conversations, whose session ids get the teammate's own `tm-…_`
   prefix.
-- `/mcp` and `/mcp/*` go to `mcp` for an owner (every project) or a teammate
-  allowed to chat (their projects). The gate drops the caller's credentials,
+- `/mcp` and `/mcp/*` go to `mcp` for an owner (all of it) or a teammate allowed
+  to chat (the folders opened to them). The gate drops the caller's credentials,
   `x-honcho-*` and `x-team-memory-*` headers and sends `HONCHO_TEAM_MCP_TOKEN`,
-  the verified email, `x-honcho-scope-mode` and `x-honcho-allowed-scopes`. Until
-  the team domain, the AUD and the team MCP token are all set, `/mcp` answers 404.
+  the verified email, `x-honcho-scope-mode` and `x-honcho-allowed-folders`. A
+  teammate's folders too many for that header are refused at the gate
+  (`too_many_folders`). Until the team domain, the AUD and the team MCP token are
+  all set, `/mcp` answers 404.
 
 Each refusal leaves a `refused` line with the door and its reason, never an email
 or a key, in the gate's log.
@@ -59,7 +61,8 @@ or a key, in the gate's log.
 `mcp` is honcho-selfhost's `local-mcp-bridge`, built from `honcho/local-mcp-
 bridge`. It answers `chat` only, pinned to `HONCHO_TEAM_WORKSPACE` (default
 `memory`) and `HONCHO_TEAM_PEER`; with `HONCHO_MCP_SCOPE_FROM_GATE` a teammate's
-`chat` answers only from the projects in the gate's scope headers. It records each
+`chat` answers only from the conversations of the folders in the gate's scope
+headers, in one Honcho call confined to those sessions. It records each
 call in the audit schema as bridge `team`, with the caller's email, and with
 `HONCHO_AUDIT_READ` serves that record at `/audit` to the team MCP token; the
 dashboard reads it there (`HONCHO_MCP_AUDIT_URL=http://mcp:8765/audit`) for the

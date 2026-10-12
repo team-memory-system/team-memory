@@ -5,14 +5,14 @@
 // process (the callback), and everything else is a short HTTPS request to the team
 // hub or to a gate with this computer's team login (team-auth.mjs), or a change to
 // the gate's access.json beside this computer's server (gate-access.mjs), or a read
-// of that server's sessions for the projects to open (scope-sync.mjs). What starts
-// or stops a server still goes through the CLI.
+// of that server's sessions for the folders to open (server-folders.mjs). What
+// starts or stops a server still goes through the CLI.
 //
 // No route ever returns a token, a device key or the team's Jev key. A route that
 // changes something is a JSON POST, as every other route of the app.
 import { loadConfig } from "./config.mjs";
-import { gateDevices, gateGrants, gateStatePaths, grantChat, grantCollect, revokeDevice, revokePerson } from "./gate-access.mjs";
-import { scopeSettled, serverProjects, syncScopes } from "./scope-sync.mjs";
+import { folderList, gateDevices, gateGrants, gateStatePaths, grantChat, grantCollect, revokeDevice, revokePerson } from "./gate-access.mjs";
+import { serverFolders } from "./server-folders.mjs";
 import { CALLBACK_PATH, finishLogin, registerDevice, serverWhoami, setTeam, signOut, startLogin, teamAuthPaths, teamHost, teamLoginStatus } from "./team-auth.mjs";
 import { computerName, hubCall, madeTeam, teamWhoami } from "./team-hub.mjs";
 
@@ -23,10 +23,25 @@ function list(value) {
   return Array.isArray(value) ? value : [];
 }
 
-function projectsFrom(value) {
-  return list(value)
-    .filter((item) => item && /^p-[0-9a-f]{12}$/.test(String(item.id)))
-    .map((item) => ({ id: item.id, name: String(item.name || item.id).slice(0, 120) }));
+// The hub keeps, on an approved request, the names of what is open (it predates
+// folders and calls them projects): at most 50, each up to 64 characters.
+const HUB_NAMES = 50;
+const HUB_NAME_LENGTH = 64;
+
+/**
+ * A folder as the hub shows it: the home folder as ~, without the characters the hub
+ * refuses in a name (controls, invisible ones), and cut from the left to fit.
+ */
+function hubFolderName(entry) {
+  const shown = entry.path.replace(/^\/Users\/[^/]+(?=\/|$)/, "~").replace(/^\/home\/[^/]+(?=\/|$)/, "~").replace(/^[A-Za-z]:\\Users\\[^\\]+(?=\\|$)/, "~")
+    .replace(/[\p{C}\p{Zl}\p{Zp}]/gu, "").trim();
+  const chars = [...shown];
+  return chars.length <= HUB_NAME_LENGTH ? shown : `…${chars.slice(-(HUB_NAME_LENGTH - 1)).join("")}`;
+}
+
+/** The names of `folders` for the hub's record of a request. */
+function hubFolderNames(folders) {
+  return [...new Set(folders.map(hubFolderName).filter(Boolean))].slice(0, HUB_NAMES);
 }
 
 async function context() {
@@ -134,11 +149,13 @@ const ROUTES = {
         const config = await loadConfig().catch(() => null);
         await grantCollect(gate, { email, peer, workspace: config?.honcho?.workspaceId || "memory" });
       } else {
-        await grantChat(gate, { email, peer, projects: projectsFrom(body.projects) });
+        const folders = folderList(body.folders);
+        if (!folders.length) return { ok: false, error: "폴더를 하나 이상 고르세요." };
+        await grantChat(gate, { email, peer, folders });
       }
     }
-    const projects = projectsFrom(body.projects).map((item) => item.name);
-    const answer = await hubCall("POST", `/api/requests/${id}/decide`, { approve: Boolean(body.approve), ...(body.approve && body.kind !== "collect" ? { projects } : {}) }, { paths });
+    const projects = body.approve && body.kind !== "collect" ? hubFolderNames(folderList(body.folders)) : null;
+    const answer = await hubCall("POST", `/api/requests/${id}/decide`, { approve: Boolean(body.approve), ...(projects ? { projects } : {}) }, { paths });
     return { ok: true, request: answer.request || answer };
   },
 
@@ -153,41 +170,21 @@ const ROUTES = {
   },
 
   /**
-   * The projects this server holds conversations of, for the window that opens them
-   * to a teammate (scope-sync.mjs); `keep`, what is open to them now, stays listed.
-   * A server that cannot be read says so instead of listing nothing.
+   * The folders this server holds conversations of, for the window that opens them
+   * to a teammate (server-folders.mjs). A server that cannot be read says so
+   * instead of listing nothing.
    */
-  "/api/team/projects": async (body) => {
+  "/api/team/folders": async () => {
     const { config } = await context();
     try {
-      return await serverProjects({ config, keep: projectsFrom(body.keep) });
+      return await serverFolders({ config });
     } catch (error) {
       const reason = error?.cause?.code || /^HTTP \d+/.exec(String(error?.message))?.[0] || String(error?.message || error);
-      return { ok: false, error: `기억 서버에서 프로젝트를 읽지 못했습니다 (${reason}).` };
+      return { ok: false, error: `기억 서버에서 폴더를 읽지 못했습니다 (${reason}).` };
     }
   },
 
-  /**
-   * Fills one project's scope with its conversations and waits for Honcho to copy
-   * them, for 가드 시험 to answer from it the way a teammate's chat does. A project
-   * not opened to anyone has no scope yet. Filling one opens it to nobody: who may
-   * ask what stays in the gate's access.json.
-   */
-  "/api/team/scope": async (body) => {
-    const { config } = await context();
-    const [project] = projectsFrom([body.project]);
-    if (!project) return { ok: false, error: "프로젝트를 고르세요." };
-    try {
-      const filled = await syncScopes({ config, projects: [project] });
-      const settled = await scopeSettled({ config, id: project.id });
-      return { ok: true, scope: filled.scopes?.[0] || null, settled };
-    } catch (error) {
-      const reason = error?.cause?.code || /^HTTP \d+/.exec(String(error?.message))?.[0] || String(error?.message || error);
-      return { ok: false, error: `프로젝트의 대화를 모으지 못했습니다 (${reason}).` };
-    }
-  },
-
-  /** The owner changes the projects open to a teammate (`projects`), or closes chat (`close: true`). */
+  /** The owner changes the folders open to a teammate (`folders`), or closes chat (`close: true`). */
   "/api/team/grant": async (body) => {
     const { paths, gate } = await context();
     const email = String(body.email || "");
@@ -197,12 +194,13 @@ const ROUTES = {
       if (/^r-[0-9a-f]{16}$/.test(request)) await hubCall("POST", `/api/requests/${request}/revoke`, {}, { paths }).catch(() => null);
       return { ok: true, closed: true };
     }
-    const projects = projectsFrom(body.projects);
-    await grantChat(gate, { email, peer: String(body.peer || ""), projects });
+    const folders = folderList(body.folders);
+    if (!folders.length) return { ok: false, error: "폴더를 하나 이상 고르세요. 모두 닫으려면 열기를 끄세요." };
+    await grantChat(gate, { email, peer: String(body.peer || ""), folders });
     if (/^r-[0-9a-f]{16}$/.test(request)) {
-      await hubCall("POST", `/api/requests/${request}/projects`, { projects: projects.map((item) => item.name) }, { paths }).catch(() => null);
+      await hubCall("POST", `/api/requests/${request}/projects`, { projects: hubFolderNames(folders) }, { paths }).catch(() => null);
     }
-    return { ok: true, projects };
+    return { ok: true, folders };
   },
 
   /** The owner stops a teammate's computers collecting into this server. */

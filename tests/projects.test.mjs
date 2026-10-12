@@ -14,7 +14,7 @@ import {
   gitRemote,
   normalizeRemote,
   projectFolder,
-  projectScope,
+  projectIdentity,
   systemTempFolders,
   transcriptFiles,
 } from "../scripts/projects.mjs";
@@ -78,8 +78,7 @@ test("sessions are grouped by the repository their folder sits in, newest first"
   assert.equal(result.ok, true);
   assert.equal(result.scanned, 7);
   assert.equal(result.withoutFolder, 0);
-  assert.ok(result.projects.every((project) => /^p-[0-9a-f]{12}$/.test(project.scope)));
-  assert.deepEqual(result.projects.map(({ scope, ...project }) => project), [
+  assert.deepEqual(result.projects, [
     { path: worktree, name: "worktree", sessions: 1, lastAt: "2026-10-04T10:00:00.000Z", agents: { claude: 1, codex: 0 }, exists: true, git: true, folded: false, folders: 1, temp: false },
     { path: repo, name: "repo", sessions: 3, lastAt: "2026-10-03T10:00:00.000Z", agents: { claude: 1, codex: 2 }, exists: true, git: true, folded: false, folders: 2, temp: false },
     { path: home, name: "~", sessions: 1, lastAt: "2026-09-03T10:00:00.000Z", agents: { claude: 1, codex: 0 }, exists: true, git: false, folded: false, folders: 1, temp: false },
@@ -116,7 +115,7 @@ test("one-off folders outside a repository count under the folder that holds the
 
   const temp = [[path.join(home, "tmp-link"), scratch], [scratch, scratch]];
   const result = await conversationProjects({ home, temp });
-  assert.deepEqual(result.projects.map(({ scope, ...project }) => project), [
+  assert.deepEqual(result.projects, [
     { path: codexApp, name: "Codex", sessions: 4, lastAt: "2026-10-02T10:00:00.000Z", agents: { claude: 1, codex: 3 }, exists: true, git: false, folded: true, folders: 4, temp: false },
     { path: repo, name: "repo", sessions: 1, lastAt: "2026-09-29T10:00:00.000Z", agents: { claude: 0, codex: 1 }, exists: true, git: true, folded: false, folders: 1, temp: false },
     { path: scratch, name: "scratch", sessions: 3, lastAt: "2026-09-27T10:00:00.000Z", agents: { claude: 3, codex: 0 }, exists: true, git: false, folded: true, folders: 3, temp: true },
@@ -239,7 +238,7 @@ test("a second look reads again only the transcripts that changed", async (t) =>
   assert.deepEqual(after.projects.map((project) => project.path), [longer, first]);
 });
 
-test("a project's scope follows its repository's origin, so every clone of it has the same one", async (t) => {
+test("a project's id follows its repository's origin, so every clone of it has the same one", async (t) => {
   const home = await tempDir(t);
   const first = path.join(home, "dev", "honcho");
   const second = path.join(home, "work", "honcho-copy");
@@ -260,14 +259,14 @@ test("a project's scope follows its repository's origin, so every clone of it ha
   assert.equal(await gitRemote(worktree), "github.com/team/honcho");
   assert.equal(await gitRemote(plain), null);
 
-  const [a, b, c, d] = await Promise.all([first, second, worktree, plain].map((folder) => projectScope(folder)));
+  const [a, b, c, d] = await Promise.all([first, second, worktree, plain].map((folder) => projectIdentity(folder)));
   assert.match(a.id, /^p-[0-9a-f]{12}$/);
-  assert.equal(a.id, b.id, "two clones of one repository share a scope");
+  assert.equal(a.id, b.id, "two clones of one repository share an id");
   assert.equal(a.id, c.id, "so does a worktree of it");
   assert.equal(a.name, "honcho");
   assert.equal(b.name, "honcho-copy");
   assert.notEqual(d.id, a.id);
-  assert.equal((await projectScope(path.join(home, "elsewhere", "notes"))).id, d.id, "a folder with no remote goes by its name");
+  assert.equal((await projectIdentity(path.join(home, "elsewhere", "notes"))).id, d.id, "a folder with no remote goes by its name");
 
   // A session's project is its repository's root, as in the list.
   assert.equal(await projectFolder(path.join(first, ".git"), { home }), first);

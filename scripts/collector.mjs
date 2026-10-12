@@ -17,7 +17,7 @@ import {
   honchoHeaders,
   isCloudflareAccessBlock,
 } from "./honcho-access.mjs";
-import { projectFolder, projectScope } from "./projects.mjs";
+import { projectFolder, projectIdentity } from "./projects.mjs";
 import { automationOnly } from "./providers/automation.mjs";
 import { COLLECT_AUTOMATION_ENV } from "./config.mjs";
 import { collectFoldersFromEnvironment, folderMatches, foldersFromEnvironment, outsideCollectFolders } from "./targets.mjs";
@@ -387,17 +387,17 @@ function buildCodexMessages(sessionId, parsed, sessionState) {
 const projectMemo = new Map();
 
 /**
- * The project a session ran in (projects.mjs): its scope id and name, so the server
- * can put the session into that project's scope once the project is opened to a
- * teammate. Nothing for a session with no folder.
+ * The project a session ran in (projects.mjs): its id and name. The collector is the
+ * one to tell, since the folder and its repository are on its computer. Nothing for
+ * a session with no folder.
  */
 async function projectMetadata(cwd) {
   if (!projectMemo.has(cwd)) {
     projectMemo.set(cwd, (async () => {
       const folder = await projectFolder(cwd).catch(() => null);
       if (!folder) return {};
-      const scope = await projectScope(folder).catch(() => null);
-      return scope ? { project_id: scope.id, project_name: scope.name } : {};
+      const project = await projectIdentity(folder).catch(() => null);
+      return project ? { project_id: project.id, project_name: project.name } : {};
     })());
   }
   return projectMemo.get(cwd);

@@ -15,9 +15,7 @@
 //      messages have their embeddings, copying what came into the memory in use
 //      meanwhile. When the model refuses for a while (a subscription's limit), it
 //      stops the new deriver, waits, and gives the refused work back to it;
-//   4. opens the new memory to the projects opened to teammates (scopes), as the
-//      memory in use had them;
-//   5. switches: the api and deriver restart over the new schema, about a minute
+//   4. switches: the api and deriver restart over the new schema, about a minute
 //      without memory search (hooks keep their turns and send them after), and what
 //      came in during the switch is copied last.
 // The schema before stays KEEP_DAYS days: 되돌리기 (undo) switches back the same way,
@@ -89,7 +87,6 @@ const GIVE_UP_MS = 3 * DAY_MS;
 // Refused work given back at the end, at most this many times.
 const END_RETRIES = 3;
 const SCHEMA_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
-const SCOPE_PREFIX = "scope.";
 
 // ------------------------------------------------------------------ files
 
@@ -267,6 +264,8 @@ async function dropSchema(server, schema) {
   await psql(server, `DROP SCHEMA IF EXISTS ${ident(schema)} CASCADE`);
 }
 
+// A scope's own peer (the projects opened to teammates before 0.6.4) stays behind:
+// a rebuild copies the people and their conversations only.
 const notScope = (alias) => `coalesce(${alias}.internal_metadata->>'kind', '') <> 'scope'`;
 
 /** Every session of `schema` with its messages' count and tokens, in the order the conversations started. */
@@ -538,34 +537,6 @@ async function syncInto(server, { from, to, call, progress = async () => {}, sto
   return { stopped: false, ...done, totals };
 }
 
-/** The projects opened to teammates: each scope of `from`, and its sessions, in `to`. */
-async function syncScopes(server, { from, to, call }) {
-  const f = ident(from);
-  const t = ident(to);
-  const scopes = await rows(server, `SELECT p.workspace_name AS w, p.name AS p, p.metadata AS md FROM ${f}.peers p WHERE p.internal_metadata->>'kind' = 'scope'`);
-  const members = await rows(server, `SELECT sp.workspace_name AS w, sp.peer_name AS p, sp.session_name AS s FROM ${f}.session_peers sp
-    JOIN ${f}.peers p ON p.workspace_name = sp.workspace_name AND p.name = sp.peer_name
-    WHERE p.internal_metadata->>'kind' = 'scope' AND sp.left_at IS NULL`);
-  const already = new Set((await rows(server, `SELECT sp.workspace_name AS w, sp.peer_name AS p, sp.session_name AS s FROM ${t}.session_peers sp
-    JOIN ${t}.peers p ON p.workspace_name = sp.workspace_name AND p.name = sp.peer_name
-    WHERE p.internal_metadata->>'kind' = 'scope' AND sp.left_at IS NULL`)).map((row) => `${row.w}\u0000${row.p}\u0000${row.s}`));
-  const sessions = new Set((await rows(server, `SELECT workspace_name AS w, name AS s FROM ${t}.sessions`)).map((row) => `${row.w}\u0000${row.s}`));
-  let added = 0;
-  for (const scope of scopes) {
-    const id = scope.p.slice(SCOPE_PREFIX.length);
-    await call("POST", `/v3/workspaces/${quote(scope.w)}/scopes`, { id, metadata: scope.md || {} });
-    const wanted = members
-      .filter((row) => row.w === scope.w && row.p === scope.p && sessions.has(`${row.w}\u0000${row.s}`) && !already.has(`${row.w}\u0000${row.p}\u0000${row.s}`))
-      .map((row) => row.s);
-    for (let at = 0; at < wanted.length; at += 100) {
-      const batch = wanted.slice(at, at + 100);
-      await call("POST", `/v3/workspaces/${quote(scope.w)}/scopes/${quote(id)}/sessions`, { session_ids: batch });
-      added += batch.length;
-    }
-  }
-  return { scopes: scopes.length, added };
-}
-
 /**
  * How far the deriver of `schema` has got. The messages went in in the order their
  * conversations started, so its frontier is the first message still waiting: `before`
@@ -822,8 +793,8 @@ async function abandon(server, paths, job) {
 }
 
 /**
- * Runs the job in status.json from the phase it is at: start, copy, derive, scopes,
- * swap. Each phase can run again, so a job stopped half way carries on here.
+ * Runs the job in status.json from the phase it is at: start, copy, derive, swap.
+ * Each phase can run again, so a job stopped half way carries on here.
  */
 export async function rederiveRun(config) {
   const paths = rederivePaths(config);
@@ -853,8 +824,12 @@ export async function rederiveRun(config) {
       return { ok: true, stopped: true };
     }
 
+    // A job from before 0.6.4 went from derive to a phase that filled the projects
+    // opened to teammates; teammates are opened folders now, which need nothing filled.
+    if (job.phase === "scopes") await save({ phase: "swap", swapStep: 0 });
+
     // The second api and deriver, until the switch has left them.
-    if (["start", "copy", "derive", "scopes"].includes(job.phase) || (job.phase === "swap" && (job.swapStep || 0) < 2)) {
+    if (["start", "copy", "derive"].includes(job.phase) || (job.phase === "swap" && (job.swapStep || 0) < 2)) {
       await log(paths, `${job.kind} ${job.schema}: phase ${job.phase}`);
       await writeEnvironment(server, { HONCHO_NEXT_SCHEMA: job.schema, HONCHO_NEXT_NAMESPACE: job.namespace, HONCHO_NEXT_API_PORT: String(job.port) });
       await compose(server.directory, ["--profile", "rederive", "up", "-d", "api-next", "deriver-next"], { timeout: 1_800_000 });
@@ -884,24 +859,6 @@ export async function rederiveRun(config) {
       if (outcome === "stopped") {
         await abandon(server, paths, job);
         return { ok: true, stopped: true };
-      }
-      await save({ phase: "scopes" });
-    }
-
-    if (job.phase === "scopes") {
-      const scoped = await syncScopes(server, { from: job.from, to: job.schema, call: callNext });
-      await log(paths, `scopes ${scoped.scopes}, sessions added ${scoped.added}`);
-      if (scoped.added) {
-        // Each session added is copied into its scope by the deriver (scope_backfill).
-        for (;;) {
-          if (await stopped()) {
-            await abandon(server, paths, job);
-            return { ok: true, stopped: true };
-          }
-          const state = await deriveState(server, job.schema);
-          if (!state.work) break;
-          await sleep(5_000);
-        }
       }
       await save({ phase: "swap", swapStep: 0 });
     }

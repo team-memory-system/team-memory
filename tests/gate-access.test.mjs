@@ -1,7 +1,7 @@
 // The owner's side of the gate's files: access.json, which says who may do what on
 // this computer's shared server, and devices.json, which only the gate writes. What
 // matters: only what the gate reads is ever written, one change never loses
-// another, chat is opened with a list of projects and closed again, a computer is
+// another, chat is opened with a list of folders and closed again, a computer is
 // cut off by its id, and the list of computers names no key.
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -29,8 +29,8 @@ async function tempPaths(t) {
   return gateStatePaths({ serverDirectory: path.join(dir, "server") });
 }
 
-const HONCHO = { id: "p-0123456789ab", name: "honcho" };
-const WEB = { id: "p-abcdef012345", name: "web-app" };
+const HONCHO = { path: "/Users/me/dev/honcho", subfolders: true };
+const WEB = { path: "C:\\Users\\me\\web-app", subfolders: false };
 
 test("the gate's folder is <runtime>/gate beside the server, as Compose mounts ../runtime/gate", () => {
   const paths = gateStatePaths({ serverDirectory: path.join("/apps", "team-memory", "server") });
@@ -39,15 +39,20 @@ test("the gate's folder is <runtime>/gate beside the server, as Compose mounts .
   assert.equal(paths.devicesFile, path.join(paths.dir, "devices.json"));
 });
 
-test("owners, chat with projects and collecting are written as the gate reads them", async (t) => {
+test("owners, chat with folders and collecting are written as the gate reads them", async (t) => {
   const paths = await tempPaths(t);
   assert.deepEqual(await readGateAccess(paths), { version: 1, owners: [], workspace: "memory", people: {}, revokedDevices: [] });
   await setGateOwners(paths, { owners: ["Me@Example.com"], workspace: "memory" });
-  await grantChat(paths, { email: "alice@example.com", peer: "alice", projects: [HONCHO, WEB, { id: "not-a-scope", name: "x" }, HONCHO] });
+  await grantChat(paths, {
+    email: "alice@example.com",
+    peer: "alice",
+    folders: [HONCHO, WEB, { path: "" }, { path: "/a\nb", subfolders: true }, { path: "x".repeat(1025) }, "/Users/me", HONCHO, { path: "/Users/me/notes", subfolders: "yes" }],
+  });
   await grantCollect(paths, { email: "bob@example.com", peer: "bob", workspace: "memory" });
   const access = JSON.parse(await fs.readFile(paths.accessFile, "utf8"));
   assert.deepEqual(access.owners, ["me@example.com"]);
-  assert.deepEqual(access.people["alice@example.com"].chat.projects, [HONCHO, WEB], "a bad id and a repeat are dropped");
+  assert.deepEqual(access.people["alice@example.com"].chat.folders, [HONCHO, WEB, { path: "/Users/me/notes", subfolders: false }],
+    "a bad path and a repeat are dropped, and only subfolders: true opens the folders inside");
   assert.equal(access.people["alice@example.com"].peer, "alice");
   assert.equal(access.people["bob@example.com"].collect.workspace, "memory");
   if (process.platform !== "win32") {
@@ -55,11 +60,11 @@ test("owners, chat with projects and collecting are written as the gate reads th
     assert.equal((await fs.stat(paths.accessFile)).mode & 0o777, 0o644);
   }
 
-  // Changing the projects keeps when chat was first opened.
+  // Changing the folders keeps when chat was first opened.
   const since = access.people["alice@example.com"].chat.since;
-  await grantChat(paths, { email: "alice@example.com", projects: [WEB] });
+  await grantChat(paths, { email: "alice@example.com", folders: [WEB] });
   const changed = await readGateAccess(paths);
-  assert.deepEqual(changed.people["alice@example.com"].chat.projects, [WEB]);
+  assert.deepEqual(changed.people["alice@example.com"].chat.folders, [WEB]);
   assert.equal(changed.people["alice@example.com"].chat.since, since);
 
   // Closing chat leaves collecting; closing the last thing drops the person.
@@ -73,8 +78,8 @@ test("owners, chat with projects and collecting are written as the gate reads th
 test("two changes at once both land", async (t) => {
   const paths = await tempPaths(t);
   await Promise.all([
-    grantChat(paths, { email: "a@example.com", peer: "a", projects: [HONCHO] }),
-    grantChat(paths, { email: "b@example.com", peer: "b", projects: [WEB] }),
+    grantChat(paths, { email: "a@example.com", peer: "a", folders: [HONCHO] }),
+    grantChat(paths, { email: "b@example.com", peer: "b", folders: [WEB] }),
     grantCollect(paths, { email: "c@example.com", peer: "c" }),
     revokeDevice(paths, { id: "d-0123456789abcdef" }),
   ]);
@@ -88,8 +93,10 @@ test("what the gate would not read never reaches the file", () => {
     owners: ["not an email", "OK@example.com"],
     workspace: "bad workspace!",
     people: {
-      "x@example.com": { peer: "x", chat: { projects: [HONCHO] }, admin: true },
-      "y@example.com": { peer: "bad peer!", chat: { projects: [HONCHO] } },
+      "x@example.com": { peer: "x", chat: { folders: [HONCHO] }, admin: true },
+      "y@example.com": { peer: "bad peer!", chat: { folders: [HONCHO] } },
+      // A grant from before folders opens nothing.
+      "w@example.com": { peer: "w", chat: { projects: [{ id: "p-0123456789ab", name: "honcho" }] } },
       "z@example.com": { peer: "z" },
       "not-an-email": { peer: "n", collect: {} },
     },
@@ -100,7 +107,7 @@ test("what the gate would not read never reaches the file", () => {
     version: 1,
     owners: ["ok@example.com"],
     workspace: "memory",
-    people: { "x@example.com": { peer: "x", chat: { projects: [HONCHO] } } },
+    people: { "x@example.com": { peer: "x", chat: { folders: [HONCHO] } }, "w@example.com": { peer: "w", chat: { folders: [] } } },
     revokedDevices: ["d-0123456789abcdef"],
   });
 });

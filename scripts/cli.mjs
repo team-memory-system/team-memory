@@ -51,8 +51,7 @@ import {
   shareToken,
   TUNNEL_TOKEN_ENV,
 } from "./share-manager.mjs";
-import { gateDevices, gateGrants, gateStatePaths, readGateAccess } from "./gate-access.mjs";
-import { syncScopes } from "./scope-sync.mjs";
+import { gateDevices, gateGrants, gateStatePaths } from "./gate-access.mjs";
 import { TEAM_AUTH_ENV, teamAuthPaths, teamLoginStatus } from "./team-auth.mjs";
 import { computerName, hubCall, madeTeam, teamMake } from "./team-hub.mjs";
 import {
@@ -1715,7 +1714,6 @@ function usage() {
       "team make --name <team name> --email <admin Google email> [--zone <zone>] [--hub <label>] [--idp <Google login name|id>] (the Cloudflare API token in CLOUDFLARE_API_TOKEN; it needs Workers: Admin and the zone's Workers Routes: Edit as well)",
       "team status",
       "team share [--label <name>] [--replace] (after logging in to the team in the app)",
-      "team scopes",
       "team grants",
       "team devices",
       "teammates list",
@@ -1845,7 +1843,6 @@ async function teammatesCommand(args) {
  *   status   the team made here and who this computer is signed in as; no token
  *   share    this computer's server at the address the team makes for it; the
  *            tunnel token goes from the hub to this process and nowhere else
- *   scopes   fills the scopes of the projects opened to teammates (scope-sync.mjs)
  *   grants, devices   what this server opened to whom, and the computers writing to it
  * Logging in needs a browser coming back to the app, so it is the app's (team-app.mjs).
  */
@@ -1898,18 +1895,9 @@ async function teamCommand(args) {
     });
     return { ...shared, server: made.server };
   }
-  if (action === "scopes") {
-    if (!config) return { ok: false, error: "Run setup apply first" };
-    const access = await readGateAccess(gate);
-    const projects = new Map();
-    for (const person of Object.values(access.people)) {
-      for (const project of person.chat?.projects || []) projects.set(project.id, project);
-    }
-    return syncScopes({ config, projects: [...projects.values()] });
-  }
   if (action === "grants") return { ok: true, grants: await gateGrants(gate) };
   if (action === "devices") return { ok: true, devices: await gateDevices(gate) };
-  return { ok: false, error: `Unknown team action: ${action}. Expected make, status, share, scopes, grants or devices.` };
+  return { ok: false, error: `Unknown team action: ${action}. Expected make, status, share, grants or devices.` };
 }
 
 /**

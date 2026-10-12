@@ -1,14 +1,21 @@
-// Folders as a tree by their path, for the projects step, where one computer can
-// hold hundreds of conversation folders: a folder that holds others opens and
-// closes, and its box ticks or clears every folder inside it. When conversations
-// were held both in a folder and in folders inside it, the folder's own are a row
-// of their own (이 폴더), so each can be picked apart. A folder's `tag` (백업
+// Folders as a tree by their path, for the collect step and the window that opens
+// folders to a teammate, where one computer can hold hundreds of conversation
+// folders: a folder that holds others opens and closes, and its box ticks or clears
+// every folder inside it. When conversations were held both in a folder and in
+// folders inside it, the folder's own are a row of their own (<폴더>에서 바로 시작한
+// 대화), so each can be picked apart. A folder's `tag` (백업
 // 저장소에만) shows after its name, and on a folder all of whose folders have it.
 import { h, clear } from "./dom.js";
 import { number } from "./format.js";
 import { icon } from "./icons.js";
 
 const joined = (left, right, sep) => (left === "/" || left.endsWith(sep) ? `${left}${right}` : `${left}${sep}${right}`);
+
+/** The row of a folder's own conversations, by the folder's last name (~ is 홈 폴더). */
+function ownName(label) {
+  const last = String(label).split(/[\\/]+/).filter(Boolean).pop() || String(label);
+  return `${last === "~" ? "홈 폴더" : last}에서 바로 시작한 대화`;
+}
 
 /**
  * `items` ({ path, display }, in the order to show them) as a tree of their display
@@ -101,9 +108,9 @@ export function treeRows(items, columns, { open = openAtFirst(items), onChange, 
 
   // A folder no other sits in, or a folder's own conversations (`own`).
   const leaf = (item, label, depth, own = false) => {
-    const name = own ? h("span", { class: "tl" }, h("span", { class: "own" }, "이 폴더"))
+    const name = own ? h("span", { class: "tl" }, h("span", { class: "own" }, ownName(label)))
       : h("span", { class: "tl" }, h("b", {}, label), item.temp ? h("span", { class: "th" }, "임시 폴더") : null, tagOf([item]));
-    const title = own ? `${item.display || item.path} (이 폴더)` : item.display || item.path;
+    const title = own ? `${item.display || item.path}에서 바로 시작한 대화` : item.display || item.path;
     return h(inline ? "label" : "div", { class: inline ? "pr t" : "pr m t", style: template, title },
       h("span", { class: "tn", style: { paddingLeft: `${depth * 20}px` } }, h("span", { class: "tw" }), inline ? box([item], columns[0], title) : null, name),
       count([item]),

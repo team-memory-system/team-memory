@@ -323,8 +323,6 @@ const TEAM_ROUTES = {
   // This computer's server at the address the team makes for it; the tunnel token
   // goes from the hub to the CLI's own process and nowhere else.
   "/api/team/share": async (body) => runCli(["team", "share", ...inlineOption("label", body?.label), ...(body?.replace === true ? ["--replace"] : [])], { timeout: 900_000 }),
-  // Fills the scopes of the projects opened to teammates (scope-sync.mjs).
-  "/api/team/scopes": async () => runCli(["team", "scopes"], { timeout: 3_600_000 }),
 };
 
 /**
