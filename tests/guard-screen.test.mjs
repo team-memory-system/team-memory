@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { callReason, callScores, reasonText, trialOutcome, verdictTag } from "../ui/lib/guard.js";
+import { callReason, callScores, reasonText, trialOutcome, trialTag, verdictTag } from "../ui/lib/guard.js";
 
 test("each reason the bridge records reads as a few words, by how the call went", () => {
   const denied = (error) => callReason({ status: "denied", error });
@@ -88,4 +88,19 @@ test("a trial says what the teammate gets: the answer, or only the refusal", () 
 
   assert.equal(trialOutcome({ gate: true, outcome: "no_answer", error: "Honcho API 404" }).kind, "warn");
   assert.equal(trialOutcome({ outcome: "later" }).title, "알 수 없는 결과입니다.");
+});
+
+test("a trial folds to one tag: how it ends for the teammate", () => {
+  const judged = { allowed: true, score: 0.02, reason: "in scope", unjudged: false };
+  const unjudged = { allowed: true, score: null, reason: "not judged: the team hub has no Jev key", unjudged: true };
+
+  assert.deepEqual(trialTag({ gate: true, outcome: "refused", query: { ...judged, allowed: false } }), ["거부", "bad"]);
+  assert.deepEqual(trialTag({ gate: true, outcome: "withheld", query: judged, answer_check: { ...judged, allowed: false } }), ["막음", "bad"]);
+  assert.deepEqual(trialTag({ gate: true, outcome: "no_answer", query: judged }), ["답 없음", "warn"]);
+  assert.deepEqual(trialTag({ gate: true, outcome: "passed", query: judged, answer_check: judged }), ["통과", "ok"]);
+  assert.deepEqual(trialTag({ gate: true, outcome: "passed", query: judged, answer_check: null }), ["통과", "ok"], "the question alone");
+  assert.deepEqual(trialTag({ gate: true, outcome: "passed", query: unjudged, answer_check: null }), ["판정 없이 통과", "warn"]);
+  assert.deepEqual(trialTag({ gate: true, outcome: "passed", query: judged, answer_check: unjudged }), ["판정 없이 통과", "warn"]);
+  assert.deepEqual(trialTag({ gate: false, outcome: "passed", query: judged }), ["판정 꺼짐", "warn"]);
+  assert.deepEqual(trialTag({ outcome: "later" }), ["알 수 없음", "warn"]);
 });

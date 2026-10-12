@@ -966,9 +966,42 @@ details.group[open] > summary::before { content: "▾"; }
 .audit-full { margin: 0 0 6px; padding: 10px 12px; max-height: 240px; overflow: auto; border-radius: var(--radius); background: var(--sunk); font: 13.5px/1.6 var(--sans); white-space: pre-wrap; overflow-wrap: anywhere; }
 .audit-facts { margin-bottom: 4px; }
 
-/* 가드 시험: a question tried as a teammate's, each step judged, then the outcome. */
-.trial-wait { display: flex; align-items: center; gap: 8px; margin-top: 16px; color: var(--ink-3); font-size: 13px; }
-.trial-result { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+/* 가드 시험 (lib/guard-trial.js): one line above the list, a question, a chip for the
+   answer and 판정. This visit's trials sit under it, the newest open, each opened
+   to every step judged and then the outcome. */
+.trial { display: flex; flex-direction: column; gap: 8px; }
+.trial-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; font-size: 13px; }
+.trial-h b { font-weight: 650; }
+.trial-h span { color: var(--ink-3); }
+.trial-box { border: 1px solid var(--line-2); border-radius: 14px; background: var(--raised); cursor: text; transition: border-color 0.15s; }
+.trial-box:focus-within { border-color: color-mix(in srgb, var(--ink) 30%, var(--line-2)); }
+.trial-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 8px; padding: 6px 6px 6px 12px; }
+.trial-row > .icon { flex: none; align-self: flex-start; margin-top: 8px; color: var(--ink-3); }
+.trial-text { flex: 1 1 240px; min-width: 0; min-height: 30px; max-height: min(30vh, 200px); padding: 5px 0; border: 0; outline: none; background: transparent; color: var(--ink); font: inherit; font-size: 14.5px; line-height: 1.4; resize: none; overflow-y: auto; }
+.trial-text:focus-visible { box-shadow: none; }
+.trial-text::placeholder { color: var(--ink-3); }
+.trial-ends { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.trial-chip { max-width: min(300px, 60vw); }
+.trial-chip-k { color: var(--ink-3); }
+.trial-written { display: flex; align-items: flex-start; gap: 8px; padding: 2px 12px 6px; border-top: 1px solid var(--line-soft); }
+.trial-written-k { flex: none; width: 16px; padding-top: 6px; color: var(--ink-3); font-size: 12.5px; text-align: center; }
+.trial-note { padding: 0 12px 8px; }
+.trial-note:empty { display: none; }
+.trial-items { display: flex; flex-direction: column; gap: 8px; }
+.trial-items:empty { display: none; }
+.trial-item { border: 1px solid var(--line); border-radius: 12px; background: var(--raised); }
+.trial-item > summary { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; list-style: none; cursor: pointer; border-radius: 12px; }
+.trial-item > summary::-webkit-details-marker { display: none; }
+.trial-item > summary:hover { background: color-mix(in srgb, var(--ink) 3%, var(--raised)); }
+.trial-status { flex: none; margin-top: 1px; }
+.trial-head { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.trial-q { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; font-weight: 600; }
+.trial-meta { color: var(--ink-3); font-size: 12.5px; }
+.trial-item > summary .chev { flex: none; width: 14px; height: 14px; margin-top: 3px; color: var(--ink-3); transition: transform 0.15s; }
+.trial-item[open] > summary .chev { transform: rotate(180deg); }
+.trial-body { padding: 0 14px 14px; }
+.trial-wait { display: flex; align-items: center; gap: 8px; padding-top: 4px; color: var(--ink-3); font-size: 13px; }
+.trial-result { display: flex; flex-direction: column; gap: 12px; }
 .trial-result .audit-facts { margin-bottom: 0; }
 .trial-result .audit-full { margin: 0; }
 .trial-score { color: var(--ink-3); font: 12.5px var(--mono); white-space: nowrap; }

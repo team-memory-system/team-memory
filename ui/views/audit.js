@@ -3,13 +3,13 @@
 // screens use: chips for the result with the period's counts, a list a day as on
 // 팀, and a window with all there is about one call. The dashboard reads at most
 // 1000 rows at a time and has no cursor, so "더 보기" asks again with a larger limit
-// up to that cap. 가드 시험 opens a window in which the owner tries a question as a
+// up to that cap. 가드 시험, one line above the list, tries a question as a
 // teammate's (guard-trial.js).
 import { get } from "../lib/api.js";
 import { h, clear } from "../lib/dom.js";
 import { fullDate, number } from "../lib/format.js";
 import { callReason, callScores, scoreText } from "../lib/guard.js";
-import { openGuardTrial } from "../lib/guard-trial.js";
+import { guardTrial } from "../lib/guard-trial.js";
 import { kv, list, listItem, modal } from "../lib/kit.js";
 import { button, busy, details, empty, errorNotice, notice, pageHead, spinner, tag } from "../lib/ui.js";
 
@@ -98,7 +98,6 @@ export default {
     options(period, PERIODS, filters.hours);
 
     const refresh = button("", { kind: "quiet icon-only", iconName: "refresh", title: "새로 고침", onClick: (event) => busy(event.currentTarget, () => load({ keepLimit: true })) });
-    const trial = button("가드 시험", { kind: "quiet", iconName: "shield", title: "질문 하나를 팀원이 물은 것처럼 판정해 봅니다", onClick: () => openGuardTrial() });
     const chips = h("div", { class: "chips" });
     const pickers = h("div", { class: "audit-pickers" });
     const bar = h("div", { class: "audit-bar", hidden: true }, chips, pickers);
@@ -106,8 +105,8 @@ export default {
     const more = h("div", { class: "audit-more" });
 
     page.append(
-      pageHead({ title: "조회 기록", subtitle: "누가 내 기억에 무엇을 물었는지, 거부된 것까지 그대로 남깁니다.", actions: [trial, refresh] }),
-      h("div", { class: "page-body" }, h("div", { class: "pad stack" }, bar, days, more)),
+      pageHead({ title: "조회 기록", subtitle: "누가 내 기억에 무엇을 물었는지, 거부된 것까지 그대로 남깁니다.", actions: [refresh] }),
+      h("div", { class: "page-body" }, h("div", { class: "pad stack" }, guardTrial(), bar, days, more)),
     );
 
     function drawControls() {

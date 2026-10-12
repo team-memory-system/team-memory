@@ -61,6 +61,27 @@ export function verdictTag(view, part, gate = true) {
 }
 
 /**
+ * A whole trial as one tag, [text, kind], for its folded line: how it ends for the
+ * teammate, and whether anything let it through without a judgment.
+ */
+export function trialTag(trial) {
+  switch (trial?.outcome) {
+    case "refused":
+      return ["거부", "bad"];
+    case "withheld":
+      return ["막음", "bad"];
+    case "no_answer":
+      return ["답 없음", "warn"];
+    case "passed":
+      if (trial.gate === false) return ["판정 꺼짐", "warn"];
+      if (trial.query?.unjudged || trial.answer_check?.unjudged) return ["판정 없이 통과", "warn"];
+      return ["통과", "ok"];
+    default:
+      return ["알 수 없음", "warn"];
+  }
+}
+
+/**
  * What a trial comes to for the teammate: { kind, title, text, message }, `kind` a
  * notice's. `message` is the one sentence a teammate gets in place of a refused
  * question or a withheld answer.
