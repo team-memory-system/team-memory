@@ -1104,6 +1104,47 @@ test("a share profile with every setting filled is kept, and start says when it 
   assert.deepEqual(composeCalls, ["up -d --remove-orphans --build"]);
 });
 
+test("a start that put a new bundle in place recreates the gate while sharing, its code being a mount of the old folder", async (t) => {
+  const values = { HONCHO_TUNNEL_TOKEN: "eyJhIjoiYSIsInQiOiJ0IiwicyI6InMifQ==", HONCHO_TEAM_MCP_TOKEN: "mcp-token-value", HONCHO_TEAM_PEER: "owner_peer" };
+  const start = async (server, installation, { gateFails = false } = {}) => {
+    const calls = [];
+    const result = await serverStart({
+      profile: "personal",
+      hostRuntime: { start: async () => ({ ok: true, running: true }), stop: async () => ({ ok: true }) },
+      preparedServer: { ok: true, ready: true, installation, environment: {} },
+      serverDirectory: server.directory,
+      composeRunner: async (_directory, args) => {
+        calls.push(args.join(" "));
+        if (gateFails && args.includes("--force-recreate")) throw Object.assign(new Error("Command failed"), { stderr: "Error response from daemon: mount denied\n" });
+        return { stdout: "", stderr: "" };
+      },
+      healthWaiter: async () => ({ ok: true, status: 200 }),
+      shareOptions: server.shareOptions,
+    });
+    return { result, calls };
+  };
+
+  const shared = await oldSharedServer(t, { values });
+  const swapped = await start(shared, { changed: true });
+  assert.equal(swapped.result.ok, true, JSON.stringify(swapped.result));
+  assert.deepEqual(swapped.calls, ["up -d --remove-orphans --build", "up -d --no-deps --force-recreate gate"]);
+  assert.deepEqual(swapped.result.gate, { recreated: true });
+  assert.equal("warnings" in swapped.result, false);
+
+  // No new bundle, or no sharing: the gate is Compose's to keep.
+  assert.deepEqual((await start(shared, { changed: false })).calls, ["up -d --remove-orphans --build"]);
+  const alone = await oldSharedServer(t, { profiles: "debug", values });
+  const unshared = await start(alone, { changed: true });
+  assert.deepEqual(unshared.calls, ["up -d --remove-orphans --build"]);
+  assert.equal("gate" in unshared.result, false);
+
+  // A gate that did not come back is said, and the server is started all the same.
+  const failed = await start(shared, { changed: true }, { gateFails: true });
+  assert.equal(failed.result.ok, true);
+  assert.equal(failed.result.gate.recreated, false);
+  assert.deepEqual(failed.result.warnings, ["The gate still runs the server files from before this start (Error response from daemon: mount denied); run server start again"]);
+});
+
 test("a start while shared through the team writes this server's guard token from the team hub to the .env before Compose; one shared otherwise or not at all asks no hub", async (t) => {
   const tunnelId = "6f1c2b9e-1a2b-4c3d-8e9f-00000000c0de";
   const tunnelToken = Buffer.from(JSON.stringify({ a: "a", t: tunnelId, s: "s" })).toString("base64");

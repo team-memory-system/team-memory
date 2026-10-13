@@ -1553,6 +1553,7 @@ export async function serverPrepare(options = {}) {
 
 export const SHARE_REQUIRED_SETTINGS = Object.freeze(["HONCHO_TUNNEL_TOKEN", "HONCHO_TEAM_MCP_TOKEN", "HONCHO_TEAM_PEER"]);
 const SHARE_PROFILE_NAME = "share";
+const GATE_SERVICE_NAME = "gate";
 
 function profileList(environment) {
   return String(environment.COMPOSE_PROFILES || "").split(",").map((item) => item.trim()).filter(Boolean);
@@ -1618,6 +1619,26 @@ async function syncJevGuardFor(directory, shareOptions) {
     return await syncJevGuardToken({ serverDirectory: directory, ...shareOptions });
   } catch (error) {
     return { synced: false, reason: "error", detail: String(error?.message || error).split(/\r?\n/)[0] };
+  }
+}
+
+/**
+ * The gate runs gate.mjs from the installed bundle through a bind mount, which holds
+ * on to the folder the gate started with. Prepare puts a new bundle in that folder's
+ * place and Compose sees nothing changed, so a gate left alone keeps the old code: a
+ * teammate turned off since 0.6.5 would still be let in. While the .env shares, the
+ * gate is recreated after every new bundle; null when none was put in place or the
+ * gate is off.
+ */
+async function recreateGateFor(directory, installation, composeRunner) {
+  if (!installation?.changed) return null;
+  const environment = await readEnvironmentFile(path.join(directory, ".env"));
+  if (!profileList(environment).includes(SHARE_PROFILE_NAME)) return null;
+  try {
+    await composeRunner(directory, ["up", "-d", "--no-deps", "--force-recreate", GATE_SERVICE_NAME]);
+    return { recreated: true };
+  } catch (error) {
+    return { recreated: false, error: String(error?.stderr || error?.message || error).trim().split(/\r?\n/).at(-1) };
   }
 }
 
@@ -1709,7 +1730,12 @@ async function serverStartUnlocked({
     }
     throw error;
   }
+  const gate = await recreateGateFor(installed, prepared.installation, composeRunner);
   const health = await healthWaiter(`${serverUrls(ports).apiUrl}/health`);
+  const warnings = [
+    ...(share?.warnings || []),
+    ...(gate && !gate.recreated ? [`The gate still runs the server files from before this start (${gate.error}); run server start again`] : []),
+  ];
   const result = {
     ok: health.ok,
     mode: "local-docker",
@@ -1721,7 +1747,8 @@ async function serverStartUnlocked({
     compose: { stdout: composeResult.stdout.trim(), stderr: composeResult.stderr.trim() },
     ...(share ? { share } : {}),
     ...(jev ? { jev } : {}),
-    ...(share?.warnings?.length ? { warnings: share.warnings } : {}),
+    ...(gate ? { gate } : {}),
+    ...(warnings.length ? { warnings } : {}),
   };
   if (host) result.host = host;
   return result;
