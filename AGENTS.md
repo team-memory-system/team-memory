@@ -948,8 +948,8 @@ everything the owner has to answer, or the asker has to press, goes to the bell.
   they came from (a session's `metadata.source`, `unknown` when it names none):
   ChatGPT 기록 always, greyed with where to import it until some is there, and any
   other app that has some. A ticked app opens its conversations, those imported
-  later included. The window will not open more than 1,000 conversations at once,
-  the most one Honcho search covers. A server that cannot be read shows why
+  later included. Any number of conversations may open: the MCP bridge searches
+  more than 20,000 a share at a time (honcho-selfhost `MAX_SESSIONS_PER_SEARCH`). A server that cannot be read shows why
   instead of a list. The entries go into `access.json` for that email
   (`chat.folders`, `chat.sources`), and only then does the hub hear "approved",
   with the folders' and apps' names (in the request's `projects`, which predates

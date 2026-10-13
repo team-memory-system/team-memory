@@ -16,7 +16,7 @@ import { bellSource, refreshBell } from "./bell.js";
 import { h, clear } from "./dom.js";
 import { appRowsOf, folderRowsOf, grantFromHubNames, grantFromTicked, grantedPaths } from "./folder-grants.js";
 import { folderTree, folderTreeTable, openAtFirst } from "./folder-tree.js";
-import { josa, number } from "./format.js";
+import { number } from "./format.js";
 import { listItem, modal } from "./kit.js";
 import { ago, loginTab, personName as nameOfPerson, registerWith, serversLogin, teamCall, teamDirectory, teamRequests, teamStatus } from "./team.js";
 import { app, loadContext } from "./state.js";
@@ -30,9 +30,6 @@ const starting = new Set();
 // fits the header it hands the MCP bridge (gate.mjs MAX_FOLDERS_HEADER, base64url).
 const MAX_GRANT_FOLDERS = 100;
 const MAX_GRANT_BYTES = 8_000;
-// One search covers at most this many conversations (Honcho's session filter); with
-// more open, the MCP bridge refuses every search the teammate's agent makes.
-const MAX_OPEN_CONVERSATIONS = 1_000;
 
 /**
  * The hub's requests with this server's own grants and computers, asked at most once
@@ -105,11 +102,7 @@ export function chooseFolders({ title, lead, who, chosen = [], chosenSources = [
       const conversations = ticked.reduce((sum, row) => sum + row.count, 0) + opened.reduce((sum, row) => sum + row.count, 0);
       const what = [ticked.length ? `폴더 ${number(ticked.length)}개` : null, ...opened.map((row) => row.label)].filter(Boolean);
       clear(summary, what.length ? `${what.join(" · ")} · 대화 ${number(conversations)}개를 엽니다` : rows ? "폴더나 ChatGPT 기록을 하나 이상 고르세요." : "");
-      const over = conversations > MAX_OPEN_CONVERSATIONS;
-      if (over) {
-        clear(problem, notice("warn", `대화는 ${number(MAX_OPEN_CONVERSATIONS)}개까지 열 수 있습니다. 지금 ${number(conversations)}개라 이대로면 ${josa(who, "이/가")} 물을 때마다 거절됩니다. 폴더를 줄이세요.`));
-      }
-      apply.disabled = !rows || !what.length || over;
+      apply.disabled = !rows || !what.length;
     };
     win.body(
       h("p", { class: "lead", style: { marginTop: "4px" } }, lead),
