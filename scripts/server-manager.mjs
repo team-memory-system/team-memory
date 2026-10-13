@@ -1701,6 +1701,8 @@ async function serverStartUnlocked({
       installation: prepared.installation,
       environment: prepared.environment,
       host,
+      issues: host.issues?.length ? host.issues : ["The host services did not become ready"],
+      ...(host.nextAction ? { nextAction: host.nextAction } : {}),
       next: "Resolve the reported host-service issue before starting Honcho containers",
     };
   }

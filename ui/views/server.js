@@ -5,6 +5,7 @@
 // 공유 tab (share.js), and the team it opens to is 관리자 (admin.js).
 import { cli, gateway, post } from "../lib/api.js";
 import { ROLES } from "../lib/chat-roles.js";
+import { explainWarning } from "../lib/collect.js";
 import { h, clear } from "../lib/dom.js";
 import { number } from "../lib/format.js";
 import { kv } from "../lib/kit.js";
@@ -103,7 +104,10 @@ function prepareOutcome(result) {
       h("div", {}, "기억 서버가 생각할 모델을 쓰려면 Codex나 Claude 계정이 있어야 합니다. 아래 “게이트웨이에 구독 계정 로그인” 단계에서 로그인한 뒤 “기억 서버 준비”를 누르세요."),
       h("div", { class: "form-actions" }, button("게이트웨이에서 로그인", { kind: "primary small", onClick: () => go("models") })));
   }
-  if (result.issues?.length) return notice("bad", h("b", {}, "준비하지 못했습니다."), h("ul", {}, result.issues.map((issue) => h("li", {}, issue))), result.next ? h("div", {}, result.next) : null);
+  if (result.issues?.length) {
+    const next = result.next ? explainWarning(result.next) : "";
+    return notice("bad", h("b", {}, "준비하지 못했습니다."), h("ul", {}, result.issues.map((issue) => h("li", {}, explainWarning(issue)))), next ? h("div", {}, next) : null);
+  }
   if (result.ok && result.ready !== false) {
     return notice(result.share?.profileDropped ? "warn" : "ok", h("b", {}, "준비했습니다."), modelsText(result.chatRoles) ? ` 모델은 ${modelsText(result.chatRoles)}입니다.` : "", " 이제 시작할 수 있습니다.",
       result.share?.profileDropped ? h("div", {}, "예전 판에서 켠 공유는 꺼 두었습니다. 서버 → 공유에서 다시 켜세요.") : null);

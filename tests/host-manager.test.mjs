@@ -82,11 +82,16 @@ function healthyGatewayRunner(calls = []) {
 
 // launchctl, reg and systemctl as fakes: what is registered, what launchd runs, and
 // every call. The real ones are never reached: under `node --test` the default
-// runner refuses them.
+// runner refuses them. `state.onStart` and `state.onStop` do what the supervisor
+// does as launchd or systemd starts or stops it (claim or drop the PID file).
+// `runAtLoad: false` is the clean MacBook of 2026-10-13, where a bootstrap loaded
+// the agent and never ran it; `kickstartRuns: false` is a launchd that runs nothing.
 function fakeAutostart() {
   const calls = [];
-  const state = { loaded: false, running: false, registry: new Map(), systemdAvailable: true };
+  const state = { loaded: false, running: false, registry: new Map(), systemdAvailable: true, runAtLoad: true, kickstartRuns: true, onStart: null, onStop: null };
   const done = { code: 0, stdout: "", stderr: "" };
+  const start = async () => { if (!state.running) { state.running = true; await state.onStart?.(); } };
+  const stop = async () => { if (state.running) { state.running = false; await state.onStop?.(); } };
   const runner = async (command, args) => {
     calls.push({ command, args: [...args] });
     const name = String(command).split(/[\\/]/).pop();
@@ -94,9 +99,9 @@ function fakeAutostart() {
       if (args[0] === "print") {
         return state.loaded ? { code: 0, stdout: `state = ${state.running ? "running" : "not running"}\n`, stderr: "" } : { code: 113, stdout: "", stderr: "Could not find service" };
       }
-      if (args[0] === "bootstrap") { state.loaded = true; state.running = true; return done; }
-      if (args[0] === "bootout") { state.loaded = false; state.running = false; return done; }
-      if (args[0] === "kickstart") { state.running = true; return done; }
+      if (args[0] === "bootstrap") { state.loaded = true; if (state.runAtLoad) await start(); return done; }
+      if (args[0] === "bootout") { state.loaded = false; await stop(); return done; }
+      if (args[0] === "kickstart") { if (state.kickstartRuns) await start(); return done; }
     }
     if (name === "reg.exe") {
       const key = `${args[1]}\\${args[args.indexOf("/v") + 1]}`;
@@ -106,6 +111,8 @@ function fakeAutostart() {
     }
     if (name === "systemctl") {
       if (args[1] === "show-environment" && !state.systemdAvailable) return { code: 1, stdout: "", stderr: "Failed to connect to bus: No medium found" };
+      if (args[1] === "restart") await start();
+      if (args[1] === "disable" && args.includes("--now")) await stop();
       return done;
     }
     return { code: 1, stdout: "", stderr: `unexpected ${command}` };
@@ -511,6 +518,27 @@ async function claimPid(paths, pid = process.pid) {
   }));
 }
 
+/**
+ * What the fake launchd or systemd runs as the supervisor: an idle process that
+ * claims the PID file, so `host stop` has a process of its own to stop and never
+ * signals the test runner.
+ */
+function standInSupervisor(t, autostart, paths) {
+  // Every one started, since a test may drop the PID file by hand and start another.
+  const children = new Set();
+  t.after(() => { for (const child of children) child.kill(); });
+  autostart.state.onStart = async () => {
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1 << 30)"], { stdio: "ignore" });
+    children.add(child);
+    child.once("exit", () => children.delete(child));
+    await claimPid(paths, child.pid);
+  };
+  autostart.state.onStop = async () => {
+    for (const child of children) child.kill();
+    await fsp.rm(paths.pidFile, { force: true });
+  };
+}
+
 test("host start waits for the gateway router, Ollama, and model residency instead of accepting PID alone", async (t) => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "honcho-agent-bridge-host-start-wait-"));
   t.after(() => fsp.rm(root, { recursive: true, force: true }));
@@ -552,6 +580,55 @@ test("host start waits for the gateway router, Ollama, and model residency inste
   assert.equal(result.gateway.router.ok, true);
   assert.ok(statusCalls >= 3, "it kept asking until the router answered");
   assert.ok(psCalls >= 2);
+});
+
+test("a host start that runs out of time says what is not up", async (t) => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "honcho-agent-bridge-host-start-issues-"));
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  const homeDir = path.join(root, "user");
+  const appHome = path.join(root, "app");
+  const serverDir = path.join(appHome, "server");
+  const env = { HOME: homeDir, HONCHO_AGENT_BRIDGE_HOME: appHome };
+  const paths = resolveHostPaths({ installedServerDir: serverDir, platform: "linux", env, homeDir });
+  await writeRuntimeConfig(paths);
+  await claimPid(paths);
+  await placeGatewayCli(paths.gatewayDir);
+  const result = await hostStart({
+    profile: "personal",
+    installedServerDir: serverDir,
+    platform: "linux",
+    env,
+    homeDir,
+    skipPrepare: true,
+    startTimeoutMs: 50,
+    statusPollMs: 10,
+    fetchImpl: async (url) => (String(url).endsWith("/api/ps") ? response({ models: [] }) : response({ status: "ok" })),
+    gatewayRunner: async () => ({ code: 0, stdout: JSON.stringify(gatewayStatusDocument({ routerOk: false })) }),
+    spawnImpl: () => ({ unref() {} }),
+    ...fakeAutostart().options,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.timedOut, true);
+  assert.deepEqual(result.issues, [
+    "The subscription gateway's router is not answering",
+    "Ollama has not loaded the embedding model qwen3-embedding-honcho-8192",
+  ]);
+
+  const down = await hostStart({
+    profile: "personal",
+    installedServerDir: serverDir,
+    platform: "linux",
+    env,
+    homeDir,
+    skipPrepare: true,
+    startTimeoutMs: 50,
+    statusPollMs: 10,
+    fetchImpl: async () => { throw new Error("connection refused"); },
+    gatewayRunner: async () => ({ code: 0, stdout: JSON.stringify(gatewayStatusDocument()) }),
+    spawnImpl: () => ({ unref() {} }),
+    ...fakeAutostart().options,
+  });
+  assert.deepEqual(down.issues, ["Ollama is not answering"]);
 });
 
 test("host start stops waiting when the gateway has no login and says where to log in", async (t) => {
@@ -849,6 +926,7 @@ async function autostartFixture(t, platform) {
   await writeRuntimeConfig(paths, { enabled: false, baseUrl: "http://127.0.0.1:11434", model: "unused" });
   await placeGatewayCli(paths.gatewayDir);
   const autostart = fakeAutostart();
+  standInSupervisor(t, autostart, paths);
   const spawned = [];
   const ran = [];
   const options = {
@@ -860,6 +938,9 @@ async function autostartFixture(t, platform) {
     skipPrepare: true,
     startTimeoutMs: 200,
     statusPollMs: 10,
+    supervisorStartMs: 100,
+    gracefulStopTimeoutMs: 1_000,
+    stopPollMs: 10,
     nodePath: "/absolute/node",
     fetchImpl: async () => response({ status: "ok" }),
     run: async (command, args) => { ran.push({ command, args }); return { ok: true, stdout: "", stderr: "" }; },
@@ -886,6 +967,7 @@ test("macOS: host start registers a RunAtLoad LaunchAgent that restarts only a c
   assert.deepEqual(f.autostart.lines(), [
     `launchctl print gui/501/${HOST_LAUNCHD_LABEL}`,
     `launchctl bootstrap gui/501 ${plistPath}`,
+    `launchctl kickstart gui/501/${HOST_LAUNCHD_LABEL}`,
   ]);
   assert.deepEqual(started.autostart, { registered: true, kind: "launchd", path: plistPath, changed: true });
   assert.equal("warnings" in started, false);
@@ -931,7 +1013,7 @@ test("macOS: host start registers a RunAtLoad LaunchAgent that restarts only a c
   // A new node (an upgrade, say) changes the agent: booted out and bootstrapped again.
   f.autostart.calls.length = 0;
   await hostStart({ ...f.options, nodePath: "/newer/node" });
-  assert.deepEqual(f.autostart.lines().map((line) => line.split(" ").slice(0, 2).join(" ")), ["launchctl print", "launchctl bootout", "launchctl bootstrap"]);
+  assert.deepEqual(f.autostart.lines().map((line) => line.split(" ").slice(0, 2).join(" ")), ["launchctl print", "launchctl bootout", "launchctl bootstrap", "launchctl kickstart"]);
   assert.ok((await fsp.readFile(plistPath, "utf8")).includes("<string>/newer/node</string>"));
 
   f.autostart.calls.length = 0;
@@ -942,6 +1024,41 @@ test("macOS: host start registers a RunAtLoad LaunchAgent that restarts only a c
   await assert.rejects(fsp.access(plistPath));
   assert.deepEqual((await hostStatus(f.options)).autostart, { registered: false, kind: "launchd" });
   assert.equal(f.ran.some((call) => OS_REGISTRATION.test(call.command)), false, "the Ollama runner never registers anything");
+});
+
+test("macOS: an agent launchd loaded and did not run is kickstarted, as on a clean MacBook on 2026-10-13", async (t) => {
+  const f = await autostartFixture(t, "darwin");
+  f.autostart.state.runAtLoad = false;
+  const first2 = () => f.autostart.lines().map((line) => line.split(" ").slice(0, 2).join(" "));
+
+  const started = await hostStart(f.options);
+  assert.equal(started.ok, true);
+  assert.equal(started.startedBy, "launchd");
+  assert.deepEqual(f.spawned, []);
+  assert.deepEqual(first2(), ["launchctl print", "launchctl bootstrap", "launchctl kickstart"]);
+  assert.equal("warnings" in started, false);
+
+  // A changed agent while it runs: the bootout stops it and the kickstart brings it back.
+  f.autostart.calls.length = 0;
+  const again = await hostStart({ ...f.options, nodePath: "/newer/node" });
+  assert.equal(again.alreadyRunning, true);
+  assert.equal(again.ok, true, "running again after the bootout");
+  assert.deepEqual(first2(), ["launchctl print", "launchctl bootout", "launchctl bootstrap", "launchctl kickstart"]);
+  assert.deepEqual(f.spawned, []);
+});
+
+test("host start starts the supervisor itself when launchd takes the start and never runs it, and says what is not up", async (t) => {
+  const f = await autostartFixture(t, "darwin");
+  f.autostart.state.runAtLoad = false;
+  f.autostart.state.kickstartRuns = false;
+  const started = await hostStart(f.options);
+  assert.equal(started.startedBy, "spawn");
+  assert.deepEqual(f.spawned.map((call) => [call.command, ...call.args]), [f.command]);
+  assert.equal(started.autostart.registered, true);
+  assert.deepEqual(started.warnings, ["launchd did not start the host supervisor, so it was started directly; it may not come back after a reboot by itself"]);
+  // The spawn here is a stand-in too, so nothing claims the PID file.
+  assert.equal(started.ok, false);
+  assert.deepEqual(started.issues, ["The host supervisor is not running"]);
 });
 
 test("Windows: host start sets the TeamMemoryHost Run value to a hidden wscript and starts the same command now", async (t) => {
@@ -1041,12 +1158,14 @@ test("a full host start installs the gateway through its CLI and registers only 
   const fixture = await hostFixture(root);
   const gatewayCalls = [];
   const spawned = [];
+  const env = { HOME: fixture.homeDir, HONCHO_AGENT_BRIDGE_HOME: fixture.appHome };
   const autostart = fakeAutostart();
+  standInSupervisor(t, autostart, resolveHostPaths({ installedServerDir: fixture.serverDir, platform: "darwin", env, homeDir: fixture.homeDir }));
   const result = await hostStart({
     profile: "personal",
     installedServerDir: fixture.serverDir,
     platform: "darwin",
-    env: { HOME: fixture.homeDir, HONCHO_AGENT_BRIDGE_HOME: fixture.appHome },
+    env,
     homeDir: fixture.homeDir,
     run: fixture.run,
     fetchImpl: async (url) => String(url).endsWith("/api/ps")
@@ -1060,13 +1179,12 @@ test("a full host start installs the gateway through its CLI and registers only 
     statusPollMs: 10,
     ...autostart.options,
   });
-  // launchd is a stand-in, so the supervisor's PID file never appears; everything
-  // this start could do by itself has still happened.
   assert.deepEqual(gatewayCalls.map((call) => call.args[1]).slice(0, 2), ["install", "status"]);
   assert.deepEqual(spawned, [], "the supervisor starts through its LaunchAgent");
   assert.deepEqual(autostart.lines().map((line) => line.split(" ").slice(0, 3).join(" ")), [
     `launchctl print gui/501/${HOST_LAUNCHD_LABEL}`,
     "launchctl bootstrap gui/501",
+    `launchctl kickstart gui/501/${HOST_LAUNCHD_LABEL}`,
   ]);
   assert.equal(fixture.calls.some((call) => OS_REGISTRATION.test(call.command)), false, "the Ollama runner never registers anything");
   assert.equal(result.gateway.router.ok, true);

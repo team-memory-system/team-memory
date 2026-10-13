@@ -695,7 +695,8 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
 
   async function start(task) {
     const started = await post("/api/server/start", { profile: "personal" });
-    if (!started.ok) throw new Error(problem(started, "기억 서버를 켜지 못했습니다."));
+    // What did not come up on this computer often comes up on a second try.
+    if (!started.ok) throw new Error(`${problem(started, "기억 서버를 켜지 못했습니다.")}${started.host ? " 다시 시도를 누르세요." : ""}`);
     await post("/api/host/start", {}).catch(() => {});
     await loadContext();
     task.sub = app.context?.localServer?.apiUrl?.replace(/^https?:\/\//, "") || "";

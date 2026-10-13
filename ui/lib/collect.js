@@ -570,6 +570,15 @@ const WARNINGS = [
   // 처음 설정 → 모델: a model the subscriptions logged in at 적용 do not offer.
   [/The gateway does not offer the (\w+) model "([^"]+)"/, (m) => `구독 게이트웨이에 ${m[2]} 모델이 없습니다. 로그인한 구독 계정으로는 쓸 수 없는 모델입니다. 설정으로 돌아가기를 누르고 모델 단계에서 ${(ROLES.find(([key]) => key === m[1]) || [, m[1]])[1]} 모델을 다른 것으로 고르세요.`],
   [/^Choose one of the models the gateway offers/, () => ""],
+  // 기억 서버 켜기: what on this computer did not come up before the containers.
+  [/^The host supervisor is not running/, () => "임베딩 모델을 돌리는 프로그램이 켜지지 않았습니다."],
+  [/^The subscription gateway is not installed/, () => "구독 게이트웨이가 설치되지 않았습니다."],
+  [/^The subscription gateway has no account logged in/, () => "구독 게이트웨이에 로그인한 계정이 없습니다. 게이트웨이에서 Codex나 Claude 계정으로 로그인하세요."],
+  [/^The subscription gateway's router is not answering/, () => "구독 게이트웨이가 응답하지 않습니다."],
+  [/^Ollama is not answering/, () => "Ollama가 응답하지 않습니다."],
+  [/^Ollama has not loaded the embedding model (\S+)/, (m) => `Ollama가 아직 임베딩 모델을 불러오지 못했습니다 (${m[1]}).`],
+  [/^The host services did not become ready/, () => "임베딩 모델과 구독 게이트웨이가 준비되지 않았습니다."],
+  [/^Resolve the reported host-service issue/, () => ""],
   [/The Cloudflare API token is needed/, () => "Cloudflare API token을 넣으세요."],
   [/The API token cannot see any zone/, () => "이 Cloudflare API token이 보는 zone이 없습니다. token에 쓸 zone의 Zone: Read와 DNS: Edit 권한을 주세요."],
   [/The API token cannot see a zone named (\S+);/, (m) => `이 Cloudflare API token은 ${m[1]} zone을 보지 못합니다. zone 이름과 token의 Zone: Read 권한을 확인하세요.`],

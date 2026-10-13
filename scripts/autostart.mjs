@@ -147,7 +147,8 @@ export async function launchAgentRunning(ctx, agent) {
 /**
  * Writes the plist and loads it. An unchanged agent launchd already has is left
  * alone unless `restart`; a changed one is booted out and bootstrapped again.
- * Bootstrapping a RunAtLoad agent starts it.
+ * Bootstrapping a RunAtLoad agent should start it, but launchd does not always run
+ * it (runs = 0); a caller that needs it running kickstarts it as well.
  */
 export async function installLaunchAgent(ctx, agent, { restart = false } = {}) {
   const changed = await writeIfChanged(agent.plistPath, agent.text);

@@ -125,10 +125,16 @@ question and gets an answer, without reading the underlying messages.
   10 MB. A second supervisor finds the first through its PID file and exits 0, and a
   stop exits 0 too, so launchd and systemd restart only a crash and never loop on a
   duplicate; a missing host config also exits 0, since no restart fixes it. On
-  Windows the Run value takes effect at the next logon, so `host start` spawns the
-  same command itself. Where no autostart can be registered (no systemd user
-  session, say), `host start` still starts the supervisor and reports
-  `autostart.error` and a warning. `host status` and `server status --profile
+  macOS every bootstrap is followed by `launchctl kickstart`: a colleague's clean
+  MacBook (2026-10-13) loaded both this agent and the gateway's and ran neither
+  (`runs = 0` in `launchctl print`), and a kickstart leaves a running agent alone.
+  On Windows the Run value takes effect at the next logon, so `host start` spawns
+  the same command itself. Where no autostart can be registered (no systemd user
+  session, say), or launchd or systemd took the start and no supervisor claimed the
+  PID file within 15 seconds, `host start` still starts the supervisor itself and
+  reports `autostart.error` or a warning. A start that is not ready in the end lists
+  what is not up in `issues` (supervisor, gateway, Ollama, the embedding model),
+  which `server start` passes on. `host status` and `server status --profile
   personal` report `autostart: {registered, kind}`.
 
   At login the supervisor may start before Docker Desktop, the gateway, or Ollama's

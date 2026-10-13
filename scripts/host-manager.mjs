@@ -725,9 +725,37 @@ async function pidState(pidFile) {
   } catch { return { record: null, running: false }; }
 }
 
+/**
+ * Whether a supervisor holds the PID file within `options.supervisorStartMs`. The
+ * supervisor claims it before anything else, so one that launchd or systemd started
+ * shows up within a second or two.
+ */
+async function supervisorCameUp(pidFile, options) {
+  const deadline = Date.now() + (options.supervisorStartMs ?? 15_000);
+  const pollMs = Math.min(options.statusPollMs ?? 1_000, 250);
+  for (;;) {
+    if ((await pidState(pidFile)).running) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}
+
 /** The gateway answered and has nobody logged in, so its router has nothing to route to. */
 function gatewayNeedsLogin(status) {
   return status?.gateway?.installed === true && status.gateway.ok === false && status.gateway.loggedIn === false;
+}
+
+/** What keeps a host that is not ready from being ready, one line each. */
+function hostProblems(status) {
+  if (!status.installed) return ["Host runtime config was not generated"];
+  const problems = [];
+  if (!status.running) problems.push("The host supervisor is not running");
+  if (status.gateway?.installed === false) problems.push("The subscription gateway is not installed");
+  else if (gatewayNeedsLogin(status)) problems.push("The subscription gateway has no account logged in");
+  else if (!status.gateway?.ok) problems.push("The subscription gateway's router is not answering");
+  if (status.ollama?.enabled && !status.ollama.healthy) problems.push("Ollama is not answering");
+  else if (status.ollama?.enabled && !status.ollama.resident) problems.push(`Ollama has not loaded the embedding model ${status.ollama.model}`);
+  return problems;
 }
 
 // ---------------------------------------------------------------- autostart
@@ -852,12 +880,13 @@ async function registerHostAutostart(ctx, spec, { supervisorRunning }) {
   try {
     if (spec.kind === "launchd") {
       const installed = await installLaunchAgent(ctx, spec);
-      let started = installed.started;
-      // Loaded and unchanged, but not running (stopped by hand, say): start it now.
-      if (!started && !supervisorRunning) {
-        await kickstartLaunchAgent(ctx, spec);
-        started = true;
-      }
+      // A bootstrap should start a RunAtLoad agent, but on a colleague's clean MacBook
+      // (2026-10-13) launchd loaded this agent and the gateway's and ran neither
+      // (runs = 0). A kickstart starts a loaded agent that is not running and leaves a
+      // running one alone, so it follows every bootstrap. It also starts an unchanged
+      // agent whose supervisor is not running (stopped by hand, say).
+      const started = installed.started || !supervisorRunning;
+      if (started) await kickstartLaunchAgent(ctx, spec);
       return { registered: true, kind: spec.kind, path: installed.path, changed: installed.changed, started };
     }
     if (spec.kind === "systemd") {
@@ -898,8 +927,10 @@ async function hostAutostartStatus(options, paths, config) {
  *
  * The supervisor gets a per-user login autostart (see the top of this file), and
  * starts through it now where the OS can do that (launchd, systemd); on Windows,
- * or when the autostart cannot be registered, it is spawned directly and detached
- * with the same command, which is reported in `autostart.error` and `warnings`.
+ * when the autostart cannot be registered, or when the OS does not start it within
+ * a few seconds, it is spawned directly and detached with the same command, which
+ * is reported in `autostart.error` or `warnings`. A start that is not ready in the
+ * end says why in `issues`.
  * Either way it outlives the terminal or the UI process that pressed the button,
  * and is found again through its PID file. The gateway's own install registers the
  * gateway's own autostart.
@@ -937,9 +968,12 @@ export async function hostStart(options = {}) {
   const { ctx: autostartCtx, spec } = hostAutostartFor(options, paths, config);
   const registration = await registerHostAutostart(autostartCtx, spec, { supervisorRunning: existing.running });
   let startedBy = null;
+  let notStartedBy = null;
   if (!existing.running) {
-    if (registration.started) startedBy = registration.kind;
+    if (registration.started && await supervisorCameUp(config.state.pidFile, options)) startedBy = registration.kind;
     else {
+      // launchd or systemd took the start and did not start it: started here instead.
+      if (registration.started) notStartedBy = registration.kind;
       try {
         spawnDetached(spawnImpl, options.nodePath || process.execPath,
           supervisorArguments({ supervisorFile: config.supervisorFile, configFile: config.state.configFile, logDir: config.state.logDir }),
@@ -967,12 +1001,19 @@ export async function hostStart(options = {}) {
     status = await hostStatus(options);
   }
   const loginNeeded = gatewayNeedsLogin(status);
+  const warnings = [
+    ...(registration.error
+      ? [`The host supervisor has no login autostart, so it will not come back after a reboot by itself: ${registration.error}`]
+      : []),
+    ...(notStartedBy
+      ? [`${notStartedBy} did not start the host supervisor, so it was started directly; it may not come back after a reboot by itself`]
+      : []),
+  ];
   return {
     ...status,
+    ...(status.ok ? {} : { issues: hostProblems(status) }),
     autostart,
-    ...(registration.error
-      ? { warnings: [`The host supervisor has no login autostart, so it will not come back after a reboot by itself: ${registration.error}`] }
-      : {}),
+    ...(warnings.length ? { warnings } : {}),
     prepared: true,
     started,
     ...(startedBy ? { startedBy } : {}),
