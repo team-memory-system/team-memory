@@ -177,3 +177,45 @@ test("Claude Code turns stored with metadata {} are not sent again, and another 
   assert.deepEqual(sent(honcho, 3), ["yes"]);
   assert.equal(honcho.stored.at(-1).peer_id, "user_test");
 });
+
+const FORK = "01a04e70-0000-7000-8000-000000000001";
+
+test("a forked Codex thread's copy of its parent's conversation is not sent; its own turns are", async (t) => {
+  const honcho = await startHoncho(t);
+  const directory = await workdir(t);
+  const parent = path.join(directory, `rollout-2026-01-01T00-00-00-${THREAD}.jsonl`);
+  const fork = path.join(directory, `rollout-2026-01-02T00-00-00-${FORK}.jsonl`);
+  await writeRows(parent, [
+    meta(),
+    say("user", "first question", "2026-01-01T00:00:01Z"),
+    say("assistant", "first answer", "2026-01-01T00:00:02Z"),
+    say("user", "parent goes on", "2026-01-01T00:00:03Z"),
+  ]);
+  await writeRows(fork, [
+    { type: "session_meta", payload: { id: FORK, forked_from_id: THREAD, history_mode: "paginated", cwd: "/tmp/project", originator: "Codex Desktop", source: "vscode" } },
+    say("user", "first question", "2026-01-02T00:00:00Z"),
+    say("assistant", "first answer", "2026-01-02T00:00:00Z"),
+    say("user", "fork asks this", "2026-01-02T00:00:01Z"),
+    say("assistant", "first answer", "2026-01-02T00:00:02Z"),
+  ]);
+
+  const result = await collect(honcho, directory, "codex", fork);
+  assert.equal(result.session_id, `codex-${FORK}`);
+  assert.equal(result.fork_copy_turns, 2);
+  assert.deepEqual(sent(honcho, 0), ["fork asks this", "first answer"]);
+});
+
+test("a fork whose parent's file is not on this computer goes in whole", async (t) => {
+  const honcho = await startHoncho(t);
+  const directory = await workdir(t);
+  const fork = path.join(directory, `rollout-2026-01-02T00-00-00-${FORK}.jsonl`);
+  await writeRows(fork, [
+    { type: "session_meta", payload: { id: FORK, forked_from_id: THREAD, cwd: "/tmp/project", originator: "Codex Desktop", source: "vscode" } },
+    say("user", "first question", "2026-01-02T00:00:00Z"),
+    say("assistant", "first answer", "2026-01-02T00:00:00Z"),
+  ]);
+
+  const result = await collect(honcho, directory, "codex", fork);
+  assert.equal(result.fork_copy_turns, undefined);
+  assert.deepEqual(sent(honcho, 0), ["first question", "first answer"]);
+});

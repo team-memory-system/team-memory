@@ -679,6 +679,7 @@ async function importCodex(args, hookInput) {
       state_synced_turns: syncedTurns,
       honcho_message_total: honchoMessageTotal,
       ...(copies.length ? { stored_copy_turns: copies.length } : {}),
+      ...(parsed.fork_copy_turns ? { fork_copy_turns: parsed.fork_copy_turns } : {}),
     };
     if (args.dryRun || messages.length === 0) {
       if (!args.dryRun) await ensureSession(args.workspace, "codex", sessionId, parsed, basePeers, args.sessionMetadata, { complete: true });

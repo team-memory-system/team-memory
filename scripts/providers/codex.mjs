@@ -1,5 +1,6 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { codexSegmentId } from "../turn-identity.mjs";
 import { extractTextBlocks, isInjectedContextText, normalizeCreatedAt, normalizeRawText, sanitizeId } from "./shared.mjs";
 
 const NOISE_TAGS = [
@@ -121,7 +122,62 @@ function normalizeCodexText(text, role) {
 }
 
 export async function parseTranscript(transcriptPath) {
-  return parseLines((await fsp.readFile(transcriptPath, "utf8")).split(/\r?\n/), transcriptPath);
+  const parsed = parseLines((await fsp.readFile(transcriptPath, "utf8")).split(/\r?\n/), transcriptPath);
+  await withoutForkedHistory(parsed, transcriptPath);
+  return parsed;
+}
+
+/**
+ * A thread forked in the Codex app (session_meta forked_from_id) can start with a
+ * copy of the whole parent conversation up to the fork. Those turns go in with the
+ * parent, so the fork's leading turns that repeat the parent's leading turns are
+ * dropped; `fork_copy_turns` says how many. Without the parent's file nothing is dropped.
+ */
+async function withoutForkedHistory(parsed, transcriptPath) {
+  const parentId = parsed.metadata.forked_from_id;
+  if (!parentId || !parsed.turns.length) return;
+  if (codexSegmentId(transcriptPath, parsed.metadata.original_session_id)) return;
+  const parentTurns = [];
+  for (const file of await threadFiles(transcriptPath, parentId)) {
+    parentTurns.push(...parseLines((await fsp.readFile(file, "utf8")).split(/\r?\n/), file).turns);
+  }
+  let copies = 0;
+  while (
+    copies < parsed.turns.length && copies < parentTurns.length
+    && parsed.turns[copies].role === parentTurns[copies].role
+    && parsed.turns[copies].content === parentTurns[copies].content
+  ) copies += 1;
+  if (!copies) return;
+  parsed.turns = parsed.turns.slice(copies);
+  parsed.fork_copy_turns = copies;
+}
+
+/** A thread's rollout files, oldest first: in the fork's own folder, or across sessions/YYYY/MM/DD and archived_sessions. */
+async function threadFiles(transcriptPath, threadId) {
+  const id = String(threadId).toLowerCase();
+  const day = path.dirname(transcriptPath);
+  const folders = [day];
+  if (/[\\/]\d{4}[\\/]\d{2}[\\/]\d{2}$/.test(day)) {
+    const root = path.dirname(path.dirname(path.dirname(day)));
+    folders.push(path.join(path.dirname(root), "archived_sessions"));
+    for (const year of await names(root)) {
+      for (const month of await names(path.join(root, year))) {
+        for (const date of await names(path.join(root, year, month))) folders.push(path.join(root, year, month, date));
+      }
+    }
+  }
+  const files = new Map();
+  for (const folder of folders) {
+    for (const name of await names(folder)) {
+      const lower = name.toLowerCase();
+      if (lower.startsWith("rollout-") && (lower.endsWith(`-${id}.jsonl`) || lower.includes(`-${id}_`))) files.set(name, path.join(folder, name));
+    }
+  }
+  return [...files.keys()].sort().map((name) => files.get(name));
+}
+
+async function names(folder) {
+  return fsp.readdir(folder).catch(() => []);
 }
 
 /** The same from a transcript's lines: all of them, or the first or last ones 지난 대화 reads (past.mjs). */
@@ -146,6 +202,7 @@ export function parseLines(lines, transcriptPath) {
         metadata.parent_session_id ??= sessionMeta.id;
       }
       metadata.parent_session_id ??= sessionMeta.source?.subagent?.thread_spawn?.parent_thread_id;
+      metadata.forked_from_id ??= sessionMeta.forked_from_id;
       metadata.cwd ??= sessionMeta.cwd;
       metadata.originator ??= sessionMeta.originator;
       metadata.cli_version ??= sessionMeta.cli_version;

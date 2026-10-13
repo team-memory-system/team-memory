@@ -209,6 +209,16 @@ answer.
   `scripts/collector.mjs`, `stored_copy_turns` in the log). Before 0.7.1 they went
   in again: on 2026-10-13 the Mac Studio's 지난 대화 put 2,120 copies into 23 old
   conversations, removed the same night.
+- **A forked Codex thread goes in without its parent's copy.** A thread forked in
+  the Codex app (session_meta `forked_from_id`) may start with the parent
+  conversation up to the fork, timestamps rewritten to the fork time. The parser
+  reads the parent's rollout files (same folder, `sessions/YYYY/MM/DD`, or
+  `archived_sessions`) and drops the fork's leading turns that repeat the parent's
+  leading turns (`withoutForkedHistory` in `scripts/providers/codex.mjs`,
+  `fork_copy_turns` in the log); a continuation segment of the fork drops nothing,
+  and without the parent's file the fork goes in whole. On this Mac Studio 10 of
+  19 forks start with such a copy, 2,609 turns in all; the 2026-10-13 지난 대화 put
+  them in before 0.7.2.
 - **Only what the person typed goes in as their words.** The parsers drop what the
   app wrote in the user role: Codex's in-app browser and Chrome tab state, IDE
   context, mentioned-file lists and ChatGPT reference previews in front of
