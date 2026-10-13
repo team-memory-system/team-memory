@@ -325,6 +325,12 @@ export function personalEnvironment(text) {
     EMBEDDING_MAX_INPUT_TOKENS: "8192",
     EMBEDDING_MAX_TOKENS_PER_REQUEST: "8192",
     EMBEDDING_VECTOR_DIMENSIONS: "1536",
+    // One local Ollama embeds one text at a time. Honcho's defaults (50 waiting,
+    // 10 at once) queue a burst of new messages ahead of every search's query, so
+    // searches time out while a past import goes in (Mac Studio, 2026-10-14); what
+    // waits past these is embedded by the reconciler instead.
+    EMBEDDING_MAX_PENDING_EMBED_TASKS: "2",
+    EMBEDDING_MAX_CONCURRENT_EMBEDDINGS: "2",
     EMBEDDING_QUERY_INSTRUCTION: "Given a personal memory search query, retrieve relevant conversation passages that answer or contextualize the query",
     EMBEDDING_MODEL_CONFIG__TRANSPORT: "openai",
     // A new install starts on Qwen3-Embedding 4B. An install that already has

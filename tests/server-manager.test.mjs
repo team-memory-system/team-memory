@@ -381,6 +381,8 @@ DERIVER_MODEL_CONFIG__THINKING_EFFORT=low
 DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=http://host.docker.internal:11400/v1
 DERIVER_MODEL_CONFIG__OVERRIDES__API_KEY_ENV=LLM_VLLM_API_KEY
 EMBEDDING_MAX_INPUT_TOKENS=8192
+EMBEDDING_MAX_PENDING_EMBED_TASKS=2
+EMBEDDING_MAX_CONCURRENT_EMBEDDINGS=2
 EMBEDDING_MODEL_CONFIG__TRANSPORT=openai
 EMBEDDING_MODEL_CONFIG__MODEL=qwen3-embedding-4b-honcho-8192
 EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://host.docker.internal:11434/v1
@@ -455,6 +457,7 @@ test("personal server prepare adds missing safe profile settings without replaci
     "DERIVER_MODEL_CONFIG__FALLBACK__MODEL=external-model",
     "DERIVER_MODEL_CONFIG__OVERRIDES__PROVIDER_PARAMS__EXTRA_HEADERS__AUTHORIZATION=Basic private-header",
     "EMBEDDING_MAX_INPUT_TOKENS=2048",
+    "EMBEDDING_MAX_CONCURRENT_EMBEDDINGS=3",
     "",
   ].join("\n"), { mode: 0o600 });
   let installedEnvironment = "";
@@ -483,6 +486,9 @@ test("personal server prepare adds missing safe profile settings without replaci
   assert.match(installedEnvironment, /^DERIVER_MODEL_CONFIG__MODEL=gpt-6-luna$/m);
   assert.match(installedEnvironment, /^DERIVER_MODEL_CONFIG__THINKING_EFFORT=low$/m);
   assert.match(installedEnvironment, /^EMBEDDING_MAX_INPUT_TOKENS=8192$/m);
+  // The embedding limits come in where missing, and a value set by hand stays.
+  assert.match(installedEnvironment, /^EMBEDDING_MAX_PENDING_EMBED_TASKS=2$/m);
+  assert.match(installedEnvironment, /^EMBEDDING_MAX_CONCURRENT_EMBEDDINGS=3$/m);
   assert.match(installedEnvironment, /^DIALECTIC_LEVELS__high__MODEL_CONFIG__THINKING_EFFORT=low$/m);
   assert.equal((installedEnvironment.match(/^LLM_VLLM_API_KEY=/gm) || []).length, 1);
   assert.equal(installedEnvironment.includes("private-direct-key"), false);

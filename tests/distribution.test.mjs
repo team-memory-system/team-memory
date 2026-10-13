@@ -128,6 +128,8 @@ test("distribution includes source and topology but excludes state and secrets",
   assert.match(profile, /^EMBEDDING_MAX_INPUT_TOKENS=8192$/m);
   assert.match(profile, /^EMBEDDING_MAX_TOKENS_PER_REQUEST=8192$/m);
   assert.match(profile, /^EMBEDDING_VECTOR_DIMENSIONS=1536$/m);
+  assert.match(profile, /^EMBEDDING_MAX_PENDING_EMBED_TASKS=2$/m);
+  assert.match(profile, /^EMBEDDING_MAX_CONCURRENT_EMBEDDINGS=2$/m);
   // The owner's own install runs the 8B alias; a new team install starts on 4B.
   assert.match(profile, /^EMBEDDING_MODEL_CONFIG__MODEL=qwen3-embedding-4b-honcho-8192$/m);
   assert.equal(profile.includes("qwen3-embedding-honcho-8192"), false);
