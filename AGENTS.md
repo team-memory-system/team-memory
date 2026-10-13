@@ -28,10 +28,12 @@ the installed Honcho source records the official commit and patch checksums.
 | [`subscription-gateway`](https://github.com/team-memory-system/subscription-gateway) | Subscription-to-API gateway with its own login screen, also usable on its own (AGPL-3.0) | The computer that runs Honcho; `server prepare` fetches the pinned source revision and runs the gateway's own install |
 
 **Topology.** One Honcho and one database per person; that person's several machines
-all feed the same one. Teammates do not share a database. What is shared is a single
-MCP tool, `chat`, on a second bridge process beside the server, which a teammate
-reaches after a Google login through Cloudflare Access — so a teammate can ask a
-question and gets an answer, without reading the underlying messages.
+all feed the same one. Teammates do not share a database. What is shared is a second
+bridge process beside the server with four tools that list, search and read
+conversations and search conclusions, which a teammate's agent reaches after a
+Google login through Cloudflare Access. It reaches only the conversations of the
+folders the owner opened to that teammate, and the teammate's own agent writes the
+answer.
 
 ### What this repository does
 
@@ -59,10 +61,10 @@ question and gets an answer, without reading the underlying messages.
    buttons open windows: 대화 수집's
    수정 is first setup's own steps, other servers and per-folder choices included;
    지난 대화, where the past conversations came from and how many went in, whose
-   더 가져오기 opens 수정 at that step; MCP 도구. 팀 holds teammates' memories behind
-   a switch each.
-   조회 기록 lists who asked this computer's memory what, and its 가드 시험 tries a
-   question as a teammate's. 서버 runs the server
+   더 가져오기 opens 수정 at that step; MCP 도구. 팀 asks teammates to open their
+   memory and lists whom this one is opened to, with a switch each.
+   조회 기록 lists who searched and read this computer's memory for what question,
+   and its 가드 시험 runs a question as a teammate's search would. 서버 runs the server
    (기억 서버); on 모델, the subscription accounts, the model the server uses and
    the embedding model; and on 공유, it opens the
    server to the owner's other computers and the team. 백업 copies the raw
@@ -78,13 +80,14 @@ question and gets an answer, without reading the underlying messages.
    `host ...` installs the subscription gateway through its own CLI and supervises
    Ollama. Every chat model Honcho uses goes through the gateway's router; the router
    key comes from the gateway, not from the person installing.
-5. **Recall.** `scripts/mcp-server.mjs` is a stdio MCP server for this computer's
-   own memory: the local recall tools, filtered by `mcp-tools.json`, and none until
-   setup has given this computer a user peer. A teammate's memory does not go
-   through it. Each teammate's server is a remote MCP server of its own,
-   `team-<name>` at `https://<host>/mcp`, that `teammates connect` adds to Claude
-   Code and Codex, and each client logs in to it itself (see [Asking a teammate's
-   memory](#asking-a-teammates-memory--팀원-기억-연결)).
+5. **Recall.** The plugin starts two stdio MCP servers in Claude Code and Codex.
+   `honcho` (`scripts/mcp-server.mjs`) is this computer's own memory: the local
+   recall tools, filtered by `mcp-tools.json`, and none until setup has given this
+   computer a user peer. `team-memory` (`scripts/team-mcp-server.mjs`) is the
+   teammates' memories: it reaches each teammate's server at `https://<host>/mcp`
+   with this computer's team login, and offers nothing until this computer has
+   joined a team (see [Reading a teammate's
+   memory](#reading-a-teammates-memory--팀원-기억-읽기)).
 6. **Recall at the start of work.** `scripts/recall.mjs` is meant for Claude Code's
    SessionStart (`session-start`, on startup and `/clear`) and UserPromptSubmit
    (`prompt`) hooks. At session start it adds the short summary of the last
@@ -225,14 +228,15 @@ question and gets an answer, without reading the underlying messages.
   `scripts/honcho-access.mjs`, and goes through `fetchHoncho`, which follows
   redirects only within that origin so an Access login redirect is seen, not
   followed.
-- **A teammate's answer draws on less than the owner's.** A shared server's `chat`
-  is pinned to the owner's workspace and peer, and the bridge refuses any other
-  `workspace_id`, peer or filter. Behind the gate, a teammate's `chat` is one
-  Honcho call confined to the sessions of the folders opened to them
-  (`filters.session_id`): Honcho then reads only the conclusions drawn in those
-  sessions (`explicit`), none of the dreamer's, and no peer card (honcho-selfhost
-  patch 0002). More than 1000 such sessions is refused; the owner opens fewer
-  folders.
+- **A teammate reads less than the owner.** A shared server's bridge is pinned to
+  the owner's workspace and peer, and refuses any other `workspace_id`, peer or
+  filter. Behind the gate, a teammate's agent has four tools, each held to the
+  sessions of the folders opened to them: `list_conversations`, `search_messages`
+  (one Honcho search with `filters.session_id`), `read_conversation` (a session
+  outside them is refused as if it did not exist) and `search_conclusions` (only
+  `explicit` conclusions drawn in those sessions, none of the dreamer's). `chat`
+  and the peer card are the owner's alone. More than 1000 such sessions is
+  refused; the owner opens fewer folders.
 - **An install shared under 0.3.28 or before stops sharing on update.** Its tunnel
   ran on the host. `server prepare` and `server start` remove that autostart
   (moving its token into the `.env` when the `.env` has none), and drop `share` from
@@ -351,7 +355,7 @@ The repository bundles the conversation collectors, setup/diagnostic workflow, a
 - Run on macOS, Windows, and Linux wherever a recent Node.js runtime is available.
 
 - Also send the conversations from chosen folders to a second server, such as the company's shared Honcho (see "Also sending some folders to another server").
-- Let teammates ask one's memory through `chat` after a Google login through Cloudflare Access, and ask theirs the same way (see "Sending to this server from other computers" and "Asking a teammate's memory").
+- Let teammates' agents search and read the folders one opens to them after a Google login through Cloudflare Access, and read theirs the same way (see "Sending to this server from other computers" and "Reading a teammate's memory").
 
 Cross-device database synchronization is intentionally deferred until the personal-memory package is complete.
 
@@ -362,7 +366,7 @@ Cross-device database synchronization is intentionally deferred until the person
 - This repository installed as a plugin in each agent host that should receive Honcho MCP tools.
 - For sharing, the team's owner only: a Cloudflare account with a domain on it, Zero Trust with a Google login method, and an API token (see [What the owner needs in Cloudflare](#what-the-owner-needs-in-cloudflare)). Teammates need only a Google account.
 
-`prereqs [--features server,sync]` reports Node.js and git for both, and Docker and Ollama for `server`. The app's first setup asks where the memory server is in its 서버 step: made on this computer (`server,sync`), on another of the user's computers (`sync`), or, for someone who joins a team only to ask, none. A teammate's memory is asked for in its 팀원 step, or later from 팀 → 팀 주소로 더하기.
+`prereqs [--features server,sync]` reports Node.js and git for both, and Docker and Ollama for `server`. The app's first setup asks where the memory server is in its 서버 step: made on this computer (`server,sync`), on another of the user's computers (`sync`), or, for someone who joins a team only to read teammates' memories, none. A teammate's memory is requested in its 팀원 step, or later from 팀 → 열람 요청.
 
 The `personal` profile also requires macOS or Windows, git, and a Codex and/or Claude subscription. Docker Desktop and Ollama are fetched by the app when this computer has neither (see [Docker Desktop and Ollama](#docker-desktop-and-ollama)). `server prepare` installs the subscription gateway and stops once to ask for a login with that subscription in the gateway's own screen; nothing reads `~/.codex/auth.json`, and no key is typed anywhere. Native Linux currently supports the `portable` profile; its Docker bridge cannot safely reach the personal profile's loopback-only host services without an additional binding design.
 
@@ -801,17 +805,18 @@ do what on it.
   so one computer can be cut off without the others. Nobody sees it.
 - **Each server's gate** (`server/gate/gate.mjs`) reads `runtime/gate/access.json`,
   which the server's owner writes (`scripts/gate-access.mjs`): the owners (every
-  computer of theirs may register and write), the people chat is opened to with the
-  folders opened to each, the people who may collect into it, and the computers cut
-  off. It writes `runtime/gate/devices.json` itself: each registered computer, its
+  computer of theirs may register and write), the people the memory is opened to
+  (`chat`, its name from before 0.7) with the folders opened to each, the people who
+  may collect into it, and the computers cut off. It writes `runtime/gate/devices.json` itself: each registered computer, its
   email, its name, a hash of its key and when it was last seen.
 - **Folders.** Each session keeps the folder it started in (`cwd` in its metadata,
   as the collector recorded it on the computer it ran on). The owner opens folders
   to a teammate, each a path and whether the folders inside it open too, those made
-  later included (`subfolders`). When the teammate's `chat` comes, the MCP bridge
+  later included (`subfolders`). When the teammate's agent calls, the MCP bridge
   lists the workspace's sessions (kept a minute, so a conversation started now is
-  open within one), takes those whose folder is open, and asks Honcho once with
-  them as `filters.session_id`; it is never answered from the owner's whole memory.
+  open within one), takes those whose folder is open, and holds the call to them (a
+  search with them as `filters.session_id`); it never reaches the owner's whole
+  memory.
   Nothing is filled in ahead of time. The collector also tags each session with its
   project (`project_id`, `project_name`: `p-` and 12 hex of a hash of the
   repository's origin remote, or of the folder's name without one), which nothing
@@ -895,7 +900,7 @@ node scripts/cli.mjs team share [--label <name>] [--replace]
 Everything one member opens to another starts with a request, kept by the hub, and
 everything the owner has to answer, or the asker has to press, goes to the bell.
 
-- **chat.** The 팀 page's 팀원 기억 lists the members; chat 요청 goes to the owner.
+- **열람.** The 팀 page's 팀원 기억 lists the members; 열람 요청 goes to the owner.
   Their 승인 opens a window with the folders this server holds conversations of
   (`POST /api/team/folders`, `scripts/server-folders.mjs`), as a tree: the home
   folder as ~, the same folder of the owner's several computers one row, each with
@@ -908,19 +913,21 @@ everything the owner has to answer, or the asker has to press, goes to the bell.
   ChatGPT 기록 always, greyed with where to import it until some is there, and any
   other app that has some. A ticked app opens its conversations, those imported
   later included. The window will not open more than 1,000 conversations at once,
-  the most one chat of Honcho's answers from. A server that cannot be read shows why
+  the most one Honcho search covers. A server that cannot be read shows why
   instead of a list. The entries go into `access.json` for that email
   (`chat.folders`, `chat.sources`), and only then does the hub hear "approved",
   with the folders' and apps' names (in the request's `projects`, which predates
-  folders: ChatGPT 기록 beside ~/dev/app). The asker's bell shows 연결, which adds
-  `team-<peer>` to Claude Code and Codex (`teammates connect`); each agent logs in
-  to the servers application itself. The gate passes such a person's `/mcp` to the
-  MCP bridge with `x-honcho-scope-mode: folders`, the opened folders in
-  `x-honcho-allowed-folders` and the opened apps in `x-honcho-allowed-sources`
-  (base64url JSON; a list of folders too long for the header is refused at the
-  gate), and the bridge answers `chat` once from the sessions in them. 내 기억을 여는
+  folders: ChatGPT 기록 beside ~/dev/app). The asker's row then says 열림, and while
+  their computer has no servers login, the row and their bell offer 팀 서버 로그인:
+  one Google login through Access for every server of the team. From then on their
+  Claude Code and Codex read it through the plugin's `team-memory` server. The gate
+  passes such a person's `/mcp` to the MCP bridge with `x-honcho-scope-mode:
+  folders`, the opened folders in `x-honcho-allowed-folders` and the opened apps in
+  `x-honcho-allowed-sources` (base64url JSON; a list of folders too long for the
+  header is refused at the gate), and the bridge holds each of their calls to the
+  sessions in them. 내 기억을 여는
   팀원 lists who has what, with 수정 for the folders and apps and for closing it
-  (끊기), and a switch that turns one person's chat off for now (`chat.off`) with
+  (끊기), and a switch that turns one person off for now (`chat.off`) with
   what is open to them kept: the gate then sends `x-honcho-scope-mode: off`, the
   bridge refuses each of their calls in so many words, and 조회 기록 shows it as 꺼
   둔 동안 물음. 수정's window keeps the folders and apps already open to that
@@ -951,7 +958,7 @@ did and how to undo it. Typing the option is the confirmation.
 | `/team-memory` | Says what is on: 기억 서버 켜짐 · 공유 켜짐 · luna 켜짐 · naddle 꺼 둠 |
 | `/team-memory off`, `on` | 서버 → 기억 서버 → 멈추기, 시작: the whole memory server, so this computer's own search and collecting stop too; on keeps the models it was set up with |
 | `/team-memory shared-off`, `shared-on` | 서버 → 공유 → 공유 끄기, 다시 켜기 (the team's address again); a server never opened through the team is turned on in the app |
-| `/team-memory shared-off <teammate>`, `shared-on <teammate>` | The teammate's switch in 내 기억을 여는 팀원, named by team name or email (by email when a name fits two); chat opens the first time only by approving their request |
+| `/team-memory shared-off <teammate>`, `shared-on <teammate>` | The teammate's switch in 내 기억을 여는 팀원, named by team name or email (by email when a name fits two); the memory opens to them the first time only by approving their request |
 | `/team-memory setup`, `doctor` | The setup skill, and `cli.mjs doctor` explained (they were `/memory-setup` and `/memory-doctor`) |
 
 ### The admin / 관리자
@@ -959,7 +966,7 @@ did and how to undo it. Typing the option is the confirmation.
 관리자 shows to every admin: the team's name, the 팀 주소 to copy, and the roster.
 팀원 더하기 takes a Google email and nothing else; the hub adds it to the roster and
 to the people policy. 팀에서 빼기 takes it off both, removes that person's server
-address and closes their requests, so they can no longer log in, ask or collect.
+address and closes their requests, so they can no longer log in, read or collect.
 관리자로 바꾸기 makes a teammate an admin, and 관리자에서 빼기 takes it away from
 another admin (`PUT /api/admin/people/<email>` with `{admin}`); no admin takes it
 from themselves, so the team always keeps one. The teammate's app takes it from the
@@ -968,7 +975,12 @@ the page loads again. The same request with `{peer}`, which no button sends, giv
 member, an admin themselves too, another peer name that nobody else in the team has
 (compared without case): the requests that person sent name it from then on, their
 computer takes it the next time setup asks the hub who it is, and their server's
-`HONCHO_TEAM_PEER` the next time it is shared.
+`HONCHO_TEAM_PEER` the next time it is shared. 이름 바꾸기, on every row the admin's
+own included, sends `{nickname}`: the name the team sees for that person, up to 32
+characters and not another member's nickname, peer or start of the email (compared
+without case, `409 nickname_taken`), which
+the 팀 page, the bell, 관리자 and the `team-memory` server's `member` show in place
+of the peer; an empty one takes it away.
 On the computer that made the team, the Cloudflare block holds the zone and
 token 바꾸기.
 
@@ -993,7 +1005,7 @@ A personal server listens only on `127.0.0.1`. Sharing puts it behind a Cloudfla
 - **`gate`** (`server/gate/gate.mjs`) publishes `127.0.0.1:<gate port>` (8010, or the next free port; kept in the installed `.env` as `HONCHO_GATE_PORT` once chosen). It has two ways through:
   - `GET /health` and `/v3/*`, for the owner's other computers, with `Authorization: Bearer <gate token>`, compared in constant time. The gate token is 32 random bytes, generated once into the private `.env` as `HONCHO_GATE_TOKEN`. Bodies stream both ways (dialectic SSE included), and bodies over 20 MB are refused.
   - `/mcp`, for teammates' agents, only with a verified Cloudflare Access login: `Cf-Access-Jwt-Assertion`, checked against the team's keys and the application's AUD tag, with an email in it. The gate passes the request on to `mcp` with that email.
-- **`mcp`**, honcho-selfhost's MCP bridge, answers `chat` only, as `HONCHO_TEAM_PEER` in `HONCHO_TEAM_WORKSPACE`, and records each call with the caller's email in the `honcho_audit` schema of the server's PostgreSQL. With `HONCHO_JEV_GATE=1` in the `.env`, Jev judges each `chat` question first and its answer last: through the team hub's guard in a team, with `TYPESAFE_API_KEY` outside one (see "Who asked, and Jev").
+- **`mcp`**, honcho-selfhost's MCP bridge, offers a teammate's four tools only (`list_conversations`, `search_messages`, `read_conversation`, `search_conclusions`), as `HONCHO_TEAM_PEER` in `HONCHO_TEAM_WORKSPACE`, and records each call with the caller's email and question in the `honcho_audit` schema of the server's PostgreSQL. With `HONCHO_JEV_GATE=1` in the `.env`, Jev judges each call's question first and what it found last: through the team hub's guard in a team, with `TYPESAFE_API_KEY` outside one (see "Who asked, and Jev").
 - **`tunnel`**, `cloudflared` in a container, runs the tunnel whose token is `HONCHO_TUNNEL_TOKEN`. Its ingress, set in Cloudflare, is `http://gate:8010`.
 
 In Cloudflare the server's hostname has two Access applications. One covers `/v3` and `/health` and lets every request through to the gate, where the gate token is the lock. The other covers the rest of the hostname: it sends people to Google login and lets in only the emails on the team list, and MCP clients log in to it through Access's Managed OAuth.
@@ -1040,13 +1052,13 @@ Then it writes `HONCHO_TUNNEL_TOKEN`, `HONCHO_ACCESS_TEAM_DOMAIN`, `HONCHO_ACCES
 
 조회 기록 lists every call that reached `mcp`: when, who (the email the gate verified), the question, and whether it passed, was refused or failed. The bridge writes each call to `honcho_audit.tool_calls`; the dashboard reads them from the bridge's `GET http://mcp:8765/audit` with `Authorization: Bearer <HONCHO_TEAM_MCP_TOKEN>` (`HONCHO_MCP_AUDIT_URL`, `HONCHO_MCP_BEARER_TOKEN` on the dashboard, `HONCHO_AUDIT_READ=1` on `mcp`), and the app relays `/api/dashboard/audit` to the dashboard. `/audit` is outside `/mcp`, so the gate never passes it on, and `mcp` has no host port. While sharing is off there is no `mcp`: the dashboard answers 502 and the screen says sharing is off. The records stay in the database and show again once it is on.
 
-Jev judges each teammate's `chat` before it reaches the memory, and refuses a question about the owner's private life rather than shared work. A question longer than Jev reads at once (16,000 characters) is refused without a judgment, so padding cannot carry one past it. Once the memory has answered, Jev judges the answer too, since a harmless question can still draw private matters out: an answer that gives away the private life, credentials, finances or health of the owner or anyone else is withheld, and the teammate gets the same refusal a question gets, so they cannot tell the memory held anything. A long answer is judged in overlapping pieces. A refused question or withheld answer is recorded as `denied`; each row carries the question's score (Jev) and the answer's (답), and a call let through without a judgment carries the reason.
+Jev judges each teammate's call, their question with the words they search for, before it reaches the memory, and refuses one about the owner's private life rather than shared work. A question longer than Jev reads at once (16,000 characters) is refused without a judgment, so padding cannot carry one past it. Once the memory has answered, Jev judges what the call found too, since a harmless question can still draw private matters out: a result that gives away the private life, credentials, finances or health of the owner or anyone else is withheld, and the teammate gets the same refusal a question gets, so they cannot tell the memory held anything. A long result is judged in overlapping pieces. A refused question or withheld result is recorded as `denied`; each row carries the question's score (Jev) and the result's (답), and a call let through without a judgment carries the reason.
 
-가드 시험, one line at the top of 조회 기록, tries a question as a teammate's: Enter sends it to `/api/dashboard/guard-trial`, the dashboard to the bridge's `POST /guard-trial` beside `/audit` (same token, outside `/mcp`), and the bridge judges it as a teammate's call, makes the answer from the memory of the folders open to a chosen teammate, or of every folder (or takes the one typed under the question), judges that, and says what the teammate would get. A trial is not recorded; the page keeps this visit's trials under the line, the newest open. It needs sharing on, like 조회 기록, and a server whose bridge knows the trial; an older one says to update and restart.
+가드 시험, one line at the top of 조회 기록, tries a question as a teammate's: Enter sends it to `/api/dashboard/guard-trial`, the dashboard to the bridge's `POST /guard-trial` beside `/audit` (same token, outside `/mcp`), and the bridge judges it as a teammate's call, searches the messages of the folders open to a chosen teammate, or of every folder, as that teammate's `search_messages` would (or takes the text typed under the question), judges what it found, and says what the teammate's agent would get. A trial is not recorded; the page keeps this visit's trials under the line, the newest open. It needs sharing on, like 조회 기록, and a server whose bridge knows the trial; an older one says to update and restart.
 
 In a team the judging is the hub's (관리자 → Jev 키). Whenever sharing through the team is turned on (`team share`), and on every `server start` while so shared, the owner's app asks the hub for this server's guard token (`POST /api/me/guard`, with the owner's own team login) and writes `HONCHO_JEV_GATE=1`, `HONCHO_JEV_GUARD_URL=https://team.<zone>/guard` and `HONCHO_JEV_GUARD_TOKEN` into the installed `.env` before Compose starts `mcp`. Each new token ends the one before it, and the hub keeps only its SHA-256. The request names the tunnel this computer runs (`{tunnelId}`, read from the tunnel token in the `.env`), and the hub gives a token only to the computer running the server's current tunnel: a server moved to another computer keeps its address, and the computer it left must not end the new one's token (`409 other_computer`). A server shared another way (its own address, its own Cloudflare account, an invite) asks the hub nothing. The bridge then sends each question with the tool, the caller's email and the workspace to `/guard`, and after the memory answers, the answer with the question (`answer` in the body); the hub asks Jev with the team's key (`jev-latest`), the question's own Jev question for each, refuses at a score of 0.7 or more, and answers `{judged, checked, allowed, score}`, `checked` saying which it judged, keeping neither the question nor the answer. Jev's 5xx or a dropped connection is asked once more. While the hub has no key, questions and answers pass unjudged, and their rows say so; a hub from before answers were judged does not say `checked: "answer"`, and the answer goes out unjudged with its row saying so. The hub refuses a token it did not give out or has replaced, a server whose owner left the roster or moved the server to another computer, and more than 240 calls a minute from one server (a question and its answer are two); then, as when the hub or Jev cannot answer, `HONCHO_JEV_FAIL_MODE` (`open`) decides for a question and `HONCHO_JEV_ANSWER_FAIL_MODE` (`closed`) for an answer. Without a team login on that computer, without a server in the team, or when the hub cannot be reached or refuses, the `.env` stays as it is and the result's `jev` says why (`no_hub_login`, `no_server`, `other_computer`, `no_tunnel`, `hub_unreachable`, `hub_refused` with the hub's code); sharing and starting go on either way. No result, command or log holds the token.
 
-Outside a team, `HONCHO_JEV_GATE=1` and `TYPESAFE_API_KEY` in the installed `.env` make the bridge call Jev itself; `TYPESAFE_BASE_URL`, `HONCHO_JEV_MODEL`, `HONCHO_JEV_THRESHOLD` (0.7), `HONCHO_JEV_FAIL_MODE` (`open`), `HONCHO_JEV_ANSWER_FAIL_MODE` (`closed`) and `HONCHO_JEV_TOOLS` (`chat`) are optional (`server/.env.example`). With a guard URL the bridge asks the hub and does not use `TYPESAFE_API_KEY`.
+Outside a team, `HONCHO_JEV_GATE=1` and `TYPESAFE_API_KEY` in the installed `.env` make the bridge call Jev itself; `TYPESAFE_BASE_URL`, `HONCHO_JEV_MODEL`, `HONCHO_JEV_THRESHOLD` (0.7), `HONCHO_JEV_FAIL_MODE` (`open`), `HONCHO_JEV_ANSWER_FAIL_MODE` (`closed`) and `HONCHO_JEV_TOOLS` (a teammate's four tools) are optional (`server/.env.example`). With a guard URL the bridge asks the hub and does not use `TYPESAFE_API_KEY`.
 
 ### Teammates / 팀원
 
@@ -1070,7 +1082,7 @@ node scripts/cli.mjs teammates unshare <name>
 node scripts/cli.mjs server share join --invite-file <file>      # or the code in HONCHO_SHARE_INVITE
 ```
 
-`join` needs only the invite. It writes the invite's values into the installed `.env` the way `enable --cloudflare` does, starts the same three services, and keeps the team's server list in `runtime/share.json`, which `teammates connect` there offers.
+`join` needs only the invite. It writes the invite's values into the installed `.env` the way `enable --cloudflare` does, starts the same three services, and keeps the team's server list in `runtime/share.json`.
 
 ### Turning it on by hand
 
@@ -1093,24 +1105,18 @@ In the app on that computer, 기억 설정 → 대화 수집 → 수정 does the
 
 The Team Memory app offers all of this on 서버 → 공유: "팀 만들기" (the API token, the owner's email, and the zone and name under "token 권한과 주소"), "초대 코드로 열기", the folded "직접 만든 Tunnel로 켜기", and with sharing on one 공유 block: the address, the gate token ("복사", "바꾸기"), the 팀원 MCP address, "밖에서 확인" and "공유 끄기". First setup's 새 팀 만들기 runs the same `server share enable --cloudflare` once its server is up. 관리자, on the owner's computer only, has the 팀 주소 with "복사", the 팀원 list with "팀원 더하기", "공유 빼기" and "팀에서 빼기", and the Cloudflare block with "token 바꾸기". A teammate who came in with an invite sees the public address, the gate and the 팀원 MCP address, and no Cloudflare: that word belongs to the owner's 팀 만들기 and 관리자. A token typed there goes to the app's own server only, and no token or invite is logged.
 
-## Asking a teammate's memory / 팀원 기억 연결
+## Reading a teammate's memory / 팀원 기억 읽기
 
-A teammate's shared server is a remote MCP server at `https://<host>/mcp`. Claude Code and Codex each keep it as `team-<name>` and log in to it themselves, each keeping its own login.
+The plugin's second MCP server, `team-memory` (`scripts/team-mcp-server.mjs`, beside `honcho` in `.mcp.json` and `.mcp.claude.json`), reads teammates' memories for Claude Code and Codex. It offers no tools until this computer has joined a team (a hub in `team-auth.json`), and then five (`scripts/team-memory-tools.mjs`):
 
-```sh
-node scripts/cli.mjs teammates connect <name> <host|https://host/mcp>
-node scripts/cli.mjs teammates connected
-node scripts/cli.mjs teammates disconnect <name>
-```
+- `member` lists the teammates whose memory can be read: each one's name, email and server, and what they opened (folders, ChatGPT 기록), 꺼 둠, or why it cannot be read yet. The people and servers come from the hub (`GET https://<hub>/api/team`, kept a minute), and what each opened from that server's gate (`/team-memory/whoami`). A person goes by the nickname an admin gave them (관리자 → 이름 바꾸기), else their peer; a company server by its label. The user's own servers are left out.
+- `list_conversations`, `search_messages`, `read_conversation` and `search_conclusions` name the teammate in `member` (their nickname, peer, email or its start, or the server's host or label; a name that fits two says both, and the user's own says to use the `honcho` tools) and go to that teammate's server as the bridge's tools of the same names (`https://<host>/mcp`, streamable HTTP, one MCP session per server, made again once when the server has forgotten it). The bridge there holds each call to the folders opened (see "Folders"). Every call carries `question`, the user's own words, which the teammate reads in 조회 기록. Times go out and come back in this computer's time zone, where a bare date is the whole local day.
 
-- `connect` runs `claude mcp add --transport http --scope user team-<name> https://<host>/mcp`. For Codex it writes the entry into Codex's `config.toml` itself (under `CODEX_HOME` when set), because `codex mcp add` starts its own login in the system's default browser as soon as it sees the server takes OAuth, and that browser may be signed in to another Google account. The entry is what `codex mcp add team-<name> --url https://<host>/mcp` writes, `[mcp_servers.team-<name>]` with `url = "https://<host>/mcp"`, followed by `[mcp_servers.team-<name>.tools.chat]` with `approval_mode = "approve"`, both appended at the end of the file; nothing else in it changes, and a `config.toml` that is a link stays one. It is written only when a `codex` CLI is on PATH. `connect` makes no network call and opens no browser.
-- The same address again changes nothing; another address replaces the entry, for Codex by changing its `url` line in place and keeping the rest of the entry. A client that is not installed is reported, and the other is still done.
-- The `tools.chat` table is there because Codex asks before each MCP tool call, and with `approval_policy = "never"` it refuses the call instead; no Codex command sets a tool's approval (`chat` only asks the teammate's memory). An `approval_mode` already set for that tool, or tools the entry sets some other way, stay as they are. `disconnect` runs `codex mcp remove team-<name>`, which takes the table away with the entry, and removes one that stayed behind, since Codex reads no config at all with that table and no entry.
-- Log in once in each client, with the Google account on the team list. In Claude Code, run `/mcp`, choose `team-<name>` and Authenticate; for Codex, run `codex mcp login --no-browser team-<name>` and open the address it prints in the browser signed in to that account. Either one goes to Google login through Cloudflare Access, and only an email on the team list gets in. The agent then has that server's `chat`.
-- With `--no-browser`, Codex prints the login address, then listens on a port of 127.0.0.1 for the browser to come back and also reads a pasted callback address from stdin ("Callback URL"); whichever comes first ends the login, and closing stdin gives it up. Without the option Codex opens the system's default browser, which may be signed in to another Google account. Codex 0.154 does not have the option and 0.160 does; an older one takes `codex mcp login team-<name>`.
-- `connected` lists every team server this computer knows and whether each client has it. It reads the invite's team list, the owner's `team-access.json`, and the `team-*` entries already in `~/.claude.json` and `~/.codex/config.toml`. This computer's own shared server is left out: its agents use their own memory directly.
-- The app's 팀 page does the same: 팀 주소로 더하기 takes the 팀 주소 and connects each server, and a window then says how each agent logs in, with "Codex 로그인" starting the Codex login: the app runs `codex mcp login --no-browser team-<name>`, keeps its stdin open, and the page opens the printed address in a new tab of the browser the app runs in (the one the team login used) and names the account to use. It logs in with the `codex` on PATH when `codex mcp login --help` lists `--no-browser`; otherwise with the ChatGPT app's own Codex CLI on macOS (`/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`, then `/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex`) when that one lists it, which reads the same `CODEX_HOME`. Only when none has the option does it run `codex mcp login team-<name>`, and Codex opens the default browser. The window shows Codex as 로그인됨 when `codex mcp list --json` says Codex holds an OAuth login for `team-<name>` (only that state leaves the app, since the same output carries every server's headers), and after "Codex 로그인" it follows that login until Codex ends it (로그인됨, or the error) or ten minutes pass; pressing it again ends the login started before. Each teammate's row has a switch: off disconnects it, on connects it again (and the agents log in again). First setup's 팀에 들어가기 connects the teammates chosen in its 팀원 step the same way.
-- `bridge disconnect` only removes the shared-bridge settings that 0.3.28 and before saved.
+Every request goes with this computer's servers login (`teamFetch`), the one 팀 서버 로그인 makes on the 팀 page or in the bell: a Google login through Access that reaches every server of the team. Without it each tool says to open the app and press 팀 서버 로그인, and a refusal at a teammate's gate is said with that teammate's name. No agent logs in to anything itself.
+
+Up to 0.6.8 each teammate's server was an entry of its own in Claude Code and Codex, `team-<name>`, with Codex's approval of `chat` beside it. `setup apply`, the app as it starts and `teammates drop-entries` take out the ones this app made: a `team-*` entry whose address is exactly `https://<host>/mcp` for a server this computer knows (the invite's team list in `runtime/share.json`, the owner's `team-access.json`, its own shared server) or for a host under the team hub's zone. Claude Code's goes with `claude mcp remove <entry> --scope user`, Codex's with `codex mcp remove <entry>`, and then its `tools.chat` table when that holds nothing but the approval (Codex reads no config at all with that table and no entry). Any other `team-*` entry is the user's and stays, and a client that is not installed is left alone. `setup apply` reports it as `teamEntries` only when something went or could not go.
+
+`bridge disconnect` only removes the shared-bridge settings that 0.3.28 and before saved.
 
 ## Also sending some folders to another server (e.g. your company's)
 
@@ -1320,14 +1326,14 @@ host supervisor's own autostart ──────────────> keep
 
 while shared (Compose profile share):
 another computer's collector ──> tunnel ──> gate /v3 (gate token) ──────────────> Honcho API
-teammate's agent ──> Access (Google) ──> tunnel ──> gate /mcp ──> mcp (chat) ──> Honcho API
+teammate's team-memory MCP ──> Access (Google) ──> tunnel ──> gate /mcp ──> mcp (4 tools) ──> Honcho API
 ```
 
 The queue keeps failed imports and retries them on the next agent Stop hook or an explicit queue drain. Its personal local-server defaults drain every newly queued transcript immediately. Transcript parsing is provider-specific; storage, deduplication, peer configuration, and API writes are shared.
 
 ## MCP tools
 
-Codex loads `.mcp.json`; Claude Code loads `.mcp.claude.json`. Both start `scripts/mcp-server.mjs` through stdio and read the same external `config.json`, so no credentials or mutable state live inside a plugin cache.
+Codex loads `.mcp.json`; Claude Code loads `.mcp.claude.json`. Both start two servers through stdio: `honcho` (`scripts/mcp-server.mjs`), this computer's own memory, and `team-memory` (`scripts/team-mcp-server.mjs`), teammates' memories. Both read the same external `config.json` and team login, so no credentials or mutable state live inside a plugin cache. What follows is about `honcho`.
 
 `setup apply` writes `mcp-tools.json` under the configured data directory with the 12 tools that change memory turned off (`scripts/mcp-tool-defaults.mjs`); an install without that file behaves the same. Recall needs none of them. The file is the whole truth once it exists: list what should stay off, for example
 
@@ -1339,7 +1345,7 @@ Codex loads `.mcp.json`; Claude Code loads `.mcp.claude.json`. Both start `scrip
 
 Agent hosts may cache their initial tool list, so reload Claude plugins or start a new Codex session after changing tool availability. The app's 기억 설정 → MCP 도구 → 수정 window switches them in two groups, 찾기 도구 and 바꾸기·지우기 도구, and one at a time under 하나씩 켜고 끄기, all applied together with 적용; `POST /api/app/mcp-tools` takes one tool as `name` or a group as `names`, with `enabled`.
 
-A teammate's `team-<name>` server is not one of these tools: it is a separate remote MCP server in Claude Code and Codex (see [Asking a teammate's memory](#asking-a-teammates-memory--팀원-기억-연결)), and `mcp-tools.json` does not list or switch it.
+The `team-memory` server's five tools are not among these, and `mcp-tools.json` does not list or switch them (see [Reading a teammate's memory](#reading-a-teammates-memory--팀원-기억-읽기)).
 
 ## Safety and rollback
 

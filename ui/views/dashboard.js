@@ -14,6 +14,7 @@ import { sameServer } from "../lib/collect.js";
 import { HELD, doneCount, runLine } from "../lib/past.js";
 import { keptNote, lastLine, rebuildLine, rebuildNote, rebuildPercent, stopCause } from "../lib/rederive.js";
 import { app, onChange, savePrefs, workspace } from "../lib/state.js";
+import { loadRequests } from "../lib/requests.js";
 import { loginNotice } from "../lib/team.js";
 import { pageHead, spinner, toast } from "../lib/ui.js";
 
@@ -53,11 +54,13 @@ async function fetchFlow() {
 
 async function fetchAround() {
   const context = app.context || {};
-  const [backup, share] = await Promise.allSettled([
+  const [backup, share, requests] = await Promise.allSettled([
     get("/api/backup/status"),
     context.localServer ? post("/api/server/share/status", {}) : Promise.resolve(null),
+    // Without a server here, the tile counts the teammates whose memory is open to this person.
+    context.localServer ? Promise.resolve(null) : loadRequests(),
   ]);
-  return { backup: settled(backup), share: settled(share) };
+  return { backup: settled(backup), share: settled(share), requests: settled(requests) };
 }
 
 // ── 동기화 현황 ──────────────────────────────────────────
@@ -227,9 +230,9 @@ function shareTile(share) {
   return tile({ title: "공유", state: on ? (share.issues?.length ? "warn" : "") : "idle", value: on ? "켜짐" : "꺼짐", line: on ? hostOf(share.publicUrl) : "서버 → 공유에서 켭니다" });
 }
 
-function teamTile() {
-  const connected = Number(app.context?.teamMemory?.connected || 0);
-  return tile({ title: "팀원 기억", state: connected ? "" : "idle", value: connected ? `${number(connected)}곳 연결` : "연결 없음", line: connected ? "Claude Code·Codex에서 chat으로 묻습니다" : "팀에서 연결합니다" });
+function teamTile(requests) {
+  const open = (requests?.outgoing || []).filter((request) => request.kind === "chat" && request.status === "approved").length;
+  return tile({ title: "팀원 기억", state: open ? "" : "idle", value: open ? `${number(open)}명 열림` : "열린 기억 없음", line: open ? "Claude Code·Codex가 찾아봅니다" : "팀에서 열람을 요청합니다" });
 }
 
 export default {
@@ -255,7 +258,7 @@ export default {
       const tiles = [
         serverHere() ? gatewayTile() : null,
         backupTile(around.backup),
-        context.localServer ? shareTile(around.share) : teamTile(),
+        context.localServer ? shareTile(around.share) : teamTile(around.requests),
       ].filter(Boolean);
       clear(body,
         ended?.node || null,

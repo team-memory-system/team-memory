@@ -1,5 +1,4 @@
 import path from "node:path";
-import readline from "node:readline";
 
 import { installPaths, loadConfig, readJson } from "./config.mjs";
 import {
@@ -10,20 +9,12 @@ import {
   honchoHeaders,
   isCloudflareAccessBlock,
 } from "./honcho-access.mjs";
+import { serveStdio } from "./mcp-stdio.mjs";
 import { WRITE_TOOLS } from "./mcp-tool-defaults.mjs";
 import { VERSION } from "./version.mjs";
 
 const SERVER_NAME = "Team Memory";
 const SERVER_VERSION = VERSION;
-const DEFAULT_PROTOCOL_VERSION = "2025-11-25";
-const SUPPORTED_PROTOCOL_VERSIONS = new Set([
-  DEFAULT_PROTOCOL_VERSION,
-  "2025-06-18",
-  "2025-03-26",
-  "2024-11-05",
-]);
-
-let negotiatedProtocolVersion = DEFAULT_PROTOCOL_VERSION;
 
 const providerIndex = process.argv.indexOf("--provider");
 const PROVIDER = providerIndex >= 0 ? String(process.argv[providerIndex + 1] || "agent").trim().toLowerCase() : "agent";
@@ -431,18 +422,6 @@ const TOOLS = [
 
 const TOOL_BY_NAME = new Map(TOOLS.map((entry) => [entry.name, entry]));
 
-function send(message) {
-  process.stdout.write(`${JSON.stringify(message)}\n`);
-}
-
-function sendResult(id, result) {
-  send({ jsonrpc: "2.0", id, result });
-}
-
-function sendError(id, code, message) {
-  send({ jsonrpc: "2.0", id, error: { code, message } });
-}
-
 async function availableTools() {
   const config = await loadConfig();
   // Before setup every call would only fail with "not configured", so offer none
@@ -461,64 +440,18 @@ async function callTool(name, args) {
   return toolEntry.run(context, args || {});
 }
 
-async function handle(message) {
-  const { id, method, params } = message;
-  if (method === "initialize") {
-    const requestedVersion = params?.protocolVersion;
-    if (typeof requestedVersion !== "string" || !requestedVersion) {
-      sendError(id, -32602, "initialize requires a protocolVersion string");
-      return;
-    }
-    negotiatedProtocolVersion = SUPPORTED_PROTOCOL_VERSIONS.has(requestedVersion) ? requestedVersion : DEFAULT_PROTOCOL_VERSION;
-    sendResult(id, {
-      protocolVersion: negotiatedProtocolVersion,
-      capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-      instructions: "Self-hosted Honcho personal memory. For broad recall, read the configured user's representation from the user's own observer perspective and also run workspace-wide search.",
-    });
-    return;
-  }
-  if (method === "ping") {
-    sendResult(id, {});
-    return;
-  }
-  if (method === "tools/list") {
-    const entries = await availableTools();
-    sendResult(id, { tools: entries.map(({ run, ...definition }) => definition) });
-    return;
-  }
-  if (method === "tools/call") {
-    try {
-      const result = await callTool(params?.name, params?.arguments);
-      sendResult(id, {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        // MCP requires an object here; search returns a list, which Claude Code rejected.
-        structuredContent: result && typeof result === "object" && !Array.isArray(result) ? result : { result },
-        isError: false,
-      });
-    } catch (error) {
-      sendResult(id, {
-        content: [{ type: "text", text: String(error?.message || error) }],
-        isError: true,
-      });
-    }
-    return;
-  }
-  if (id !== undefined) sendError(id, -32601, `Method not found: ${method}`);
-}
-
-const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-let pending = Promise.resolve();
-lines.on("line", (line) => {
-  if (!line.trim()) return;
-  let message;
-  try {
-    message = JSON.parse(line);
-  } catch {
-    return;
-  }
-  pending = pending.then(() => handle(message)).catch((error) => {
-    if (message.id !== undefined) sendError(message.id, -32603, String(error?.message || error));
-    else process.stderr.write(`${String(error?.stack || error)}\n`);
-  });
+serveStdio({
+  name: SERVER_NAME,
+  version: SERVER_VERSION,
+  instructions: "Self-hosted Honcho personal memory. For broad recall, read the configured user's representation from the user's own observer perspective and also run workspace-wide search.",
+  listTools: async () => (await availableTools()).map(({ run, ...definition }) => definition),
+  callTool: async (name, args) => {
+    const result = await callTool(name, args);
+    return {
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      // MCP requires an object here; search returns a list, which Claude Code rejected.
+      structuredContent: result && typeof result === "object" && !Array.isArray(result) ? result : { result },
+      isError: false,
+    };
+  },
 });

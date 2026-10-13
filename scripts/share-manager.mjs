@@ -9,8 +9,9 @@
 //             /mcp is not found. In a team (team share) every route needs the
 //             Access login, and /v3 also a device key or a grant in access.json,
 //             which gate-access.mjs keeps in <runtime>/gate (the gate's /gate-state).
-//   - mcp     the Honcho MCP bridge, `chat` only, over HONCHO_TEAM_WORKSPACE as
-//             HONCHO_TEAM_PEER. In a team each teammate's question goes past the
+//   - mcp     the Honcho MCP bridge, a teammate's four tools only (list, search and
+//             read conversations, search conclusions), over HONCHO_TEAM_WORKSPACE
+//             as HONCHO_TEAM_PEER. In a team each teammate's question goes past the
 //             team hub's Jev guard first (see "the Jev guard" below).
 //   - tunnel  cloudflared running this server's remotely managed tunnel with
 //             HONCHO_TUNNEL_TOKEN; Cloudflare sends <host> to http://gate:8010.
@@ -556,7 +557,7 @@ export async function shareStatus(options = {}) {
 // ---------------------------------------------------------- the Jev guard
 //
 // In a team the Jev key stays in the team hub, and the hub judges each teammate's
-// `chat` with it (its guard, https://<hub>/guard). This server holds only its own
+// questions with it (its guard, https://<hub>/guard). This server holds only its own
 // token for that guard, which the hub issues to the member whose server it is
 // (POST /api/me/guard) and can revoke: HONCHO_JEV_GATE=1, HONCHO_JEV_GUARD_URL and
 // HONCHO_JEV_GUARD_TOKEN in the .env make mcp ask the guard before a question
@@ -960,7 +961,7 @@ async function shareEnableTeamUnlocked(ctx, options) {
     ...openedResult(opened, { publicUrl, enabledAt: state.enabledAt, host }),
     owners,
     hostTunnelRemoved: hostTunnel.removed,
-    next: `This server answers at ${publicUrl} to the owner's computers after a Google login; open chat or collecting to a teammate when they ask`,
+    next: `This server answers at ${publicUrl} to the owner's computers after a Google login; open your memory or collecting to a teammate when they ask`,
   };
 }
 

@@ -46,7 +46,7 @@ function foldersOf(row) {
   return Array.isArray(folders) ? folders.map((entry) => String(entry?.path ?? entry)).filter(Boolean) : [];
 }
 
-/** What a teammate's chat answered from: how many folders, and their conversations. */
+/** What a teammate's call could reach: how many folders, and their conversations. */
 function reachOf(row) {
   const folders = foldersOf(row);
   if (!folders.length) return "";
@@ -131,7 +131,7 @@ export default {
 
       options(caller, [["", "모든 사람"], ...[...callers].sort().map((name) => [name, name])], filters.caller);
       options(tool, [["", "모든 도구"], ...[...tools].sort().map((name) => [name, name])], filters.tool);
-      // The team server answers `chat` alone; a choice of one tool is no choice.
+      // A log of one tool's calls only has no choice to offer.
       clear(pickers, period, callers.size ? caller : null, tools.size > 1 || filters.tool ? tool : null);
       bar.hidden = false;
     }

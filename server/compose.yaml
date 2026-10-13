@@ -163,15 +163,15 @@ services:
   # in the private .env. The tunnel reaches this service and nothing else, and
   # Cloudflare Access covers the whole host, so every caller from outside is a person
   # with a verified Access login. What each may do is in ../runtime/gate (/gate-state):
-  # access.json, which the owner's app writes (owners, teammates who chat, teammates
-  # who collect), and devices.json, the computers registered here, which only the
+  # access.json, which the owner's app writes (owners, teammates the memory is opened
+  # to, teammates who collect), and devices.json, the computers registered here, which only the
   # gate writes. /team-memory/* tells a person what they may do and registers a
   # computer. /health and /v3/* go to the API: with the gate token as before (the
   # health check below holds it), from an owner's registered computer as sent, and
   # from a collecting teammate's only their own conversations. /mcp goes to the mcp
-  # service for an owner or a teammate allowed to chat, with the folders they may
-  # ask in the scope headers; until the Access team domain, audience and team MCP
-  # token are set, /mcp is not found.
+  # service for an owner or a teammate the memory is opened to, with the folders
+  # they may read in the scope headers; until the Access team domain, audience and
+  # team MCP token are set, /mcp is not found.
   gate:
     image: honcho-agent-bridge-dashboard:${HONCHO_IMAGE_TAG:-local}
     command: ["node", "/gate/gate.mjs"]
@@ -199,15 +199,15 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Teammates asking this server's memory over MCP. Reached only through the gate's
+  # Teammates reading this server's memory over MCP. Reached only through the gate's
   # /mcp, which has already verified the caller's Cloudflare Access login, found
   # them in access.json, and sends the team MCP token, the verified email and the
   # scope headers: x-honcho-scope-mode `all` for an owner, `folders` with
   # x-honcho-allowed-folders for a teammate. The gate drops any x-honcho-* header a
   # caller sent, so with HONCHO_MCP_SCOPE_FROM_GATE the bridge trusts these, and a
-  # teammate's `chat` answers only from the folders opened to them. It answers
-  # `chat` alone, over one workspace as one peer; callers cannot point it at another
-  # by header or argument. Its /audit, the record of those calls, and /guard-trial,
+  # teammate's agent lists, searches and reads only the conversations in the folders
+  # opened to them. It offers those four tools alone, over one workspace as one peer;
+  # callers cannot point it at another by header or argument. Its /audit, the record of those calls, and /guard-trial,
   # where the owner tries a question as a teammate's, are for the dashboard only:
   # neither is under /mcp, so the gate never passes them on.
   mcp:
@@ -223,7 +223,7 @@ services:
       HONCHO_MCP_PATH: /mcp
       HONCHO_MCP_REQUIRE_AUTH: "1"
       HONCHO_MCP_BEARER_TOKEN: ${HONCHO_TEAM_MCP_TOKEN:-}
-      HONCHO_MCP_ENABLED_TOOLS: chat
+      HONCHO_MCP_ENABLED_TOOLS: list_conversations,search_messages,read_conversation,search_conclusions
       HONCHO_MCP_PIN_DEFAULTS: "1"
       HONCHO_WORKSPACE_ID: ${HONCHO_TEAM_WORKSPACE:-memory}
       HONCHO_USER_NAME: ${HONCHO_TEAM_PEER:-}
@@ -232,9 +232,9 @@ services:
       HONCHO_AUDIT_BRIDGE: team
       HONCHO_AUDIT_READ: "1"
       HONCHO_MCP_SCOPE_FROM_GATE: "1"
-      # Jev judges each teammate's `chat` question first and refuses one about the
-      # owner's private life rather than shared work, then judges the answer and
-      # withholds one that gives such things away. Off while HONCHO_JEV_GATE is
+      # Jev judges each teammate's question first and refuses one about the owner's
+      # private life rather than shared work, then judges what their search or read
+      # found and withholds what gives such things away. Off while HONCHO_JEV_GATE is
       # empty. In a team the bridge asks the team hub's guard instead
       # (HONCHO_JEV_GUARD_URL): the Jev key stays in the hub, and this server holds
       # only its own token for the guard, which the hub can revoke; the app writes
@@ -250,7 +250,7 @@ services:
       HONCHO_JEV_THRESHOLD: ${HONCHO_JEV_THRESHOLD:-0.7}
       HONCHO_JEV_FAIL_MODE: ${HONCHO_JEV_FAIL_MODE:-open}
       HONCHO_JEV_ANSWER_FAIL_MODE: ${HONCHO_JEV_ANSWER_FAIL_MODE:-closed}
-      HONCHO_JEV_TOOLS: ${HONCHO_JEV_TOOLS:-chat}
+      HONCHO_JEV_TOOLS: ${HONCHO_JEV_TOOLS:-list_conversations,search_messages,read_conversation,search_conclusions}
     # The bridge has no health route; any HTTP answer (401 without the token) means
     # it is serving.
     healthcheck:

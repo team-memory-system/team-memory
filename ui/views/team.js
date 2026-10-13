@@ -1,32 +1,25 @@
-// 팀: teammates' memories this computer's agents ask, and who may ask mine.
+// 팀: teammates' memories this computer's agents read, and who may read mine.
 //
-// 팀원 기억 lists every member from the team hub. Asking a teammate's memory starts
-// with a chat request, which its owner approves with the folders they open; then
-// 연결 puts it into Claude Code and Codex as a remote MCP server (team-<name>), and
-// its row's switch takes it out and puts it back. 내 기억을 여는 팀원 is the other
-// way: what this computer's server opened to whom (its gate's access.json), with
-// 수정 for the folders and ChatGPT 기록 and for closing it again, a switch that turns
-// a teammate's chat off for now and on again, and who collects into it. Who asked my
+// 팀원 기억 lists every member from the team hub. Reading a teammate's memory starts
+// with a request (열람 요청), which its owner approves with the folders they open;
+// from then on Claude Code and Codex search and read those conversations through the
+// plugin's team-memory MCP server, with this computer's team servers login, which the
+// row offers while it is missing. 내 기억을 여는 팀원 is the other way: what this
+// computer's server opened to whom (its gate's access.json), with 수정 for the
+// folders and ChatGPT 기록 and for closing it again, a switch that turns a
+// teammate's access off for now and on again, and who collects into it. Who read my
 // memory is the 조회 기록 menu (audit.js). A team login that ended says so, with 다시
 // 로그인, instead of the screen.
-import { post } from "../lib/api.js";
 import { h, clear } from "../lib/dom.js";
 import { confirmWindow, list, listItem } from "../lib/kit.js";
 import { shortPath } from "../lib/collect.js";
 import { openedText } from "../lib/folder-grants.js";
 import { appRecords, josa } from "../lib/format.js";
-import { chooseFolders, connectApproved, loadRequests, openConnected } from "../lib/requests.js";
-import { clientOutcome, connectTeammate, endedLogins, loginNotice, mateName, sendRequest, teamCall, teamDirectory, teamErrorNotice, teamStatus } from "../lib/team.js";
+import { chooseFolders, loadRequests, serversLoginButton } from "../lib/requests.js";
+import { endedLogins, loginNotice, personName as nameOf, sendRequest, teamCall, teamDirectory, teamErrorNotice, teamStatus } from "../lib/team.js";
 import { refreshBell } from "../lib/bell.js";
-import { app, go, loadContext, refreshStatus } from "../lib/state.js";
+import { app, go } from "../lib/state.js";
 import { button, busy, notice, pageHead, spinner, tag, toast, toggle } from "../lib/ui.js";
-
-const CLIENTS = { claude: "Claude Code", codex: "Codex" };
-
-/** The person's name as the team shows it: their peer, else the start of their email. */
-function nameOf(person) {
-  return person.peer || person.email.split("@")[0];
-}
 
 /** What is open to a teammate: the first few folders by name, then the apps, such as ChatGPT 기록. */
 function foldersText(folders, sources = []) {
@@ -43,7 +36,7 @@ export default {
   async mount(page) {
     const body = h("div", { class: "pad stack" });
     page.append(
-      pageHead({ title: "팀", subtitle: "팀원의 기억에 chat으로 묻고, 내 기억을 누구에게 열었는지 봅니다." }),
+      pageHead({ title: "팀", subtitle: "팀원에게 기억 열람을 요청하고, 내 기억을 누구에게 열었는지 봅니다." }),
       h("div", { class: "page-body" }, body),
     );
 
@@ -58,12 +51,12 @@ export default {
       }
       let directory;
       let requests;
-      let connected;
+      let status;
       try {
-        [directory, requests, connected] = await Promise.all([
+        [directory, requests, status] = await Promise.all([
           teamDirectory(),
           loadRequests({ fresh: true }),
-          post("/api/teammates/connected", {}),
+          teamStatus().catch(() => null),
         ]);
       } catch (error) {
         clear(body, teamErrorNotice(error, { onDone: draw }));
@@ -74,50 +67,17 @@ export default {
       for (const request of requests?.outgoing || []) {
         if (request.kind === "chat" && !outgoing.has(request.server)) outgoing.set(request.server, request);
       }
-      const registered = new Map((connected.servers || []).map((server) => [server.host, server]));
-      const clients = connected.clients || {};
-      const missing = Object.entries(CLIENTS).filter(([key]) => clients[key]?.found === false).map(([, label]) => label);
+      // What an opened memory needs here: the login to the team's servers, once.
+      const signedIn = Boolean(status?.serversLogin?.signedIn);
+      const opened = [];
 
       const mateRow = (person) => {
         const server = servers.get(person.email);
         if (!server) return listItem({ title: nameOf(person), sub: "서버 없음" });
         const request = outgoing.get(server.host);
-        const local = registered.get(server.host);
-        const agents = local ? Object.keys(CLIENTS).filter((key) => local[key]?.registered) : [];
-        const opened = request?.projects?.length ? ` · ${openedText(request.projects)}` : "";
-        const name = mateName(person);
-        // Connected once: the switch takes it out of the agents and puts it back.
-        if (agents.length || local) {
-          const on = agents.length > 0;
-          return listItem({
-            title: nameOf(person),
-            sub: on ? `${agents.map((key) => CLIENTS[key]).join("·")}${opened}` : `꺼 둠${opened}`,
-            end: [
-              on && local?.codex?.registered ? button("로그인 안내", { kind: "small quiet", onClick: () => openConnected({ name, entry: local.entry }) }) : null,
-              toggle(on, async (next) => {
-                if (next) {
-                  const result = await connectTeammate({ name, host: server.host });
-                  if (!result.ok) throw new Error(result.error || clientOutcome(result).join(" · ") || "연결하지 못했습니다.");
-                  await loadContext();
-                  refreshStatus();
-                  openConnected({ name, entry: result.entry });
-                  draw();
-                  return;
-                }
-                const ok = await confirmWindow({
-                  title: `${nameOf(person)}의 기억을 끌까요?`,
-                  text: `Claude Code와 Codex에서 team-${name} 을 뺍니다. 다시 켜면 에이전트마다 한 번 더 로그인합니다.`,
-                  confirm: "끄기",
-                  danger: true,
-                });
-                if (!ok) return false;
-                const result = await post("/api/teammates/disconnect", { name });
-                await loadContext();
-                refreshStatus();
-                if (!result.ok) throw new Error(clientOutcome(result).join(" · ") || "다 끄지 못했습니다.");
-              }, { label: `${nameOf(person)} 기억 켜기` }),
-            ],
-          });
+        if (request?.status === "approved") {
+          opened.push({ name: nameOf(person), host: server.host });
+          return listItem({ title: nameOf(person), tags: [" ", tag("열림", "ok")], sub: openedText(request.projects) });
         }
         if (request?.status === "pending") {
           return listItem({
@@ -131,27 +91,15 @@ export default {
             }) }),
           });
         }
-        if (request?.status === "approved") {
-          return listItem({
-            title: nameOf(person),
-            tags: [" ", tag("승인됨", "ok")],
-            sub: openedText(request.projects),
-            end: button("연결", { kind: "primary small", onClick: (event) => busy(event.currentTarget, async () => {
-              await connectApproved({ ...request, ownerPeer: person.peer });
-              refreshBell();
-              await draw();
-            }) }),
-          });
-        }
         return listItem({
           title: nameOf(person),
-          tags: request?.status === "declined" ? [" ", tag("거절됨")] : [],
+          tags: request?.status === "declined" ? [" ", tag("거절됨")] : request?.status === "revoked" ? [" ", tag("닫힘")] : [],
           sub: server.host,
-          end: button("chat 요청", { kind: "small", onClick: (event) => busy(event.currentTarget, async () => {
+          end: button("열람 요청", { kind: "small", onClick: (event) => busy(event.currentTarget, async () => {
             await sendRequest({ kind: "chat", server: server.host });
             refreshBell();
             await draw();
-          }, { done: `${nameOf(person)}에게 chat을 요청했습니다` }) }),
+          }, { done: `${nameOf(person)}에게 기억 열람을 요청했습니다` }) }),
         });
       };
 
@@ -160,12 +108,16 @@ export default {
       const myServer = servers.get(team.email);
       const granted = myServer && myServer.host === team.localHost ? grantRows(requests, directory) : null;
       clear(body,
-        missing.length ? notice("warn", `${missing.join(", ")}가 이 컴퓨터에 없어 그쪽에는 넣지 않습니다.`) : null,
+        // One login reaches every teammate's server, so it is asked for once, above them.
+        opened.length && !signedIn
+          ? notice("warn", "열린 기억을 읽으려면 팀 서버 로그인이 한 번 필요합니다. ", serversLoginButton(opened[0].host, { onDone: draw }))
+          : null,
         list({ title: "팀원 기억", empty: "아직 다른 팀원이 없습니다." }, mates),
+        opened.length ? h("p", { class: "hint" }, `Claude Code나 Codex에게 "${opened[0].name}에게 OCR 엔진 뭐로 바꿨는지 찾아봐"처럼 팀원 이름을 넣어 말하면, 열린 대화에서 찾아 답합니다.`) : null,
         granted ? list({ title: "내 기억을 여는 팀원", empty: "아직 없습니다." }, granted) : null);
     }
 
-    /** What this computer's server opened to whom: chat with its folders, or collecting into it. */
+    /** What this computer's server opened to whom: its folders to read, or collecting into it. */
     function grantRows(requests, directory) {
       const people = new Map((directory.people || []).map((person) => [person.email, person]));
       const approved = new Map();
@@ -179,7 +131,7 @@ export default {
           const off = grant.chat.off === true;
           rows.push(listItem({
             title: name,
-            tags: [" ", tag("chat"), off ? tag("꺼 둠", "warn") : null],
+            tags: [" ", tag("기억 열람"), off ? tag("꺼 둠", "warn") : null],
             sub: foldersText(grant.chat.folders || [], grant.chat.sources || []),
             dim: off,
             end: [
@@ -216,7 +168,7 @@ export default {
       });
     }
 
-    /** 수정: the folders and ChatGPT 기록 open to a teammate, or 끊기 to close chat to them. */
+    /** 수정: the folders and ChatGPT 기록 open to a teammate, or 끊기 to close my memory to them. */
     async function editGrant(person, grant, request) {
       let closed = false;
       const name = nameOf(person);
@@ -224,7 +176,7 @@ export default {
         const target = event.currentTarget;
         const ok = await confirmWindow({
           title: `${josa(name, "을/를")} 끊을까요?`,
-          text: `${josa(name, "은/는")} 내 기억에 더 이상 chat으로 묻지 못합니다. 다시 열려면 ${josa(name, "이/가")} chat 요청부터 다시 보내야 합니다. 잠깐 막으려면 목록의 스위치를 끄세요.`,
+          text: `${josa(name, "은/는")} 내 기억을 더 이상 찾아보지 못합니다. 다시 열려면 ${josa(name, "이/가")} 열람 요청부터 다시 보내야 합니다. 잠깐 막으려면 목록의 스위치를 끄세요.`,
           confirm: "끊기",
           danger: true,
         });
@@ -237,7 +189,7 @@ export default {
       } });
       const chosen = await chooseFolders({
         title: `${name}에게 연 폴더`,
-        lead: `${josa(name, "이/가")} chat으로 물을 때 답에 쓸 폴더입니다.`,
+        lead: `${name}의 에이전트가 찾아서 그대로 읽는 폴더입니다.`,
         who: name,
         chosen: grant.chat.folders || [],
         chosenSources: grant.chat.sources || [],

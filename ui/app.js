@@ -114,11 +114,6 @@ function memoryAnswers() {
   return app.status.honcho.state === "on";
 }
 
-/** Claude Code or Codex here has a teammate's memory as a team-* MCP server. */
-function teamConnected() {
-  return Boolean(app.context?.teamMemory?.connected);
-}
-
 /** Logged in to a team (or its login ended, to be done again), and first setup ran to its end on this computer. */
 function teamJoined() {
   return joinedTeam(app.context?.team, app.prefs.mode);
@@ -126,13 +121,13 @@ function teamJoined() {
 
 function setupDone() {
   const context = app.context;
-  return Boolean(context?.configured || teamConnected() || teamJoined() || context?.localServer || memoryAnswers());
+  return Boolean(context?.configured || teamJoined() || context?.localServer || memoryAnswers());
 }
 
 /** Stores nothing and only asks teammates' memories: 기억 and 서버 mean nothing here. */
 function chatOnly() {
   const context = app.context;
-  return Boolean(context && !context.configured && !context.localServer && (teamConnected() || teamJoined()) && !memoryAnswers());
+  return Boolean(context && !context.configured && !context.localServer && teamJoined() && !memoryAnswers());
 }
 
 /** A server here, one about to be installed here, or a gateway answering here. */
@@ -142,7 +137,7 @@ function serverHere() {
 
 /** Someone who chose 혼자 쓰기 has no team, unless they made or joined one since. */
 function teamHere() {
-  return Boolean(app.context?.team?.admin || app.context?.team?.hub || teamConnected() || app.prefs.mode !== "solo");
+  return Boolean(app.context?.team?.admin || app.context?.team?.hub || app.prefs.mode !== "solo");
 }
 
 /** Screens that mean nothing on this computer are left out of the menu. */

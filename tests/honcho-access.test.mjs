@@ -452,7 +452,7 @@ test("bridge disconnect removes the old shared-bridge settings and leaves the me
   assert.equal(again.body.changed, false);
   const gone = await cli(["bridge", "connect", "--url", "https://bridge.example.com/mcp"], env);
   assert.equal(gone.body.ok, false);
-  assert.match(gone.body.error || JSON.stringify(gone.body), /teammates connect/);
+  assert.match(gone.body.error || JSON.stringify(gone.body), /team-memory MCP server/);
 });
 
 test("the setup form's service token reaches the CLI through its environment, never its command line", async (t) => {

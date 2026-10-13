@@ -209,7 +209,7 @@ const ROUTES = {
       try {
         await setChatOff(gate, { email, off: body.off });
       } catch (error) {
-        if (error.code === "not_opened") return { ok: false, error: "이 팀원에게는 아직 내 기억이 열려 있지 않습니다. chat 요청을 승인하면 열립니다." };
+        if (error.code === "not_opened") return { ok: false, error: "이 팀원에게는 아직 내 기억이 열려 있지 않습니다. 그 팀원의 요청을 승인하면 열립니다." };
         throw error;
       }
       return { ok: true, off: body.off };
@@ -274,6 +274,13 @@ const ROUTES = {
   "/api/team/admin/set-admin": async (body) => {
     const { paths } = await context();
     return { ok: true, ...(await hubCall("PUT", `/api/admin/people/${encodeURIComponent(String(body.email || ""))}`, { admin: body.admin }, { paths })) };
+  },
+
+  /** Names a teammate (`nickname`), the name the team's screens and agents call them by; empty takes it away. */
+  "/api/team/admin/nickname": async (body) => {
+    const { paths } = await context();
+    const nickname = typeof body.nickname === "string" ? body.nickname.trim() : "";
+    return { ok: true, ...(await hubCall("PUT", `/api/admin/people/${encodeURIComponent(String(body.email || ""))}`, { nickname }, { paths })) };
   },
 
   "/api/team/admin/rename": async (body) => {

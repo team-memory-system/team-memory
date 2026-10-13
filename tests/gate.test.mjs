@@ -1301,7 +1301,7 @@ test("mcp takes the Jev gate's settings from the private .env, off while they ar
     HONCHO_JEV_FAIL_MODE: "${HONCHO_JEV_FAIL_MODE:-open}",
     // An answer Jev could not judge is withheld unless the owner says otherwise.
     HONCHO_JEV_ANSWER_FAIL_MODE: "${HONCHO_JEV_ANSWER_FAIL_MODE:-closed}",
-    HONCHO_JEV_TOOLS: "${HONCHO_JEV_TOOLS:-chat}",
+    HONCHO_JEV_TOOLS: "${HONCHO_JEV_TOOLS:-list_conversations,search_messages,read_conversation,search_conclusions}",
   };
   for (const [name, value] of Object.entries(settings)) assert.equal(composeSetting(mcp, name), value, name);
   for (const service of ["dashboard", "gate", "tunnel"]) assert.doesNotMatch(composeService(compose, service), /JEV|TYPESAFE|GUARD/, service);

@@ -4,16 +4,18 @@
 // token it runs on. Adding someone takes their Google email and nothing else: they
 // log in at the team's address, and make a server of their own if they want one.
 // An admin makes a teammate an admin too, or takes it away from another admin; no
-// one takes it from themselves, so the team always keeps one.
+// one takes it from themselves, so the team always keeps one. An admin also names
+// each member (이름 바꾸기): the name the team's screens and every teammate's agents
+// call them by, nobody else's.
 // The team's Jev key is set here too: the hub keeps it and judges teammates'
 // questions with it for every shared server of the team, which holds only its own
 // token for the hub's guard. The key never leaves the hub, and the page never sees
 // it again once saved. This is the one screen that names Cloudflare.
 import { post } from "../lib/api.js";
 import { h, clear, copyText } from "../lib/dom.js";
-import { fullDate, number } from "../lib/format.js";
+import { fullDate, josa, number } from "../lib/format.js";
 import { block, confirmWindow, field, kv, list, listItem, modal } from "../lib/kit.js";
-import { teamCall, teamErrorNotice } from "../lib/team.js";
+import { personName, teamCall, teamErrorNotice } from "../lib/team.js";
 import { app, loadContext } from "../lib/state.js";
 import { button, busy, notice, pageHead, spinner, tag, toast } from "../lib/ui.js";
 
@@ -25,17 +27,54 @@ const ADMIN_REFUSED = {
   not_admin: "관리자만 할 수 있습니다. 다른 관리자가 관리자에서 뺐을 수 있습니다.",
 };
 
+/** The hub's refusals of a name, in this app's words. */
+const NAME_REFUSED = {
+  nickname_taken: "다른 팀원이 이미 쓰는 이름입니다.",
+  bad_request: "이름은 32자까지 씁니다.",
+  not_admin: ADMIN_REFUSED.not_admin,
+};
+
+/** 이름 바꾸기: the name the team calls a member by; empty takes it away. */
+function openName(person, onDone) {
+  const win = modal({ title: "이름 바꾸기", big: true, small: true });
+  // Without a name the team goes back to the peer, else the start of the email.
+  const plain = person.peer || person.email.split("@")[0];
+  const input = h("input", { class: "input", type: "text", autocomplete: "off", maxlength: "32", value: person.nickname || "", placeholder: plain });
+  const problem = h("div", {});
+  const save = async (event) => busy(event.currentTarget, async () => {
+    const nickname = input.value.trim();
+    try {
+      await teamCall("/api/team/admin/nickname", { email: person.email, nickname });
+    } catch (error) {
+      if (!NAME_REFUSED[error.code]) throw error;
+      clear(problem, notice("warn", NAME_REFUSED[error.code]));
+      return;
+    }
+    win.close("ok");
+    await onDone();
+    toast(nickname ? `이름을 바꿨습니다: ${nickname}` : `${person.email}의 이름을 지웠습니다.`, "ok");
+  });
+  win.body(
+    h("p", { class: "lead", style: { marginTop: "4px" } }, `팀 화면과 팀원들의 에이전트가 ${person.email} 을 이 이름으로 부릅니다.`),
+    field("이름", input, `32자까지. 비우면 ${josa(plain, "으로/로")} 부릅니다.`),
+    problem);
+  win.foot(null, [button("취소", { kind: "quiet", onClick: () => win.close() }), button("저장", { kind: "primary", onClick: save })]);
+  input.addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); win.dialog.querySelector(".btn.primary")?.click(); } });
+  win.open();
+  input.focus();
+}
+
 /** 관리자로 바꾸기 (`admin: true`) or 관리자에서 빼기 (`admin: false`), after asking. */
 async function changeAdmin(target, person, admin, redraw) {
-  const name = person.peer || person.email.split("@")[0];
+  const name = personName(person);
   const ok = await confirmWindow(admin
     ? {
-      title: `${name}을 관리자로 바꿀까요?`,
+      title: `${josa(name, "을/를")} 관리자로 바꿀까요?`,
       text: `${person.email} 도 관리자 메뉴에서 팀원을 더하고 빼고, 관리자를 바꾸고, Jev 키를 바꿀 수 있습니다.`,
       confirm: "바꾸기",
     }
     : {
-      title: `${name}을 관리자에서 뺄까요?`,
+      title: `${josa(name, "을/를")} 관리자에서 뺄까요?`,
       text: `${person.email} 은 팀원으로 남고, 관리자 메뉴는 쓰지 못합니다.`,
       confirm: "빼기",
     });
@@ -58,7 +97,7 @@ function openAdd(onAdded) {
   win.body(
     field("Google 이메일", email),
     h("div", { class: "notice warn", style: { marginTop: "14px" } },
-      "더한 사람은 팀 주소로 로그인해 팀원 명단과 서버 주소를 보고, 팀원 기억에 chat을, 회사 서버에 대화 쌓기를 요청할 수 있습니다. 회사 밖 사람은 더하지 마세요."),
+      "더한 사람은 팀 주소로 로그인해 팀원 명단과 서버 주소를 보고, 팀원에게 기억 열람을, 회사 서버에 대화 쌓기를 요청할 수 있습니다. 회사 밖 사람은 더하지 마세요."),
     problem);
   win.foot(null, [
     button("취소", { kind: "quiet", onClick: () => win.close() }),
@@ -183,17 +222,18 @@ export default {
           const toggle = person.admin
             ? button("관리자에서 빼기", { kind: "small", onClick: (event) => changeAdmin(event.currentTarget, person, false, draw) })
             : button("관리자로 바꾸기", { kind: "small", onClick: (event) => changeAdmin(event.currentTarget, person, true, draw) });
+          const rename = button("이름 바꾸기", { kind: "small", onClick: () => openName(person, draw) });
           return listItem({
-            title: person.email,
+            title: person.nickname || person.email,
             tags: own ? [" ", tag("나 · 관리자")] : person.admin ? [" ", tag("관리자")] : fresh.has(person.email) ? [" ", tag("방금 더함", "new")] : [],
-            sub: server ? `서버 ${server}` : person.joined ? "서버 없음" : "아직 로그인하지 않음",
+            sub: [person.nickname ? person.email : null, server ? `서버 ${server}` : person.joined ? "서버 없음" : "아직 로그인하지 않음"].filter(Boolean).join(" · "),
             fresh: fresh.has(person.email),
-            end: own ? null : [toggle, button("팀에서 빼기", { kind: "small danger", onClick: async (event) => {
+            end: own ? rename : [rename, toggle, button("팀에서 빼기", { kind: "small danger", onClick: async (event) => {
               const target = event.currentTarget;
-              const name = person.peer || person.email.split("@")[0];
+              const name = personName(person);
               const ok = await confirmWindow({
-                title: `${name}을 팀에서 뺄까요?`,
-                text: `${person.email} 은 팀 주소로 로그인하지 못합니다. 팀원 기억 연결이 끊기고, 회사 서버에도 더 이상 대화를 쌓지 못합니다.${server ? ` 그 사람의 서버 주소(${server})도 지웁니다.` : ""}`,
+                title: `${josa(name, "을/를")} 팀에서 뺄까요?`,
+                text: `${person.email} 은 팀 주소로 로그인하지 못합니다. 팀원 기억을 더 이상 찾아보지 못하고, 회사 서버에도 더 이상 대화를 쌓지 못합니다.${server ? ` 그 사람의 서버 주소(${server})도 지웁니다.` : ""}`,
                 confirm: "빼기",
                 danger: true,
               });

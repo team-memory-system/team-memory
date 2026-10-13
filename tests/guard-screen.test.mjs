@@ -11,10 +11,12 @@ test("each reason the bridge records reads as a few words, by how the call went"
 
   assert.equal(denied("out of scope"), "사적인 질문으로 판정");
   assert.equal(denied("No conversation in the folders open to you on this MCP server"), "열린 폴더에 대화 없음");
-  assert.equal(denied("The owner of this memory has turned your chat off for now. You can ask again once they turn it back on."), "꺼 둔 동안 물음");
+  assert.equal(denied("The owner of this memory has turned your access off for now. You can ask again once they turn it back on."), "꺼 둔 동안 물음");
+  assert.equal(denied("The owner of this memory has turned your chat off for now. You can ask again once they turn it back on."), "꺼 둔 동안 물음", "a row from before");
+  assert.equal(denied("No conversation with that id is open to you on this MCP server"), "열리지 않은 대화를 찾음");
   assert.equal(denied("The folders open to you on this MCP server hold more than 1000 conversations, more than one answer can draw on; the owner has to open fewer folders"), "열린 폴더의 대화가 너무 많음");
   assert.equal(denied("The conversations in the folders open to you could not be listed on this MCP server; try again later"), "열린 폴더의 대화를 읽지 못함");
-  assert.equal(denied("search cannot be used with folders on this MCP server; use chat"), "팀원은 chat만 씀");
+  assert.equal(denied("chat cannot be used with folders on this MCP server; use list_conversations, search_messages, read_conversation, search_conclusions"), "팀원에게 없는 도구");
   assert.equal(denied("query too long to judge"), "너무 길어 판정하지 않고 거부");
   assert.equal(denied("answer withheld: it discloses private matters"), "답에 민감한 내용이 있어 막음");
   assert.equal(denied("answer too long to judge"), "답이 너무 길어 판정하지 않고 막음");
@@ -83,6 +85,9 @@ test("a trial says what the teammate gets: the answer, or only the refusal", () 
 
   const passed = trialOutcome({ gate: true, outcome: "passed", message, answer: "배포는 금요일", answer_check: judged });
   assert.deepEqual([passed.kind, passed.title, passed.message], ["ok", "팀원에게 이 답이 그대로 나갑니다.", undefined]);
+  // What a teammate's search found goes to them as it is.
+  const found = trialOutcome({ gate: true, outcome: "passed", answer: "bob · 2026-10-12\n배포는 금요일", found: [{ content: "배포는 금요일" }], answer_check: judged });
+  assert.deepEqual([found.kind, found.title], ["ok", "찾은 대화가 그대로 팀원에게 나갑니다."]);
   assert.equal(trialOutcome({ gate: true, outcome: "passed", answer: "x", answer_check: { ...judged, score: null, unjudged: true } }).kind, "warn");
   assert.equal(trialOutcome({ gate: false, outcome: "passed", answer: "x", answer_check: judged }).kind, "warn");
 

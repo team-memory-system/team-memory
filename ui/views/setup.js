@@ -34,7 +34,7 @@ import {
 } from "../lib/collect.js";
 import { dayText, HELD, holdNewTurns, pastStep, pastToPut, periodText, planPast, releaseNewTurns, runLine, startPast } from "../lib/past.js";
 import { gatewayLogin } from "../lib/login.js";
-import { GOOGLE_ADD_ACCOUNT, loginTab, registerWith, sameAccountAgain, sendRequest, switchAccount, teamDirectory, teamHostOf, teamLogin, teamMe } from "../lib/team.js";
+import { GOOGLE_ADD_ACCOUNT, loginTab, personName, registerWith, sameAccountAgain, sendRequest, switchAccount, teamDirectory, teamHostOf, teamLogin, teamMe } from "../lib/team.js";
 import { app, loadContext, refreshStatus, savePrefs } from "../lib/state.js";
 import { button, notice, spinner, tag } from "../lib/ui.js";
 
@@ -474,7 +474,7 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     }
     const rows = people.map((person) => {
       const server = servers.get(person.email);
-      const name = person.peer || person.email.split("@")[0];
+      const name = personName(person);
       return opt({
         type: "checkbox",
         name: "mates",
@@ -488,7 +488,7 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     });
     return {
       body: h("div", {}, h("h3", {}, "어느 팀원의 기억에 물을까요?"),
-        h("p", { class: "lead" }, "고른 팀원에게 chat을 요청합니다. 승인되면 이 컴퓨터의 Claude Code와 Codex에 도구로 넣습니다."),
+        h("p", { class: "lead" }, "고른 팀원에게 기억 열람을 요청합니다. 승인되면 이 컴퓨터의 Claude Code와 Codex가 그 팀원이 연 대화를 찾아봅니다."),
         rows.length ? opts(...rows) : h("div", { class: "opts" }, h("div", { class: "list-empty" }, "아직 서버를 연 팀원이 없습니다."))),
       check: () => (state.draft.server === "none" && !state.mates.size ? "내 대화를 쌓지 않으면 팀원을 하나 이상 고르세요." : null),
     };
@@ -643,7 +643,7 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     const mates = matesChosen();
     if (mates.length) {
       tasks.push({ label: "팀원" });
-      tasks.push({ title: `${joined(mates.map((mate) => mate.name))}에게 chat 요청`, run: requestMates });
+      tasks.push({ title: `${joined(mates.map((mate) => mate.name))}에게 열람 요청`, run: requestMates });
     }
     return tasks.map((task) => (task.label ? task : { state: "wait", ...task }));
   }
@@ -654,7 +654,7 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     const servers = new Map((state.team.directory?.servers || []).map((server) => [server.owner, server]));
     return (state.team.directory?.people || [])
       .filter((person) => state.mates.has(person.email) && servers.has(person.email))
-      .map((person) => ({ email: person.email, name: person.peer || person.email.split("@")[0], host: servers.get(person.email).host }));
+      .map((person) => ({ email: person.email, name: personName(person), host: servers.get(person.email).host }));
   }
 
   async function prepare(task) {
@@ -866,7 +866,7 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     const names = matesChosen().filter((mate) => state.requested.includes(mate.email)).map((mate) => mate.name);
     win.body(
       h("h3", {}, waiting ? "승인 기다리는 중" : items.length ? `${agentsOnly ? "에이전트에서 할 일" : "할 일"} ${items.length}개` : "다 됐습니다"),
-      chatOnly && names.length ? h("p", { class: "lead" }, `${joined(names)}에게 chat 요청을 보냈습니다.`) : null,
+      chatOnly && names.length ? h("p", { class: "lead" }, `${joined(names)}에게 열람 요청을 보냈습니다.`) : null,
       items.length ? todoList(items) : h("p", { class: "lead" }, "이제 대화가 끝날 때마다 기억 서버에 쌓입니다."),
       state.filling ? fillJob() : null);
     win.foot(null, button(next[0], { kind: "primary", onClick: () => { win.close("done"); onDone?.(next[1]); } }));

@@ -12,11 +12,13 @@ export function reasonText(reason, allowed, { cause = false } = {}) {
   const text = String(reason || "").trim();
   const said = (whole, why) => (cause ? why : whole);
   if (text === "out of scope") return "사적인 질문으로 판정";
-  if (text.startsWith("The owner of this memory has turned your chat off")) return "꺼 둔 동안 물음";
+  // "access" since teammates search; "chat" in the rows from before.
+  if (/^The owner of this memory has turned your (access|chat) off/.test(text)) return "꺼 둔 동안 물음";
+  if (text.startsWith("No conversation with that id is open to you")) return "열리지 않은 대화를 찾음";
   if (text.startsWith("No conversation in the folders open")) return "열린 폴더에 대화 없음";
   if (text.startsWith("The folders open to you on this MCP server hold more than")) return "열린 폴더의 대화가 너무 많음";
   if (text.startsWith("The conversations in the folders open to you could not be listed")) return "열린 폴더의 대화를 읽지 못함";
-  if (text.includes("cannot be used with folders")) return "팀원은 chat만 씀";
+  if (text.includes("cannot be used with folders")) return "팀원에게 없는 도구";
   if (text === "query too long to judge") return said("너무 길어 판정하지 않고 거부", "너무 길어 판정하지 않음");
   if (text.startsWith("answer withheld")) return said("답에 민감한 내용이 있어 막음", "민감한 내용이 든 답으로 판정");
   if (text === "answer too long to judge") return said("답이 너무 길어 판정하지 않고 막음", "너무 길어 판정하지 않음");
@@ -105,14 +107,17 @@ export function trialOutcome(trial) {
         message: trial.message,
       };
     case "no_answer":
-      return { kind: "warn", title: "기억 서버가 답을 만들지 못했습니다.", text: "고른 폴더에 아직 대화가 없거나, 기억 서버가 답하지 못했습니다." };
-    case "passed":
+      return { kind: "warn", title: "기억 서버에서 찾지 못했습니다.", text: "고른 폴더에 아직 대화가 없거나, 기억 서버가 답하지 못했습니다." };
+    case "passed": {
       if (trial.answer == null) {
-        return { kind: off ? "warn" : "ok", title: "질문은 통과합니다.", text: off ? "이 서버는 Jev 판정이 꺼져 있어 판정 없이 통과합니다." : "답은 만들지 않아 답 검사는 하지 않았습니다." };
+        return { kind: off ? "warn" : "ok", title: "질문은 통과합니다.", text: off ? "이 서버는 Jev 판정이 꺼져 있어 판정 없이 통과합니다." : "찾지 않아 답 검사는 하지 않았습니다." };
       }
-      if (off) return { kind: "warn", title: "팀원에게 이 답이 그대로 나갑니다.", text: "이 서버는 Jev 판정이 꺼져 있어 질문과 답 모두 판정 없이 오갑니다." };
-      if (trial.answer_check?.unjudged) return { kind: "warn", title: "팀원에게 이 답이 그대로 나갑니다.", text: "답은 판정 없이 나갑니다." };
-      return { kind: "ok", title: "팀원에게 이 답이 그대로 나갑니다.", text: "" };
+      // What a teammate's agent searched for, or an answer written in the trial.
+      const goes = Array.isArray(trial.found) ? "찾은 대화가 그대로 팀원에게 나갑니다." : "팀원에게 이 답이 그대로 나갑니다.";
+      if (off) return { kind: "warn", title: goes, text: "이 서버는 Jev 판정이 꺼져 있어 질문과 답 모두 판정 없이 오갑니다." };
+      if (trial.answer_check?.unjudged) return { kind: "warn", title: goes, text: "답은 판정 없이 나갑니다." };
+      return { kind: "ok", title: goes, text: "" };
+    }
     default:
       return { kind: "warn", title: "알 수 없는 결과입니다.", text: String(trial?.outcome ?? "") };
   }

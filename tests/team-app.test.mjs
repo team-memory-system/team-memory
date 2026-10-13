@@ -84,8 +84,10 @@ before(async () => {
           if (url.pathname.startsWith("/api/admin/people/") && request.method === "PUT") {
             const body = await request.json();
             hubSeen.at(-1).body = body;
+            const email = decodeURIComponent(url.pathname.split("/").at(-1)).toLowerCase();
+            if ("nickname" in body) return Response.json({ person: { email, nickname: body.nickname || null } });
             if (typeof body.admin !== "boolean") return Response.json({ error: "bad_request", detail: "admin is true or false" }, { status: 400 });
-            return Response.json({ person: { email: decodeURIComponent(url.pathname.split("/").at(-1)).toLowerCase(), admin: body.admin } });
+            return Response.json({ person: { email, admin: body.admin } });
           }
           return Response.json({ error: "not_found" }, { status: 404 });
         },
@@ -250,6 +252,14 @@ test("an admin makes a teammate an admin or takes it away through the hub, and t
   assert.deepEqual([odd.json.ok, odd.json.code, odd.json.status], [false, "bad_request", 400]);
   assert.equal((await send("/api/team/admin/set-admin")).status, 405, "a JSON POST only");
 
+  // A nickname goes trimmed, and an empty one takes it away.
+  const named = await send("/api/team/admin/nickname", { method: "POST", body: { email: "bob@example.com", nickname: "  김밥 " } });
+  assert.deepEqual(named.json, { ok: true, person: { email: "bob@example.com", nickname: "김밥" } });
+  assert.deepEqual(hubSeen.at(-1).body, { nickname: "김밥" });
+  await send("/api/team/admin/nickname", { method: "POST", body: { email: "bob@example.com" } });
+  assert.deepEqual(hubSeen.at(-1).body, { nickname: "" });
+  assert.equal((await send("/api/team/admin/nickname")).status, 405, "a JSON POST only");
+
   // Another admin took it away from this person: the next directory says so, and the status follows.
   assert.equal((await send("/api/team/status")).json.admin, true);
   meAdmin = false;
@@ -287,7 +297,7 @@ test("the owner opens folders and ChatGPT 기록 to a teammate, turns them off a
   assert.equal((await chatOf()).off, undefined);
 
   // A teammate chat was never opened to is not turned on here, and closing takes 끊기.
-  assert.match((await post("/api/team/grant", { email: "nobody@example.com", off: false })).error, /chat 요청을 승인하면 열립니다/);
+  assert.match((await post("/api/team/grant", { email: "nobody@example.com", off: false })).error, /요청을 승인하면 열립니다/);
   assert.equal((await post("/api/team/grant", { email: "mate@example.com", folders: [], sources: [] })).error, "폴더나 ChatGPT 기록을 하나 이상 고르세요. 모두 닫으려면 끊기를 누르세요.");
   assert.deepEqual((await chatOf()).folders, [HONCHO]);
 });

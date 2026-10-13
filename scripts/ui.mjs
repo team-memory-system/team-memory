@@ -2,12 +2,12 @@
 // subscription gateway. `cli.mjs ui open` starts it.
 //
 // Setting things up - install the hooks, bring up Honcho and its host services,
-// share the server, connect a teammate's memory to Claude Code and Codex, put past
-// conversations in - already exists as `cli.mjs` subcommands, and runs the CLI as a
-// subprocess rather than importing it, so the app and a terminal take exactly the
-// same path and there is one implementation of each step. The two exceptions (a
-// teammate's invite and a ChatGPT export's upload) are marked where they are. Reading memories, the gateway's accounts and the server's
-// tool switches are relayed to those programs' own APIs (app-api.mjs).
+// share the server, put past conversations in - already exists as `cli.mjs`
+// subcommands, and runs the CLI as a subprocess rather than importing it, so the
+// app and a terminal take exactly the same path and there is one implementation of
+// each step. The two exceptions (a teammate's invite and a ChatGPT export's upload)
+// are marked where they are. Reading memories, the gateway's accounts and the
+// server's tool switches are relayed to those programs' own APIs (app-api.mjs).
 import { execFile } from "node:child_process";
 import { createReadStream, promises as fs, realpathSync } from "node:fs";
 import http from "node:http";
@@ -27,7 +27,7 @@ import { addChatGpt } from "./past.mjs";
 import { conversationProjects } from "./projects.mjs";
 import { redactSecrets } from "./redact.mjs";
 import { TARGET_ID, TARGET_SECRET_ENV } from "./targets.mjs";
-import { API_TOKEN_ENV, codexLogin, codexLoginStatus, INVITE_ENV, teamAddress, teammateAdd, teamName } from "./team-access.mjs";
+import { API_TOKEN_ENV, dropTeamEntries, INVITE_ENV, teammateAdd, teamName } from "./team-access.mjs";
 import { handleLoginCallback, runTeamRoute, TEAM_READ_ROUTES, teamRoute } from "./team-app.mjs";
 import { CALLBACK_PATH, TEAM_AUTH_ENV, teamAuthPaths } from "./team-auth.mjs";
 
@@ -249,11 +249,11 @@ const SHARE_ROUTES = {
 };
 
 /**
- * The team, on the owner's computer (who may log in, and which teammates share a
- * server), and on any computer, a teammate's memory in Claude Code and Codex
- * (team-access.mjs). The owner's Cloudflare API token is the one saved by sharing,
- * never one inherited from the environment that started this UI. Names and hosts
- * are checked here and passed in their checked form, so none can read as an option.
+ * The team of an owner who shared through their own Cloudflare account: who may log
+ * in, and which teammates share a server (team-access.mjs). The owner's Cloudflare
+ * API token is the one saved by sharing, never one inherited from the environment
+ * that started this UI. Names and emails are checked here and passed in their
+ * checked form, so none can read as an option.
  */
 const EMAIL = /^[^\s@-][^\s@]*@[^\s@]+\.[^\s@]+$/;
 
@@ -266,20 +266,14 @@ export function teammateInvocation(action, body = {}) {
   const email = typeof body?.email === "string" ? body.email.trim() : "";
   const name = teamName(body?.name);
   if (action === "list") return ["teammates", "list"];
-  if (action === "connected") return ["teammates", "connected"];
   if (action === "remove") return EMAIL.test(email) ? ["teammates", "remove", email] : null;
   if (action === "unshare") return name ? ["teammates", "unshare", name] : null;
-  if (action === "disconnect") return name ? ["teammates", "disconnect", name] : null;
-  if (action === "connect") {
-    const address = teamAddress(body?.address);
-    return name && address.ok ? ["teammates", "connect", name, address.host] : null;
-  }
   return null;
 }
 
 async function teammateRoute(action, body, timeout) {
   const args = teammateInvocation(action, body);
-  if (!args) return { ok: false, error: "Give a valid email, a short name (lower-case letters, digits and -) or a server address." };
+  if (!args) return { ok: false, error: "Give a valid email or a short name (lower-case letters, digits and -)." };
   return runCli(args, { timeout, env: teamEnvironment() });
 }
 
@@ -304,15 +298,6 @@ const TEAM_ROUTES = {
   "/api/teammates/add": async (body) => addTeammate(body),
   "/api/teammates/remove": async (body) => teammateRoute("remove", body, 120_000),
   "/api/teammates/unshare": async (body) => teammateRoute("unshare", body, 300_000),
-  "/api/teammates/connected": async (body) => teammateRoute("connected", body, 30_000),
-  "/api/teammates/connect": async (body) => teammateRoute("connect", body, 180_000),
-  "/api/teammates/disconnect": async (body) => teammateRoute("disconnect", body, 180_000),
-  // `codex mcp login --no-browser` prints its login address and waits for the browser
-  // to come back, so it is started here and answered as soon as it ends or shows the
-  // address, which the page opens itself (team-access.mjs).
-  "/api/teammates/codex-login": async (body) => codexLogin({ name: body?.name }),
-  // How that login ended, or whether Codex already holds one, for the page to show.
-  "/api/teammates/codex-login-status": async (body) => codexLoginStatus({ name: body?.name }),
   // Removes the shared-bridge settings 0.3.28 and before saved; nothing uses them now.
   "/api/bridge/disconnect": async () => runCli(["bridge", "disconnect"], { timeout: 30_000 }),
   // The team hub (team-hub.mjs): made once with the admin's API token, which reaches
@@ -822,5 +807,8 @@ if (isMainModule()) {
   if (!process.env[TEAM_AUTH_ENV]) process.env[TEAM_AUTH_ENV] = teamAuthPaths(await loadConfig().catch(() => null)).authFile;
   createUiServer().listen(port, host, () => {
     process.stdout.write(`Team Memory: http://${host}:${port}\n`);
+    // The team-<name> entries an older version put into Claude Code and Codex for
+    // each teammate go: the plugin's team-memory server asks every teammate now.
+    dropTeamEntries({ authPaths: teamAuthPaths(null) }).catch(() => {});
   });
 }

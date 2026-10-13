@@ -207,7 +207,7 @@ test("a set-up computer whose hub login ended stays set up: no full setup again,
   const shell = await read("app.js");
   // "Setup done" asks joinedTeam, so the page shown is the one it was on.
   assert.match(shell, /function teamJoined\(\) \{\n\s*return joinedTeam\(app\.context\?\.team, app\.prefs\.mode\);/);
-  assert.match(shell, /teamConnected\(\) \|\| teamJoined\(\)/);
+  assert.match(shell, /context\?\.configured \|\| teamJoined\(\)/);
   // The dashboard, where such a teammate lands, says so on top with 다시 로그인.
   const dashboard = await read("views/dashboard.js");
   assert.match(dashboard, /context\.team\?\.hub && !context\.team\.signedIn \? context\.team\.loginEnded : null/);

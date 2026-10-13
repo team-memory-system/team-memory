@@ -1,14 +1,14 @@
 // The team as this app sees it: the Google login, the hub's people and servers,
-// requests between members, and a teammate's memory in Claude Code and Codex.
+// and requests between members.
 //
 // Logging in opens Google in the browser through the team's Cloudflare Access; the
 // browser comes back to this app (team-app.mjs) and the page only waits for the
 // login to show up, or for the app to say it failed. Everything else is a POST to
 // the app's /api/team/* routes, which carry this computer's team login to the hub
 // and the gates. A login Access stopped refreshing is remembered as ended, and the
-// screens that need it say so with 다시 로그인. A teammate's memory is a remote MCP
-// server (team-<name>) in Claude Code and Codex at https://<host>/mcp; each agent
-// logs in to it by itself, so no token passes through the page.
+// screens that need it say so with 다시 로그인. A teammate's memory opened to this
+// person is read by the plugin's team-memory MCP server with this computer's team
+// servers login, so no token passes through the page.
 import { get, post } from "./api.js";
 import { bellSource, refreshBell } from "./bell.js";
 import { h } from "./dom.js";
@@ -16,7 +16,6 @@ import { listItem } from "./kit.js";
 import { app, loadContext } from "./state.js";
 import { button, busy, errorNotice, notice } from "./ui.js";
 
-const NAME = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 const WAIT_MS = 10 * 60_000;
 const POLL_MS = 1500;
 // A page cannot see another site's page finish loading, so each logout gets this long.
@@ -278,36 +277,17 @@ export async function registerWith(host, { tab = null } = {}) {
   }
 }
 
-/** The short name a member's server goes by in Claude Code and Codex: their peer, made safe. */
-export function mateName(person) {
-  const name = String(person?.peer || person?.email?.split("@")[0] || "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32);
-  return NAME.test(name) ? name : "";
+/** A member as the team shows them: the nickname an admin gave, their peer, or the start of their email. */
+export function personName(person) {
+  return person?.nickname || person?.peer || String(person?.email || "").split("@")[0] || "";
 }
 
-/** Puts a teammate's memory into Claude Code and Codex. Resolves the CLI's answer, ok or not. */
-export function connectTeammate({ name, host }) {
-  return post("/api/teammates/connect", { name, address: host });
-}
-
-const CLIENTS = { claude: "Claude Code", codex: "Codex" };
-const CLIENT_ACTIONS = {
-  added: "넣었습니다",
-  replaced: "새 주소로 바꿔 넣었습니다",
-  unchanged: "이미 들어 있습니다",
-  removed: "뺐습니다",
-  absent: "들어 있지 않았습니다",
-};
-
-/** What `teammates connect|disconnect` did in each agent, one short line each. */
-export function clientOutcome(result) {
-  return Object.entries(CLIENTS).map(([key, label]) => {
-    const item = result?.clients?.[key];
-    if (!item) return null;
-    const text = item.ok ? CLIENT_ACTIONS[item.action] || "됐습니다"
-      : item.missing ? "이 컴퓨터에 없어 건너뛰었습니다"
-        : `하지 못했습니다: ${item.error || "알 수 없는 오류"}`;
-    return `${label}: ${text}`;
-  }).filter(Boolean);
+/**
+ * 팀 서버 로그인: the browser login every teammate's server takes, the one the
+ * team-memory MCP server reads an opened memory with. `tab` is opened in the click.
+ */
+export function serversLogin(host, { tab = null } = {}) {
+  return teamLogin({ kind: "servers", host, tab }).done;
 }
 
 /** "방금", "3분 전", "2시간 전", "어제" or the date, for a time a row names. */

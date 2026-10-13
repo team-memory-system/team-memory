@@ -5,8 +5,8 @@
 //
 // The source is the one this plugin came from: the marketplace record of the host
 // that has it (Claude Code's for Codex, Codex's for Claude Code), else this
-// repository on GitHub. Each host's own CLI does the install, through the same
-// argument-checked runner `teammates connect` uses:
+// repository on GitHub. Each host's own CLI does the install, through the
+// argument-checked runner of team-access.mjs:
 //   codex  plugin marketplace add <source> [--ref <ref>]; codex plugin add team-memory@<marketplace>
 //   claude plugin marketplace add <source>[#<ref>];        claude plugin install team-memory@<marketplace> --scope user
 // A marketplace the host already has is not added again: Claude Code would point

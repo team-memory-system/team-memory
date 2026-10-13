@@ -36,8 +36,12 @@ test("Codex, Claude, package, and marketplace metadata stay aligned", async () =
   );
   assert.equal(codex.mcpServers, "./.mcp.json");
   assert.equal(claude.mcpServers, "./.mcp.claude.json");
-  assert.ok(codexMcp.mcpServers["team-memory"]);
-  assert.ok(claudeMcp.mcpServers["team-memory"]);
+  // Two servers in each: the user's own memory, and their teammates'.
+  for (const servers of [codexMcp.mcpServers, claudeMcp.mcpServers]) {
+    assert.deepEqual(Object.keys(servers), ["honcho", "team-memory"]);
+    assert.match(servers.honcho.args[0], /scripts\/mcp-server\.mjs$/);
+    assert.match(servers["team-memory"].args[0], /scripts\/team-mcp-server\.mjs$/);
+  }
 });
 
 test("the Claude Stop hook is outside the path Codex loads plugin hooks from", async () => {

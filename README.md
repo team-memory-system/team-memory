@@ -1,7 +1,8 @@
 # Team Memory
 
 Claude Code와 Codex에서 나눈 대화를 내 기억 서버에 모아, 에이전트가 지난 일을 기억하고 일하게
-합니다. 팀원끼리는 서로 열어 준 폴더의 기억에 `chat`으로 물을 수 있습니다.
+합니다. 팀원이 열어 준 폴더의 대화는 내 에이전트가 직접 찾아 읽습니다. "밥에게 OCR 엔진 뭐로
+바꿨는지 찾아봐"처럼 팀원 이름을 넣어 말하면 됩니다.
 
 ## 설치
 
@@ -35,7 +36,7 @@ Claude Code에서 `/team-memory`를 입력합니다. 바로 실행되고, 한 �
 | `/team-memory` | 지금 무엇이 켜져 있는지 보여 줍니다 |
 | `/team-memory off`, `on` | 기억 서버를 멈추거나 다시 켭니다. 멈추면 이 컴퓨터의 기억 찾기와 대화 모으기도 멈춥니다 |
 | `/team-memory shared-off`, `shared-on` | 팀원과 내 다른 컴퓨터에 연 서버를 닫거나 다시 엽니다 |
-| `/team-memory shared-off <팀원>`, `shared-on <팀원>` | 그 팀원 한 사람의 chat만 끄거나 켭니다. 열어 준 폴더는 그대로 둡니다 |
+| `/team-memory shared-off <팀원>`, `shared-on <팀원>` | 그 팀원 한 사람의 열람만 끄거나 켭니다. 열어 준 폴더는 그대로 둡니다 |
 | `/team-memory setup` | 설정을 안내합니다 |
 | `/team-memory doctor` | 잘못된 곳을 찾아 알려 줍니다 |
 

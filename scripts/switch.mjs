@@ -9,7 +9,7 @@
 //   shared-off | shared-on      서버 → 공유 → 공유 끄기 | 다시 켜기: every teammate
 //                               and the owner's other computers
 //   shared-off|-on <teammate>   팀 → 내 기억을 여는 팀원 → that teammate's switch:
-//                               their chat refused for now, what is open to them kept
+//                               their agent refused for now, what is open to them kept
 //
 // Typing the option is the confirmation, so nothing asks again. Every answer carries
 // `said`, the one line the command shows, with how to undo what it did.
@@ -40,7 +40,7 @@ export function josa(word, pair) {
 const nameOf = (grant) => grant.peer || grant.email.split("@")[0];
 
 /**
- * The teammate `who` names among those chat is opened to: by email, else by team
+ * The teammate `who` names among those the memory is opened to: by email, else by team
  * name, else by the start of the email, whatever the case. `{ grant }`, `{ many }`
  * when the name fits more than one, or `{ none: true }`.
  */
@@ -134,7 +134,7 @@ async function teammate(use, gate, who, off) {
       ok: false,
       said: names.length
         ? `${josa(who, "은/는")} 내 기억을 여는 팀원이 아닙니다. 지금 여는 팀원: ${names.join(", ")}`
-        : "내 기억을 여는 팀원이 아직 없습니다. 팀원이 chat을 요청하면 앱에서 승인하세요.",
+        : "내 기억을 여는 팀원이 아직 없습니다. 팀원이 기억 열람을 요청하면 앱에서 승인하세요.",
     };
   }
   if (found.many) {

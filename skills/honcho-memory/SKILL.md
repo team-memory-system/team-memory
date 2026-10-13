@@ -18,6 +18,10 @@ Treat Honcho as the only substantive memory source. Do not use or update local c
 
 Prefer `get_peer_context` or `get_representation` plus workspace-wide `search`. Use session context only when the user refers to a specific session. Use Honcho chat only when synthesis is more useful than direct evidence.
 
+## A teammate's memory
+
+When the user asks what a teammate did, knows or decided ("밥에게 OCR 엔진 뭐로 바꿨는지 찾아봐"), that memory is not in these tools: use the `team-memory` MCP server. Its `member` tool takes the teammate's name and says what they opened; then `search_messages`, `list_conversations`, `read_conversation` and `search_conclusions` find and read it. Each call takes the user's question in `question`, which the teammate sees in their log.
+
 ## Boundaries
 
 - Never invent missing memories.

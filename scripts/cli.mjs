@@ -57,11 +57,9 @@ import { switchCommand } from "./switch.mjs";
 import {
   API_TOKEN_ENV,
   INVITE_ENV,
+  dropTeamEntries,
   teammateAdd,
-  teammateConnect,
-  teammateDisconnect,
   teammateRemove,
-  teammatesConnected,
   teammatesList,
   teammateUnshare,
 } from "./team-access.mjs";
@@ -97,9 +95,9 @@ const LEGACY_HOOK_MARKERS = ["codex-honcho-sync", "honcho-turn-gate"];
 
 // The config fields 0.3.28 and before wrote for relaying someone else's shared
 // bridge through this plugin's MCP server: its address, its token and its Cloudflare
-// service token. Nothing reads them any more (a teammate's memory is now a remote MCP
-// server in Claude Code and Codex, `teammates connect`). Setup no longer carries them
-// over, and `bridge disconnect` removes them on a computer that never runs setup.
+// service token. Nothing reads them any more (a teammate's memory is asked through
+// the plugin's team-memory server). Setup no longer carries them over, and `bridge
+// disconnect` removes them on a computer that never runs setup.
 const OLD_RELAY_FIELDS = ["mcpBridgeUrl", "mcpBridgeToken", "accessClientId", "accessClientSecret"];
 
 // Where setup reads the token for a Honcho server that requires one.
@@ -836,6 +834,10 @@ async function applySetupPlan(plan, paths) {
       }
     }
     const { entries, plugins } = await installPlugins(plan.config.agents);
+    // A teammate is asked through the plugin's team-memory server now: the team-<name>
+    // entries an older version added go. Setup goes on either way.
+    const teamEntries = await dropTeamEntries({ authPaths: teamAuthPaths(plan.config) }).catch((error) => ({ ok: false, error: String(error?.message || error) }));
+    const droppedEntries = Boolean(teamEntries.removed?.claude?.length || teamEntries.removed?.codex?.length || !teamEntries.ok);
     return {
       ok: true,
       version: VERSION,
@@ -843,6 +845,7 @@ async function applySetupPlan(plan, paths) {
       runtime,
       hooks,
       plugins,
+      ...(droppedEntries ? { teamEntries } : {}),
       restartRequired: true,
       nextSteps: setupNextSteps(plan.config.agents, plugins, entries),
       ...(warnings.length ? { warnings } : {}),
@@ -957,6 +960,7 @@ async function doctor() {
     "queue.mjs",
     "collector.mjs",
     "mcp-server.mjs",
+    "mcp-stdio.mjs",
     "ui.mjs",
     "file-lock.mjs",
     "version.mjs",
@@ -1605,9 +1609,8 @@ async function targetCommand(args) {
 // ---------------------------------------------------------------- setup screen
 
 const UI_HOST = "127.0.0.1";
-// Present only in a page that connects teammates' memory as remote MCP servers, so
-// an older setup screen still running from a previous install is not mistaken for
-// this one.
+// Present only in this app's page, not in the setup screen of much older installs,
+// so one of those still running is not mistaken for this one.
 const UI_MARKER = 'id="team-memory-app"';
 
 async function uiState(url) {
@@ -1718,14 +1721,12 @@ function usage() {
       "team share [--label <name>] [--replace] (after logging in to the team in the app)",
       "team grants",
       "team devices",
-      "switch [off|on|shared-off|shared-on] [<teammate's team name or email>] (/team-memory: what is on; off|on the memory server; shared-off|shared-on sharing, or one teammate's chat)",
+      "switch [off|on|shared-off|shared-on] [<teammate's team name or email>] (/team-memory: what is on; off|on the memory server; shared-off|shared-on sharing, or what one teammate may read)",
       "teammates list",
       "teammates add <email> [--share <name> --invite-out <file>] (the Cloudflare API token in CLOUDFLARE_API_TOKEN, else the saved one)",
       "teammates remove <email>",
       "teammates unshare <name>",
-      "teammates connect <name> <host|https://host/mcp> (adds team-<name> to Claude Code and Codex as a remote MCP server; no token is stored)",
-      "teammates disconnect <name>",
-      "teammates connected",
+      "teammates drop-entries (takes out the team-<name> MCP entries 0.6.8 and before added to Claude Code and Codex)",
       "host plan [--profile personal]",
       "host prepare [--profile personal]",
       "host start [--profile personal]",
@@ -1832,11 +1833,9 @@ async function teammatesCommand(args) {
   }
   if (action === "remove") return teammateRemove({ email: positional[0] || "" });
   if (action === "unshare") return teammateUnshare({ name: positional[0] || "" });
-  // The asking side: a teammate's server in Claude Code and Codex. No Cloudflare token.
-  if (action === "connect") return teammateConnect({ name: positional[0] || "", address: positional[1] || "" });
-  if (action === "disconnect") return teammateDisconnect({ name: positional[0] || "" });
-  if (action === "connected") return teammatesConnected();
-  return { ok: false, error: `Unknown teammates action: ${action}. Expected list, add, remove, unshare, connect, disconnect or connected.` };
+  // The asking side's entries of before; a teammate is asked through team-memory now.
+  if (action === "drop-entries") return dropTeamEntries({ authPaths: teamAuthPaths(await loadConfig().catch(() => null)) });
+  return { ok: false, error: `Unknown teammates action: ${action}. Expected list, add, remove, unshare or drop-entries.` };
 }
 
 /**
@@ -1972,7 +1971,7 @@ async function main() {
   if (command === "bridge") {
     const subcommand = args.shift() || "";
     if (subcommand === "disconnect") return oldBridgeRemove();
-    return { ok: false, error: "The shared-bridge relay was removed: connect a teammate's memory with teammates connect <name> <host>; bridge disconnect removes the old settings" };
+    return { ok: false, error: "The shared-bridge relay was removed: a teammate's memory is asked through the plugin's team-memory MCP server; bridge disconnect removes the old settings" };
   }
   if (command === "target") return targetCommand(args);
   if (command === "past") {

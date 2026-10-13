@@ -121,7 +121,7 @@ test("a name that fits two teammates is asked for by email, and the undo names t
   assert.equal((await run("shared-off", "park")).said, "park을 껐습니다. 다시 켜려면 /team-memory shared-on park");
 
   const empty = await bench(t);
-  assert.equal((await empty.run("shared-on", "chulsoo")).said, "내 기억을 여는 팀원이 아직 없습니다. 팀원이 chat을 요청하면 앱에서 승인하세요.");
+  assert.equal((await empty.run("shared-on", "chulsoo")).said, "내 기억을 여는 팀원이 아직 없습니다. 팀원이 기억 열람을 요청하면 앱에서 승인하세요.");
 });
 
 test("an option it does not know is named back with the ones it does", async (t) => {
@@ -138,6 +138,6 @@ test("findTeammate and josa read names as the team writes them", () => {
     { email: "b@example.com", peer: "bob", chat: null, collect: {} },
   ];
   assert.equal(findTeammate(grants, "luna").grant.email, "a@example.com");
-  assert.deepEqual(findTeammate(grants, "bob"), { none: true }, "collecting is not chat");
+  assert.deepEqual(findTeammate(grants, "bob"), { none: true }, "collecting does not open the memory");
   assert.deepEqual(["철수", "민준", "naddle", "luna"].map((name) => josa(name, "을/를")), ["철수를", "민준을", "naddle을", "luna를"]);
 });

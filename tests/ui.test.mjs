@@ -471,36 +471,28 @@ test("the Cloudflare API token and the invite go to the CLI through its environm
   assert.equal("HONCHO_SHARE_INVITE" in shareJoinInvocation({}).env, false);
 });
 
-test("the team routes check every name, email and address before the CLI sees it", () => {
+test("the team routes check every name and email before the CLI sees it", () => {
   assert.deepEqual(teammateInvocation("list"), ["teammates", "list"]);
-  assert.deepEqual(teammateInvocation("connected"), ["teammates", "connected"]);
   assert.deepEqual(teammateInvocation("remove", { email: " alice@example.com " }), ["teammates", "remove", "alice@example.com"]);
   assert.equal(teammateInvocation("remove", { email: "--share=x" }), null);
   assert.equal(teammateInvocation("remove", { email: "-a@example.com" }), null);
   assert.deepEqual(teammateInvocation("unshare", { name: "Alice" }), ["teammates", "unshare", "alice"]);
   assert.equal(teammateInvocation("unshare", { name: "--all" }), null);
-  assert.deepEqual(teammateInvocation("disconnect", { name: "team-alice" }), ["teammates", "disconnect", "alice"]);
-  for (const address of ["memory-alice.example.com", "https://memory-alice.example.com", "https://memory-alice.example.com/mcp"]) {
-    assert.deepEqual(teammateInvocation("connect", { name: "alice", address }), ["teammates", "connect", "alice", "memory-alice.example.com"], address);
+  for (const action of ["connect", "connected", "disconnect"]) {
+    assert.equal(teammateInvocation(action, { name: "alice", address: "memory-alice.example.com" }), null, `${action}: a teammate's memory is the plugin's team-memory MCP server now`);
   }
-  for (const address of ["http://memory-alice.example.com/mcp", "https://memory-alice.example.com:8443/mcp", "https://memory-alice.example.com/other", "https://u:p@memory-alice.example.com/mcp", "--url=x", ""]) {
-    assert.equal(teammateInvocation("connect", { name: "alice", address }), null, address);
-  }
-  assert.equal(teammateInvocation("connect", { name: "a b", address: "memory-alice.example.com" }), null);
   assert.equal(teammateInvocation("add", { email: "alice@example.com" }), null, "add is not a CLI route");
 });
 
-test("the team routes answer a same-origin POST only, and the shared-bridge routes are gone", async () => {
-  for (const route of ["/api/teammates", "/api/teammates/add", "/api/teammates/remove", "/api/teammates/unshare", "/api/teammates/connected", "/api/teammates/connect", "/api/teammates/disconnect", "/api/teammates/codex-login", "/api/teammates/codex-login-status", "/api/bridge/disconnect", "/api/server/share/join"]) {
+test("the team routes answer a same-origin POST only, and the shared-bridge and connect routes are gone", async () => {
+  for (const route of ["/api/teammates", "/api/teammates/add", "/api/teammates/remove", "/api/teammates/unshare", "/api/bridge/disconnect", "/api/server/share/join"]) {
     const read = await send(route);
     assert.equal(read.status, 405, route);
     const crossSite = await send(route, { method: "POST", body: {}, headers: { origin: "http://evil.example" } });
     assert.equal(crossSite.status, 403, route);
   }
-  const bad = await send("/api/teammates/connect", { method: "POST", body: { name: "alice", address: "http://memory-alice.example.com" } });
-  assert.equal(bad.body.ok, false);
   const server = await fsp.readFile(path.join(ROOT, "scripts", "ui.mjs"), "utf8");
-  for (const route of ["/api/bridge/status", "/api/bridge/connect", "/api/bridge/test"]) {
+  for (const route of ["/api/bridge/status", "/api/bridge/connect", "/api/bridge/test", "/api/teammates/connected", "/api/teammates/connect", "/api/teammates/disconnect", "/api/teammates/codex-login", "/api/teammates/codex-login-status"]) {
     assert.equal(server.includes(`"${route}"`), false, route);
     assert.equal((await send(route, { method: "POST", body: {} })).status, 404, route);
   }

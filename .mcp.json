@@ -1,8 +1,13 @@
 {
   "mcpServers": {
-    "team-memory": {
+    "honcho": {
       "command": "node",
       "args": ["./scripts/mcp-server.mjs", "--provider", "codex"],
+      "cwd": "."
+    },
+    "team-memory": {
+      "command": "node",
+      "args": ["./scripts/team-mcp-server.mjs"],
       "cwd": "."
     }
   }

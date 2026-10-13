@@ -25,7 +25,7 @@ import { writePrivateFileAtomic } from "./private-file-permissions.mjs";
 import { publicUrl } from "./redact.mjs";
 import { installedServerPorts, installedServerRoles } from "./server-manager.mjs";
 import { configuredTargets, countPending, sentSummary, targetSummary } from "./targets.mjs";
-import { readTeamState, registeredTeamServers, teamAccessPaths } from "./team-access.mjs";
+import { readTeamState, teamAccessPaths } from "./team-access.mjs";
 import { teamAuthPaths, teamLoginStatus } from "./team-auth.mjs";
 import { computerName } from "./team-hub.mjs";
 import { VERSION } from "./version.mjs";
@@ -100,12 +100,9 @@ export async function appContext(options = {}) {
     chatModels: { setup: SETUP_CHAT_MODELS, preferred: PREFERRED_CHAT_MODELS, efforts: THINKING_EFFORTS, roleEfforts: ROLE_EFFORTS },
     dashboardUrl: endpoints.dashboardUrl,
     gatewayUiUrl: endpoints.gatewayUiUrl,
-    // Teammates' memory this computer's Claude Code and Codex reach as team-* remote
-    // MCP servers, read from those clients' own files; and whether the shared-bridge
-    // settings of 0.3.28 (no longer used) are still saved here.
-    teamMemory: await teamMemoryContext(options),
     // Whether the team was made on this computer, which makes it the admin's (관리자).
     team: await teamContext({ ...options, config }),
+    // Whether the shared-bridge settings of 0.3.28 (no longer used) are still saved here.
     oldBridge: Boolean(config?.honcho?.mcpBridgeUrl || config?.honcho?.mcpBridgeToken),
     // Other servers that also receive the conversations from chosen folders. Read
     // from files on this computer only (config, spool, state): no request is made.
@@ -164,17 +161,6 @@ async function teamContext(options = {}) {
     host: made?.host || "",
     hasApiToken: Boolean(made?.hasApiToken),
   };
-}
-
-async function teamMemoryContext(options = {}) {
-  const registered = await registeredTeamServers(options.teamOptions || {}).catch(() => ({ claude: {}, codex: {} }));
-  const names = new Set([...Object.keys(registered.claude), ...Object.keys(registered.codex)]);
-  // The hosts they reach, so the bell knows which approved chat is connected already.
-  const hosts = new Set();
-  for (const entry of [...Object.values(registered.claude), ...Object.values(registered.codex)]) {
-    try { hosts.add(new URL(entry.url).hostname); } catch {}
-  }
-  return { connected: names.size, claude: Object.keys(registered.claude).length, codex: Object.keys(registered.codex).length, hosts: [...hosts] };
 }
 
 /**
