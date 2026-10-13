@@ -30,9 +30,9 @@ export function list({ title, actions = [], empty = "없습니다." }, rows) {
     h("div", { class: "list" }, rows.length ? rows : h("div", { class: "list-empty" }, empty)));
 }
 
-export function listItem({ title, tags = [], sub, end = [], fresh = false }) {
+export function listItem({ title, tags = [], sub, end = [], fresh = false, dim = false }) {
   const ends = [end].flat().filter(Boolean);
-  return h("div", { class: fresh ? "list-item fresh" : "list-item" },
+  return h("div", { class: ["list-item", fresh ? "fresh" : "", dim ? "dim" : ""].filter(Boolean).join(" ") },
     h("div", { class: "v" }, h("div", { class: "t" }, title, tags), sub ? h("div", { class: "s" }, sub) : null),
     ends.length ? h("div", { class: "end" }, ends) : null);
 }

@@ -44,7 +44,6 @@ import { hostPlan, hostPrepare, hostStart, hostStatus, hostStop } from "./host-m
 import {
   shareDisable,
   shareEnable,
-  shareEnableTeam,
   shareJoin,
   shareRotate,
   shareStatus,
@@ -53,7 +52,8 @@ import {
 } from "./share-manager.mjs";
 import { gateDevices, gateGrants, gateStatePaths } from "./gate-access.mjs";
 import { TEAM_AUTH_ENV, teamAuthPaths, teamLoginStatus } from "./team-auth.mjs";
-import { computerName, hubCall, madeTeam, teamMake } from "./team-hub.mjs";
+import { madeTeam, teamMake, teamShare } from "./team-hub.mjs";
+import { switchCommand } from "./switch.mjs";
 import {
   API_TOKEN_ENV,
   INVITE_ENV,
@@ -1716,6 +1716,7 @@ function usage() {
       "team share [--label <name>] [--replace] (after logging in to the team in the app)",
       "team grants",
       "team devices",
+      "switch [off|on|shared-off|shared-on] [<teammate's team name or email>] (/team-memory: what is on; off|on the memory server; shared-off|shared-on sharing, or one teammate's chat)",
       "teammates list",
       "teammates add <email> [--share <name> --invite-out <file>] (the Cloudflare API token in CLOUDFLARE_API_TOKEN, else the saved one)",
       "teammates remove <email>",
@@ -1869,31 +1870,8 @@ async function teamCommand(args) {
     return { ok: true, made: await madeTeam(), login: await teamLoginStatus({ paths: teamAuthPaths(config) }) };
   }
   if (action === "share") {
-    const paths = teamAuthPaths(config);
-    const login = await teamLoginStatus({ paths });
-    if (!login.hub || !login.email) return { ok: false, error: "Log in to the team in the app first" };
     if (options.label !== undefined && typeof options.label !== "string") return { ok: false, error: "--label takes a short name" };
-    let made;
-    try {
-      made = await hubCall("POST", "/api/servers", {
-        ...(options.label ? { label: options.label } : {}),
-        workspace: config?.honcho?.workspaceId || "memory",
-        device: computerName(),
-        ...(options.replace === true ? { replace: true } : {}),
-      }, { paths });
-    } catch (error) {
-      return { ok: false, error: String(error?.message || error), ...(error?.code ? { code: error.code } : {}), ...(error?.payload?.server ? { server: error.payload.server } : {}) };
-    }
-    const shared = await shareEnableTeam({
-      host: made.server?.host,
-      teamDomain: made.teamDomain,
-      aud: made.aud,
-      owners: [login.email],
-      peer: login.peer || config?.user?.peerId || "",
-      workspace: config?.honcho?.workspaceId || "memory",
-      env: { ...process.env, [TUNNEL_TOKEN_ENV]: made.tunnelToken },
-    });
-    return { ...shared, server: made.server };
+    return teamShare({ config, label: optionString(options.label, ""), replace: options.replace === true });
   }
   if (action === "grants") return { ok: true, grants: await gateGrants(gate) };
   if (action === "devices") return { ok: true, devices: await gateDevices(gate) };
@@ -2005,6 +1983,7 @@ async function main() {
   }
   if (command === "teammates") return teammatesCommand(args);
   if (command === "team") return teamCommand(args);
+  if (command === "switch") return switchCommand(args);
   if (command === "backup") {
     const subcommand = args.shift() || "status";
     const positional = [];

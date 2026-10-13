@@ -68,7 +68,7 @@ question and gets an answer, without reading the underlying messages.
    audit log are relayed to those programs' own APIs by `scripts/app-api.mjs`,
    which adds the Honcho token so the page never holds it.
    `cli.mjs ui open` starts it detached (default `http://127.0.0.1:4180`) and opens
-   the browser, which is how `/memory-setup` shows it.
+   the browser, which is how `/team-memory setup` shows it.
 4. **Run the local stack.** `server ...` drives the Honcho Docker stack;
    `host ...` installs the subscription gateway through its own CLI and supervises
    Ollama. Every chat model Honcho uses goes through the gateway's router; the router
@@ -407,7 +407,7 @@ codex plugin marketplace upgrade
 codex plugin add honcho-agent-bridge@honcho-agent-bridge
 ```
 
-For a local checkout, pass its absolute directory instead of the repository name. Start a new Codex session or reload Claude plugins after installation. Then invoke `$setup-memory` in Codex or `/memory-setup` in Claude Code.
+For a local checkout, pass its absolute directory instead of the repository name. Start a new Codex session or reload Claude plugins after installation. Then invoke `$setup-memory` in Codex or `/team-memory setup` in Claude Code.
 
 ## Setup
 
@@ -866,20 +866,30 @@ everything the owner has to answer, or the asker has to press, goes to the bell.
   its count of conversations. A ticked folder opens the folders inside it too,
   those made later included; a folder's own row (<폴더>에서 바로 시작한 대화)
   opens it alone. The ticks become the fewest entries (`ui/lib/folder-grants.js`),
-  never a folder that holds a home (`/`, `/Users`, `C:\`), at most 100. A server
-  that cannot be read shows why instead of a list. The entries go into
-  `access.json` for that email, and only then does the hub hear "approved", with
-  the folders' names (in the request's `projects`, which predates folders). The
-  asker's bell shows 연결, which adds `team-<peer>` to Claude Code and Codex
-  (`teammates connect`); each agent logs in to the servers application itself. The
-  gate passes such a person's `/mcp` to the MCP bridge with
-  `x-honcho-scope-mode: folders` and the opened folders in `x-honcho-allowed-folders`
-  (base64url JSON; a list too long for the header is refused at the gate), and the
-  bridge answers `chat` once from the sessions in them. 내 기억을 여는 팀원 lists
-  who has what, with 수정 for the folders and for closing it; 수정's window keeps
-  the folders already open to that person, even ones the server now has no
-  conversations in. A grant made before 0.6.4, of projects, opens nothing until the
-  owner opens folders again.
+  never a folder that holds a home (`/`, `/Users`, `C:\`), at most 100. Below the
+  tree, 폴더 없는 대화 lists the conversations that started in no folder by the app
+  they came from (a session's `metadata.source`, `unknown` when it names none):
+  ChatGPT 기록 always, greyed with where to import it until some is there, and any
+  other app that has some. A ticked app opens its conversations, those imported
+  later included. The window will not open more than 1,000 conversations at once,
+  the most one chat of Honcho's answers from. A server that cannot be read shows why
+  instead of a list. The entries go into `access.json` for that email
+  (`chat.folders`, `chat.sources`), and only then does the hub hear "approved",
+  with the folders' and apps' names (in the request's `projects`, which predates
+  folders: ChatGPT 기록 beside ~/dev/app). The asker's bell shows 연결, which adds
+  `team-<peer>` to Claude Code and Codex (`teammates connect`); each agent logs in
+  to the servers application itself. The gate passes such a person's `/mcp` to the
+  MCP bridge with `x-honcho-scope-mode: folders`, the opened folders in
+  `x-honcho-allowed-folders` and the opened apps in `x-honcho-allowed-sources`
+  (base64url JSON; a list of folders too long for the header is refused at the
+  gate), and the bridge answers `chat` once from the sessions in them. 내 기억을 여는
+  팀원 lists who has what, with 수정 for the folders and apps and for closing it
+  (끊기), and a switch that turns one person's chat off for now (`chat.off`) with
+  what is open to them kept: the gate then sends `x-honcho-scope-mode: off`, the
+  bridge refuses each of their calls in so many words, and 조회 기록 shows it as 꺼
+  둔 동안 물음. 수정's window keeps the folders and apps already open to that
+  person, even ones the server now has no conversations in. A grant made before
+  0.6.4, of projects, opens nothing until the owner opens folders again.
 - **Collecting into the company server.** 함께 쌓을 서버 → 회사 in the server step,
   with the folders in the project step's 회사 서버 column, sends a collect request and
   keeps that server off (`target add --team`). Once the owner approves, the asker's
@@ -892,6 +902,21 @@ everything the owner has to answer, or the asker has to press, goes to the bell.
 - **Computers.** 서버 → 공유 lists the computers that write to this server, the
   owner's own marked 내 컴퓨터, each with 끊기, which cuts that one computer off
   (`revokedDevices`) from its next request.
+
+### On and off from Claude Code / `/team-memory`
+
+The plugin's one command (`commands/team-memory.md`; Claude Code lists it as
+`/honcho-agent-bridge:team-memory`, and `/team-memory` finds it) runs
+`cli.mjs switch` (`scripts/switch.mjs`), whose every answer is one line of what it
+did and how to undo it. Typing the option is the confirmation.
+
+| Typed | Does what the app's button does |
+| --- | --- |
+| `/team-memory` | Says what is on: 기억 서버 켜짐 · 공유 켜짐 · luna 켜짐 · naddle 꺼 둠 |
+| `/team-memory off`, `on` | 서버 → 기억 서버 → 멈추기, 시작: the whole memory server, so this computer's own search and collecting stop too; on keeps the models it was set up with |
+| `/team-memory shared-off`, `shared-on` | 서버 → 공유 → 공유 끄기, 다시 켜기 (the team's address again); a server never opened through the team is turned on in the app |
+| `/team-memory shared-off <teammate>`, `shared-on <teammate>` | The teammate's switch in 내 기억을 여는 팀원, named by team name or email (by email when a name fits two); chat opens the first time only by approving their request |
+| `/team-memory setup`, `doctor` | The setup skill, and `cli.mjs doctor` explained (they were `/memory-setup` and `/memory-doctor`) |
 
 ### The admin / 관리자
 
@@ -1024,7 +1049,7 @@ Install the plugin, then run setup against the public address with the gate toke
 HONCHO_API_TOKEN='<gate token>' node scripts/cli.mjs setup apply --agents codex,claude --user-peer <id> --honcho-url https://<name>.<your domain>
 ```
 
-In the app on that computer, 기억 설정 → 대화 수집 → 수정 does the same: the address and the gate token go into its 서버 step under 다른 컴퓨터의 내 서버. `/memory-setup` opens that window for a server on another computer.
+In the app on that computer, 기억 설정 → 대화 수집 → 수정 does the same: the address and the gate token go into its 서버 step under 다른 컴퓨터의 내 서버. `/team-memory setup` opens that window for a server on another computer.
 
 The Team Memory app offers all of this on 서버 → 공유: "팀 만들기" (the API token, the owner's email, and the zone and name under "token 권한과 주소"), "초대 코드로 열기", the folded "직접 만든 Tunnel로 켜기", and with sharing on one 공유 block: the address, the gate token ("복사", "바꾸기"), the 팀원 MCP address, "밖에서 확인" and "공유 끄기". First setup's 새 팀 만들기 runs the same `server share enable --cloudflare` once its server is up. 관리자, on the owner's computer only, has the 팀 주소 with "복사", the 팀원 list with "팀원 더하기", "공유 빼기" and "팀에서 빼기", and the Cloudflare block with "token 바꾸기". A teammate who came in with an invite sees the public address, the gate and the 팀원 MCP address, and no Cloudflare: that word belongs to the owner's 팀 만들기 and 관리자. A token typed there goes to the app's own server only, and no token or invite is logged.
 

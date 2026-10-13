@@ -11,6 +11,7 @@ test("each reason the bridge records reads as a few words, by how the call went"
 
   assert.equal(denied("out of scope"), "사적인 질문으로 판정");
   assert.equal(denied("No conversation in the folders open to you on this MCP server"), "열린 폴더에 대화 없음");
+  assert.equal(denied("The owner of this memory has turned your chat off for now. You can ask again once they turn it back on."), "꺼 둔 동안 물음");
   assert.equal(denied("The folders open to you on this MCP server hold more than 1000 conversations, more than one answer can draw on; the owner has to open fewer folders"), "열린 폴더의 대화가 너무 많음");
   assert.equal(denied("The conversations in the folders open to you could not be listed on this MCP server; try again later"), "열린 폴더의 대화를 읽지 못함");
   assert.equal(denied("search cannot be used with folders on this MCP server; use chat"), "팀원은 chat만 씀");

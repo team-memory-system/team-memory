@@ -125,7 +125,7 @@ test("the project route reads the transcripts the configuration names", async ()
 
 test("the folders to open to a teammate are the memory server's, and one that cannot be read says so", async () => {
   // A stand-in memory server: one folder's sessions from two computers, one of them
-  // twice, and a browser chat with no folder.
+  // twice, and a ChatGPT import with no folder, which counts under its app.
   const sessions = [
     { id: "a", created_at: "2026-10-01T00:00:00.000Z", metadata: { cwd: "/Users/someone/dev/flypiano", last_imported_at: "2026-10-07T10:00:00.000Z" } },
     { id: "b", created_at: "2026-10-02T00:00:00.000Z", metadata: { cwd: "/Users/someone/dev/flypiano", last_imported_at: "2026-10-08T10:00:00.000Z" } },
@@ -163,6 +163,7 @@ test("the folders to open to a teammate are the memory server's, and one that ca
       { path: "/Users/someone/dev/flypiano", sessions: 2, lastAt: "2026-10-08T10:00:00.000Z" },
       { path: "C:\\Users\\someone\\dev\\flypiano", sessions: 1, lastAt: "2026-10-03T00:00:00.000Z" },
     ],
+    apps: [{ source: "chatgpt", sessions: 1, lastAt: "2026-10-04T00:00:00.000Z" }],
   });
 
   await new Promise((resolve) => honcho.close(resolve));

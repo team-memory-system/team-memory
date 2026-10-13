@@ -7,8 +7,7 @@
   },
   "skills": "./skills/",
   "commands": [
-    "./commands/memory-setup.md",
-    "./commands/memory-doctor.md"
+    "./commands/team-memory.md"
   ],
   "hooks": "./hooks/claude-hooks.json",
   "mcpServers": "./.mcp.claude.json",

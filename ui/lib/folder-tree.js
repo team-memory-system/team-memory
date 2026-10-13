@@ -158,14 +158,24 @@ export function treeRows(items, columns, { open = openAtFirst(items), onChange, 
 
 /**
  * Folders to tick as a tree: `{ path, display, count, temp, tag }` each, `checked`
- * the paths ticked. The box in the header ticks or clears them all.
+ * the paths ticked. With `loose` (`{ rows, checked }`), conversations without a
+ * folder follow under 폴더 없는 대화, a row each (`{ key, label, count, hint,
+ * disabled }`, ticked by key in `loose.checked`). The box in the header ticks or
+ * clears them all, the rows that cannot be ticked aside.
  */
-export function folderTreeTable(items, checked, { open, onChange } = {}) {
+export function folderTreeTable(items, checked, { open, onChange, loose = null } = {}) {
   const all = h("input", { type: "checkbox", "aria-label": "모두 고르기" });
+  const apps = (loose?.rows || []).map((row) => ({
+    row,
+    box: h("input", { type: "checkbox", "aria-label": row.label, disabled: Boolean(row.disabled), checked: loose.checked.has(row.key) }),
+  }));
+  const pickable = apps.filter(({ row }) => !row.disabled);
   const syncAll = () => {
-    const ticked = items.filter((item) => checked.has(item.path)).length;
-    all.checked = ticked > 0 && ticked === items.length;
-    all.indeterminate = ticked > 0 && ticked < items.length;
+    for (const { row, box } of apps) box.checked = loose.checked.has(row.key);
+    const ticked = items.filter((item) => checked.has(item.path)).length + pickable.filter(({ row }) => loose.checked.has(row.key)).length;
+    const total = items.length + pickable.length;
+    all.checked = ticked > 0 && ticked === total;
+    all.indeterminate = ticked > 0 && ticked < total;
   };
   const rows = treeRows(items, [{ folders: checked, label: "수집" }], {
     open,
@@ -179,12 +189,27 @@ export function folderTreeTable(items, checked, { open, onChange } = {}) {
     for (const item of items) {
       if (all.checked) checked.add(item.path); else checked.delete(item.path);
     }
+    for (const { row } of pickable) {
+      if (all.checked) loose.checked.add(row.key); else loose.checked.delete(row.key);
+    }
     rows.sync();
     syncAll();
     onChange?.(checked);
   });
+  for (const { row, box } of apps) {
+    box.addEventListener("change", () => {
+      if (box.checked) loose.checked.add(row.key); else loose.checked.delete(row.key);
+      syncAll();
+      onChange?.(checked);
+    });
+  }
   syncAll();
   return h("div", { class: "pt" },
     h("div", { class: "pr t h" }, h("span", { class: "tn" }, h("span", { class: "tw" }), all, h("span", {}, "폴더")), h("span", { class: "c" }, "대화")),
-    rows.element);
+    rows.element,
+    apps.length ? h("div", { class: "pr sub-h" }, "폴더 없는 대화") : null,
+    apps.map(({ row, box }) => h("label", { class: row.disabled ? "pr t app dis" : "pr t app" },
+      h("span", { class: "tn" }, h("span", { class: "tw" }), box,
+        h("span", { class: "tl" }, h("b", {}, row.label), row.hint ? h("span", { class: "hint" }, row.hint) : null)),
+      h("span", { class: "c" }, row.count ? `${number(row.count)}개` : "없음"))));
 }

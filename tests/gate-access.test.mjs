@@ -1,8 +1,9 @@
 // The owner's side of the gate's files: access.json, which says who may do what on
 // this computer's shared server, and devices.json, which only the gate writes. What
 // matters: only what the gate reads is ever written, one change never loses
-// another, chat is opened with a list of folders and closed again, a computer is
-// cut off by its id, and the list of computers names no key.
+// another, chat is opened with a list of folders and apps, turned off for now and
+// on again, and closed, a computer is cut off by its id, and the list of computers
+// names no key.
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -20,6 +21,7 @@ import {
   readGateAccess,
   revokeDevice,
   revokePerson,
+  setChatOff,
   setGateOwners,
 } from "../scripts/gate-access.mjs";
 
@@ -67,6 +69,28 @@ test("owners, chat with folders and collecting are written as the gate reads the
   assert.deepEqual(changed.people["alice@example.com"].chat.folders, [WEB]);
   assert.equal(changed.people["alice@example.com"].chat.since, since);
 
+  // Apps open beside the folders: only well-formed names, once each.
+  await grantChat(paths, { email: "alice@example.com", folders: [WEB], sources: ["chatgpt", "ChatGPT", "chat gpt", "", 7, "chatgpt", "x".repeat(33)] });
+  assert.deepEqual((await readGateAccess(paths)).people["alice@example.com"].chat.sources, ["chatgpt"]);
+
+  // Turned off for now and on again, with what is open kept, and kept off while the
+  // folders change. A teammate never opened to cannot be turned on.
+  await setChatOff(paths, { email: "Alice@Example.com", off: true });
+  let chat = (await readGateAccess(paths)).people["alice@example.com"].chat;
+  assert.deepEqual(chat, { folders: [WEB], sources: ["chatgpt"], off: true, since });
+  await grantChat(paths, { email: "alice@example.com", folders: [HONCHO], sources: ["chatgpt"] });
+  chat = (await readGateAccess(paths)).people["alice@example.com"].chat;
+  assert.deepEqual(chat, { folders: [HONCHO], sources: ["chatgpt"], off: true, since });
+  assert.deepEqual((await gateGrants(paths)).find((grant) => grant.email === "alice@example.com").chat, { folders: [HONCHO], sources: ["chatgpt"], off: true, since });
+  const unchanged = await fs.readFile(paths.accessFile, "utf8");
+  await setChatOff(paths, { email: "alice@example.com", off: true });
+  assert.equal(await fs.readFile(paths.accessFile, "utf8"), unchanged, "already off: nothing written");
+  await setChatOff(paths, { email: "alice@example.com", off: false });
+  chat = (await readGateAccess(paths)).people["alice@example.com"].chat;
+  assert.deepEqual(chat, { folders: [HONCHO], sources: ["chatgpt"], since });
+  await assert.rejects(setChatOff(paths, { email: "bob@example.com", off: false }), /not opened/);
+  await assert.rejects(setChatOff(paths, { email: "nobody@example.com", off: true }), /not opened/);
+
   // Closing chat leaves collecting; closing the last thing drops the person.
   await grantCollect(paths, { email: "alice@example.com", peer: "alice" });
   await revokePerson(paths, { email: "alice@example.com", kind: "chat" });
@@ -93,7 +117,8 @@ test("what the gate would not read never reaches the file", () => {
     owners: ["not an email", "OK@example.com"],
     workspace: "bad workspace!",
     people: {
-      "x@example.com": { peer: "x", chat: { folders: [HONCHO] }, admin: true },
+      "x@example.com": { peer: "x", chat: { folders: [HONCHO], sources: ["chatgpt", "Bad"], off: "yes" }, admin: true },
+      "v@example.com": { peer: "v", chat: { folders: [], sources: ["chatgpt"], off: true } },
       "y@example.com": { peer: "bad peer!", chat: { folders: [HONCHO] } },
       // A grant from before folders opens nothing.
       "w@example.com": { peer: "w", chat: { projects: [{ id: "p-0123456789ab", name: "honcho" }] } },
@@ -107,7 +132,11 @@ test("what the gate would not read never reaches the file", () => {
     version: 1,
     owners: ["ok@example.com"],
     workspace: "memory",
-    people: { "x@example.com": { peer: "x", chat: { folders: [HONCHO] } }, "w@example.com": { peer: "w", chat: { folders: [] } } },
+    people: {
+      "x@example.com": { peer: "x", chat: { folders: [HONCHO], sources: ["chatgpt"] } },
+      "v@example.com": { peer: "v", chat: { folders: [], sources: ["chatgpt"], off: true } },
+      "w@example.com": { peer: "w", chat: { folders: [] } },
+    },
     revokedDevices: ["d-0123456789abcdef"],
   });
 });

@@ -1124,6 +1124,8 @@ details.group[open] > summary::before { content: "▾"; }
 .list-item .t { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 600; }
 .list-item .s { margin-top: 2px; color: var(--ink-3); font-size: 13px; }
 .list-item .end { display: flex; align-items: center; gap: 6px; }
+/* Turned off for now (a teammate's chat): the name reads quieter beside its 꺼 둠 tag. */
+.list-item.dim .t { color: var(--ink-3); }
 .list-empty { padding: 14px 16px; color: var(--ink-3); font-size: 13.5px; }
 
 .tag.new { background: var(--info-soft); color: var(--info); box-shadow: none; }
@@ -1156,8 +1158,9 @@ dialog.modal::backdrop { background: rgb(36 33 28 / 42%); }
 .m-body { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 22px 6px; }
 .m-body h3 { margin: 0 0 4px; font-size: 18px; font-weight: 700; }
 .m-body .lead { margin: 0 0 14px; color: var(--ink-3); font-size: 13.5px; }
-.m-foot { display: flex; align-items: center; gap: 8px; padding: 16px 22px 18px; }
+.m-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 16px 22px 18px; }
 .m-foot:empty { padding: 0 0 16px; }
+.m-foot .foot-btns { display: flex; gap: 8px; margin-left: auto; }
 
 /* The steps of a window, done ones ticked; while editing, each one opens. */
 .stepper { display: flex; align-items: center; gap: 6px; padding: 12px 22px 14px; border-bottom: 1px solid var(--line-soft); color: var(--ink-4); font-size: 12.5px; }
@@ -1293,6 +1296,11 @@ button.tw:hover { background: var(--sunk); color: var(--ink); }
 .pr .tl .th { margin-left: 8px; color: var(--ink-3); font-size: 12.5px; }
 .pr .tl .own { color: var(--ink-2); }
 .pr .tl .tag { margin-left: 8px; }
+/* 폴더 없는 대화: ChatGPT 기록 and the other apps' conversations, below the folder tree. */
+.pr.sub-h { display: block; padding: 6px 14px; border-top: 1px solid var(--line); background: var(--sunk-soft); color: var(--ink-3); font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+.pr.app .tl { white-space: normal; }
+.pr.app .hint { display: block; margin-top: 1px; color: var(--ink-3); font-size: 12.5px; font-weight: 400; }
+.pr.app.dis { color: var(--ink-3); }
 /* 서버 → 기억 다시 정리: label and value rows in the page's flat list, and in its confirm sheet. */
 .section > header h2 .tag { margin-left: 8px; vertical-align: 2px; }
 .rows > .kv { padding: 12px 2px; border-bottom: 1px solid var(--line); }

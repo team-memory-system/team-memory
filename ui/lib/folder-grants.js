@@ -1,10 +1,13 @@
 // What a teammate's chat may answer from: folders, each the path conversations
 // started in as a collector recorded it (a Honcho session's metadata.cwd), and
-// whether the folders inside it open too, those made later included. The owner
-// ticks folders in a tree (folder-tree.js); this turns the ticks into the fewest
-// entries that open the same folders, and entries back into ticks. The MCP bridge
-// matches sessions to entries by the same rule (local-mcp-bridge/server.py).
+// whether the folders inside it open too, those made later included; and apps,
+// whose conversations without a folder open by the app they came from (ChatGPT
+// 기록). The owner ticks folders in a tree (folder-tree.js); this turns the ticks
+// into the fewest entries that open the same folders, and entries back into ticks.
+// The MCP bridge matches sessions to entries by the same rule
+// (local-mcp-bridge/server.py).
 import { shortPath } from "./collect.js";
+import { appRecords, number } from "./format.js";
 
 const DRIVE = /^[A-Za-z]:\//;
 // Folders that hold people's home folders (as folderKey writes them): they never open
@@ -128,4 +131,35 @@ export function folderRowsOf(listed, chosen = []) {
   const held = [...rows.values()].flatMap((row) => row.paths);
   for (const entry of chosen) if (!held.some((folder) => folderOpens(entry, folder))) add(entry.path, 0);
   return [...rows.values()];
+}
+
+const NO_CHATGPT = "가져온 기록이 없습니다. 기억 설정 → 지난 대화 → 더 가져오기에서 ChatGPT 내보내기 파일을 넣으면 고를 수 있습니다.";
+
+/**
+ * The rows of 폴더 없는 대화: ChatGPT 기록 always, greyed while none was imported,
+ * then every other app that has some (`apps` from /api/team/folders), and each app
+ * `chosen` opens, so what is open stays in sight.
+ */
+export function appRowsOf(apps, chosen = []) {
+  const counts = new Map((Array.isArray(apps) ? apps : []).map((app) => [app.source, Number(app.sessions || 0)]));
+  const sources = [...new Set(["chatgpt", ...[...counts.keys()].filter((source) => counts.get(source) > 0), ...chosen])];
+  return sources.map((source) => {
+    const count = counts.get(source) || 0;
+    const none = count === 0 && !chosen.includes(source);
+    return { key: source, label: appRecords(source), count, disabled: none, hint: none && source === "chatgpt" ? NO_CHATGPT : null };
+  });
+}
+
+// A folder as the hub keeps its name starts with ~, /, \, … or a drive (team-app.mjs).
+const FOLDER_NAME = /^(?:~|\/|\\|…|[A-Za-z]:)/;
+
+/**
+ * What an approved chat request opened, as the hub keeps it: how many folders, then
+ * the apps by name, such as ChatGPT 기록.
+ */
+export function openedText(projects) {
+  const names = Array.isArray(projects) ? projects.map(String) : [];
+  const folders = names.filter((name) => FOLDER_NAME.test(name)).length;
+  const apps = names.filter((name) => !FOLDER_NAME.test(name));
+  return [folders ? `열린 폴더 ${number(folders)}개` : null, ...apps].filter(Boolean).join(" · ") || "열린 폴더 0개";
 }

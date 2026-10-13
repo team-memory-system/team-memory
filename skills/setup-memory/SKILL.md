@@ -43,7 +43,7 @@ Say these lines exactly as written whenever their moment comes, in Korean for a 
 | Make a team (the admin) | 방금 연 앱(<url>)의 처음 설정에서 "새 팀 만들기"를 고르고, 팀 이름과 Cloudflare API token, 내 Google 이메일을 넣어 주세요. token은 채팅에 붙여 넣지 마세요. 끝나면 "했어"라고 말해 주세요. |
 | Before adding a teammate | 더한 사람은 팀 주소로 로그인해 팀원 명단과 서버 주소를 봅니다. 기억에 묻거나 회사 서버에 쌓는 것은 각 서버 주인이 승인해야 열립니다. |
 | Stopped on an error | <단계>에서 멈췄습니다. <오류를 사용자의 말로 옮긴 것> |
-| Done | 설치가 끝났습니다. 팀원 기억은 팀 메모리 앱의 팀 메뉴에서, 다른 서버에도 쌓기는 기억 설정 → 대화 수집 → 수정에서, 백업해 둔 대화나 ChatGPT 기록은 기억 설정 → 지난 대화의 더 가져오기에서 넣으세요. 승인할 것과 연결할 것은 오른쪽 위 종에 뜹니다. 문제가 생기면 `/memory-doctor`를 입력하세요. |
+| Done | 설치가 끝났습니다. 팀원 기억은 팀 메모리 앱의 팀 메뉴에서, 다른 서버에도 쌓기는 기억 설정 → 대화 수집 → 수정에서, 백업해 둔 대화나 ChatGPT 기록은 기억 설정 → 지난 대화의 더 가져오기에서 넣으세요. 승인할 것과 연결할 것은 오른쪽 위 종에 뜹니다. 문제가 생기면 `/team-memory doctor`를 입력하세요. |
 
 Use the detected default data directory without asking; ask about it only when the user brings it up.
 

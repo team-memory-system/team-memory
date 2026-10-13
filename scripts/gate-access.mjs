@@ -4,8 +4,9 @@
 //   access.json   written here, read by the gate whenever it changes: the owners
 //                 (every computer of theirs may register and write), the workspace
 //                 teammates write into, and per teammate email what is opened to
-//                 them: chat with a list of folders, or collecting into this
-//                 server. Devices cut off are listed under revokedDevices.
+//                 them: chat with a list of folders and apps (whether the owner
+//                 turned it off for now too), or collecting into this server.
+//                 Devices cut off are listed under revokedDevices.
 //   devices.json  written by the gate only: every computer that registered (an
 //                 email, its name, a hash of its key, when it was last seen). Read
 //                 here for the list of computers that write to this server.
@@ -28,6 +29,10 @@ const WORKSPACE = /^[A-Za-z0-9_.:-]{1,128}$/;
 // The gate's own limits (server/gate/gate.mjs): it drops what is past them.
 export const MAX_FOLDERS = 100;
 const MAX_FOLDER_LENGTH = 1024;
+export const MAX_SOURCES = 32;
+// An app by the name its sessions record (metadata.source), as the gate and the MCP
+// bridge read it: "chatgpt" for ChatGPT imports.
+export const SOURCE = /^[a-z0-9][a-z0-9_.-]{0,31}$/;
 
 export function gateStatePaths({ serverDirectory, runtimeDirectory } = {}) {
   const serverDir = path.resolve(serverDirectory || installedServerDir());
@@ -70,6 +75,21 @@ export function folderList(value) {
   return list.slice(0, MAX_FOLDERS);
 }
 
+/**
+ * The apps whose conversations without a folder are opened to a teammate, by the
+ * name their sessions record: "chatgpt" opens every ChatGPT import, those brought
+ * in later included.
+ */
+export function sourceList(value) {
+  return [...new Set((Array.isArray(value) ? value : []).filter((source) => typeof source === "string" && SOURCE.test(source)))].slice(0, MAX_SOURCES);
+}
+
+/** A chat grant as access.json keeps it: apps only when some are open, off only while it is. */
+function chatEntry({ folders, sources, off, since }) {
+  const list = sourceList(sources);
+  return { folders: folderList(folders), ...(list.length ? { sources: list } : {}), ...(off === true ? { off: true } : {}), ...(since ? { since } : {}) };
+}
+
 /** access.json with every part present and nothing the gate would not read. */
 export function normalizeGateAccess(value) {
   const people = {};
@@ -77,7 +97,7 @@ export function normalizeGateAccess(value) {
     const email = normalizeEmail(key);
     if (!email || !entry || typeof entry !== "object" || !PEER.test(String(entry.peer || ""))) continue;
     const person = { peer: entry.peer };
-    if (entry.chat && typeof entry.chat === "object") person.chat = { folders: folderList(entry.chat.folders), ...(entry.chat.since ? { since: entry.chat.since } : {}) };
+    if (entry.chat && typeof entry.chat === "object") person.chat = chatEntry(entry.chat);
     if (entry.collect && typeof entry.collect === "object") {
       person.collect = { ...(WORKSPACE.test(String(entry.collect.workspace || "")) ? { workspace: entry.collect.workspace } : {}), ...(entry.collect.since ? { since: entry.collect.since } : {}) };
     }
@@ -135,13 +155,36 @@ export async function setGateOwners(paths, { owners, workspace }) {
   return changeGateAccess(paths, (access) => ({ ...access, owners: [...new Set([...owners])], ...(workspace ? { workspace } : {}) }));
 }
 
-/** Opens chat with `folders` to a teammate, or changes which folders are open. */
-export async function grantChat(paths, { email, peer, folders }) {
+/**
+ * Opens chat with `folders` and `sources` (apps) to a teammate, or changes what is
+ * open. A teammate turned off stays off until they are turned on.
+ */
+export async function grantChat(paths, { email, peer, folders, sources }) {
   const who = normalizeEmail(email);
   if (!who) throw new Error("A teammate's email is needed");
   return changeGateAccess(paths, (access) => {
     const person = access.people[who] || { peer };
-    access.people[who] = { ...person, peer: peer || person.peer, chat: { folders: folderList(folders), since: person.chat?.since || now() } };
+    access.people[who] = {
+      ...person,
+      peer: peer || person.peer,
+      chat: chatEntry({ folders, sources, off: person.chat?.off, since: person.chat?.since || now() }),
+    };
+    return access;
+  });
+}
+
+/**
+ * Turns a teammate's chat off for now, or on again, keeping what is open to them.
+ * Throws (code "not_opened") when chat was never opened to them: that takes the
+ * owner's approval of their request.
+ */
+export async function setChatOff(paths, { email, off }) {
+  const who = normalizeEmail(email);
+  return changeGateAccess(paths, (access) => {
+    const person = access.people[who];
+    if (!person?.chat) throw Object.assign(new Error("Chat is not opened to this teammate"), { code: "not_opened" });
+    if ((person.chat.off === true) === (off === true)) return null;
+    person.chat = chatEntry({ ...person.chat, off: off === true });
     return access;
   });
 }
@@ -206,7 +249,9 @@ export async function gateGrants(paths) {
   return Object.entries(access.people).map(([email, person]) => ({
     email,
     peer: person.peer,
-    chat: person.chat ? { folders: person.chat.folders, since: person.chat.since || null } : null,
+    chat: person.chat
+      ? { folders: person.chat.folders, sources: person.chat.sources || [], off: person.chat.off === true, since: person.chat.since || null }
+      : null,
     collect: person.collect ? { workspace: person.collect.workspace || access.workspace, since: person.collect.since || null } : null,
   }));
 }

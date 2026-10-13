@@ -12,6 +12,31 @@ export function sourceLabel(source) {
   return SOURCES[source] || source || "기타";
 }
 
+/**
+ * Conversations without a folder, by the app they came from (a session's
+ * metadata.source, "unknown" when it names none): ChatGPT 기록 for ChatGPT imports.
+ */
+export function appRecords(source) {
+  return source === "unknown" ? "기타 대화" : `${sourceLabel(source)} 기록`;
+}
+
+// Letters and digits whose sound ends in a consonant, as a Korean reader says them:
+// naddle (내들), chenjing (첸징), 3 (삼). A name of other letters takes the open form.
+const CLOSED_LETTERS = /(?:[bcdgklmnpt]|le)$/i;
+const CLOSED_DIGITS = /[013678]$/;
+
+/**
+ * `word` with the particle its last sound takes, the pair written closed form first:
+ * josa("철수", "을/를") is 철수를, josa("민준", "이/가") is 민준이.
+ */
+export function josa(word, pair) {
+  const [closed, open] = pair.split("/");
+  const text = String(word || "");
+  const code = text.charCodeAt(text.length - 1);
+  const ends = code >= 0xac00 && code <= 0xd7a3 ? (code - 0xac00) % 28 !== 0 : CLOSED_LETTERS.test(text) || CLOSED_DIGITS.test(text);
+  return `${text}${ends ? closed : open}`;
+}
+
 export const SOURCE_FILTERS = [
   ["", "전체"],
   ["claude", "Claude Code"],

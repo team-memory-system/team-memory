@@ -1,9 +1,12 @@
 // The folders this computer's server holds conversations of, for the window that
 // opens them to a teammate: each the folder a conversation started in, as the
 // collector that sent it recorded it (a Honcho session's metadata.cwd), on whichever
-// of the owner's computers it ran. A teammate's chat answers from the conversations
-// of the folders opened to them; the MCP bridge finds those when the question comes
+// of the owner's computers it ran. Conversations without a folder, such as ChatGPT
+// imports, are counted by the app they came from (metadata.source), which opens them
+// instead. A teammate's chat answers from the conversations of the folders and apps
+// opened to them; the MCP bridge finds those when the question comes
 // (local-mcp-bridge/server.py), so nothing is filled in ahead of time.
+import { SOURCE } from "./gate-access.mjs";
 import { configuredAccess, fetchHoncho, honchoHeaders } from "./honcho-access.mjs";
 
 const PAGE_SIZE = 100;
@@ -56,33 +59,49 @@ async function sessionPages(call, workspace, onPage) {
   }
 }
 
+/** The app a session without a folder came from, by the MCP bridge's rule: "unknown" when it names none. */
+export function sessionSource(metadata) {
+  const source = metadata?.source;
+  return typeof source === "string" && SOURCE.test(source) ? source : "unknown";
+}
+
+/** Each entry as the window shows it: the newest turn as a time, or null. */
+const counted = (entries) => entries.map(({ lastMs, ...entry }) => ({ ...entry, lastAt: lastMs ? new Date(lastMs).toISOString() : null }));
+
 /**
- * `{ ok: true, workspace, sessions, noFolder, folders: [{ path, sessions, lastAt }] }`:
- * every folder a session of this server started in, with how many started there and
- * when the newest of them last got a turn. `noFolder` counts the sessions with no
- * folder (a browser chat), which no folder can open.
+ * `{ ok: true, workspace, sessions, noFolder, folders: [{ path, sessions, lastAt }],
+ * apps: [{ source, sessions, lastAt }] }`: every folder a session of this server
+ * started in, with how many started there and when the newest of them last got a
+ * turn. `noFolder` counts the sessions with no folder (a ChatGPT import), and `apps`
+ * splits them by the app they came from, which opens them instead of a folder.
  */
 export async function serverFolders({ config, fetchImpl } = {}) {
   const workspace = String(config?.honcho?.workspaceId || "memory");
   const call = honchoClient(config, fetchImpl);
   const folders = new Map();
+  const apps = new Map();
   const ids = new Set();
   let noFolder = 0;
+  const count = (map, key, entry, at) => {
+    const current = map.get(key) || { ...entry, sessions: 0, lastMs: 0 };
+    current.sessions += 1;
+    current.lastMs = Math.max(current.lastMs, at);
+    map.set(key, current);
+  };
   await sessionPages(call, workspace, (items) => {
     for (const item of items) {
       if (!item?.id || ids.has(item.id)) continue;
       ids.add(item.id);
       const metadata = item.metadata || {};
       const cwd = typeof metadata.cwd === "string" ? metadata.cwd : "";
-      if (!cwd) {
-        noFolder += 1;
+      const at = Date.parse(metadata.last_imported_at) || Date.parse(item.created_at) || 0;
+      if (cwd) {
+        count(folders, cwd, { path: cwd }, at);
         continue;
       }
-      const at = Date.parse(metadata.last_imported_at) || Date.parse(item.created_at) || 0;
-      const entry = folders.get(cwd) || { path: cwd, sessions: 0, lastMs: 0 };
-      entry.sessions += 1;
-      entry.lastMs = Math.max(entry.lastMs, at);
-      folders.set(cwd, entry);
+      noFolder += 1;
+      const source = sessionSource(metadata);
+      count(apps, source, { source }, at);
     }
   });
   return {
@@ -90,8 +109,7 @@ export async function serverFolders({ config, fetchImpl } = {}) {
     workspace,
     sessions: ids.size,
     noFolder,
-    folders: [...folders.values()]
-      .sort((left, right) => left.path.localeCompare(right.path))
-      .map((entry) => ({ path: entry.path, sessions: entry.sessions, lastAt: entry.lastMs ? new Date(entry.lastMs).toISOString() : null })),
+    folders: counted([...folders.values()].sort((left, right) => left.path.localeCompare(right.path))),
+    apps: counted([...apps.values()].sort((left, right) => left.source.localeCompare(right.source))),
   };
 }

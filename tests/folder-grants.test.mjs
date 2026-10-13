@@ -2,11 +2,13 @@
 // the folders of every computer of the owner's, the same folder under ~ on each of
 // them one row, and the fewest entries that open what is ticked, folders made later
 // under a ticked one included, without ever opening a folder that holds a home.
+// Conversations without a folder open by their app: ChatGPT 기록 is always offered.
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { folderKey, folderOpens, folderRowsOf, grantFromTicked, grantedPaths, rowPaths } from "../ui/lib/folder-grants.js";
+import { appRowsOf, folderKey, folderOpens, folderRowsOf, grantFromTicked, grantedPaths, openedText, rowPaths } from "../ui/lib/folder-grants.js";
 import { folderTree } from "../ui/lib/folder-tree.js";
+import { josa } from "../ui/lib/format.js";
 
 // A Mac's and a Windows PC's conversations on one server.
 const LISTED = [
@@ -105,4 +107,31 @@ test("a grant shows as the rows it opens, and ticking them again gives it back",
   assert.deepEqual([...grantedPaths(rows, [{ path: "C:\\Users\\me\\dev\\honcho", subfolders: false }])], ["/Users/me/dev/honcho"]);
   assert.deepEqual([...grantedPaths(rows, [{ path: "/Users/me/elsewhere", subfolders: true }])], []);
   assert.deepEqual([...grantedPaths(rows, null)], []);
+});
+
+test("ChatGPT 기록 is always a row, greyed with where to import it until some is there; other apps show when they have some", () => {
+  const [none] = appRowsOf([]);
+  assert.deepEqual({ ...none, hint: Boolean(none.hint) }, { key: "chatgpt", label: "ChatGPT 기록", count: 0, disabled: true, hint: true });
+  assert.match(none.hint, /기억 설정 → 지난 대화 → 더 가져오기/);
+  assert.deepEqual(appRowsOf([{ source: "agy", sessions: 2 }, { source: "chatgpt", sessions: 640 }, { source: "hermes", sessions: 0 }, { source: "unknown", sessions: 3 }]), [
+    { key: "chatgpt", label: "ChatGPT 기록", count: 640, disabled: false, hint: null },
+    { key: "agy", label: "agy 기록", count: 2, disabled: false, hint: null },
+    { key: "unknown", label: "기타 대화", count: 3, disabled: false, hint: null },
+  ]);
+  // What is open stays in sight and can be closed, even with nothing in it now.
+  assert.deepEqual(appRowsOf([], ["chatgpt", "hermes"]).map((row) => [row.key, row.disabled]), [["chatgpt", false], ["hermes", false]]);
+});
+
+test("what a teammate was opened reads as a count of folders and the apps by name", () => {
+  assert.equal(openedText(["ChatGPT 기록", "~/dev/honcho", "/tmp/x", "C:\\work", "…/a/very/long/folder"]), "열린 폴더 4개 · ChatGPT 기록");
+  assert.equal(openedText(["ChatGPT 기록"]), "ChatGPT 기록");
+  assert.equal(openedText(["~/dev/honcho"]), "열린 폴더 1개");
+  assert.equal(openedText(undefined), "열린 폴더 0개");
+});
+
+test("a name takes the particle its last sound does", () => {
+  assert.deepEqual(["철수", "민준", "naddle", "chenjing", "luna", "team2", "team3"].map((name) => josa(name, "을/를")),
+    ["철수를", "민준을", "naddle을", "chenjing을", "luna를", "team2를", "team3을"]);
+  assert.equal(josa("철수", "이/가"), "철수가");
+  assert.equal(josa("민준", "은/는"), "민준은");
 });

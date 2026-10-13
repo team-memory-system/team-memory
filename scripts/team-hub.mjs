@@ -29,8 +29,8 @@ import {
   normalizeEmail,
 } from "./cloudflare-api.mjs";
 import { deployHub, hubModules, HUB_SCRIPT, workersClient } from "./cloudflare-workers.mjs";
-import { chooseIdp, chooseZone } from "./share-manager.mjs";
-import { readTeamAuth, setTeam, teamHost, teamJson } from "./team-auth.mjs";
+import { chooseIdp, chooseZone, shareEnableTeam, TUNNEL_TOKEN_ENV } from "./share-manager.mjs";
+import { readTeamAuth, setTeam, teamAuthPaths, teamHost, teamJson, teamLoginStatus } from "./team-auth.mjs";
 import {
   API_BASE_ENV,
   ownerClient,
@@ -208,4 +208,35 @@ export async function teamWhoami({ hub, peer, paths, fetchImpl }) {
   }
   await setTeam({ hub: host, email: me.email, peer: me.peer || null, admin: Boolean(me.admin), name: me.team?.name || null }, { paths });
   return me;
+}
+
+/**
+ * Opens this computer's server through the team (`team share`): the hub gives it an
+ * address and its tunnel, and the gate lets in the owner's Google login. `replace`
+ * takes the address this computer had again, as 다시 켜기 does.
+ */
+export async function teamShare({ config, label = "", replace = false, paths = teamAuthPaths(config) } = {}) {
+  const login = await teamLoginStatus({ paths });
+  if (!login.hub || !login.email) return { ok: false, code: "no_login", error: "Log in to the team in the app first" };
+  let made;
+  try {
+    made = await hubCall("POST", "/api/servers", {
+      ...(label ? { label } : {}),
+      workspace: config?.honcho?.workspaceId || "memory",
+      device: computerName(),
+      ...(replace ? { replace: true } : {}),
+    }, { paths });
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error), ...(error?.code ? { code: error.code } : {}), ...(error?.payload?.server ? { server: error.payload.server } : {}) };
+  }
+  const shared = await shareEnableTeam({
+    host: made.server?.host,
+    teamDomain: made.teamDomain,
+    aud: made.aud,
+    owners: [login.email],
+    peer: login.peer || config?.user?.peerId || "",
+    workspace: config?.honcho?.workspaceId || "memory",
+    env: { ...process.env, [TUNNEL_TOKEN_ENV]: made.tunnelToken },
+  });
+  return { ...shared, server: made.server };
 }

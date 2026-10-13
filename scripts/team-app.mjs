@@ -11,7 +11,7 @@
 // No route ever returns a token, a device key or the team's Jev key. A route that
 // changes something is a JSON POST, as every other route of the app.
 import { loadConfig } from "./config.mjs";
-import { folderList, gateDevices, gateGrants, gateStatePaths, grantChat, grantCollect, revokeDevice, revokePerson } from "./gate-access.mjs";
+import { folderList, gateDevices, gateGrants, gateStatePaths, grantChat, grantCollect, revokeDevice, revokePerson, setChatOff, sourceList } from "./gate-access.mjs";
 import { serverFolders } from "./server-folders.mjs";
 import { CALLBACK_PATH, finishLogin, registerDevice, serverWhoami, setTeam, signOut, startLogin, teamAuthPaths, teamHost, teamLoginStatus } from "./team-auth.mjs";
 import { computerName, hubCall, madeTeam, teamWhoami } from "./team-hub.mjs";
@@ -39,10 +39,17 @@ function hubFolderName(entry) {
   return chars.length <= HUB_NAME_LENGTH ? shown : `…${chars.slice(-(HUB_NAME_LENGTH - 1)).join("")}`;
 }
 
-/** The names of `folders` for the hub's record of a request. */
-function hubFolderNames(folders) {
-  return [...new Set(folders.map(hubFolderName).filter(Boolean))].slice(0, HUB_NAMES);
+// An app opened beside the folders, as the hub shows it. A folder's name always
+// starts with ~, /, … or a drive, so the teammate's app tells the two apart.
+const APP_NAMES = { chatgpt: "ChatGPT 기록", unknown: "기타 대화" };
+const hubAppName = (source) => APP_NAMES[source] || `${source} 기록`;
+
+/** The names of `folders` and `sources` for the hub's record of a request, the apps first so none is cut. */
+function hubNames(folders, sources) {
+  return [...new Set([...sources.map(hubAppName), ...folders.map(hubFolderName)].filter(Boolean))].slice(0, HUB_NAMES);
 }
+
+const NOTHING_CHOSEN = "폴더나 ChatGPT 기록을 하나 이상 고르세요.";
 
 async function context() {
   const config = await loadConfig().catch(() => null);
@@ -150,11 +157,12 @@ const ROUTES = {
         await grantCollect(gate, { email, peer, workspace: config?.honcho?.workspaceId || "memory" });
       } else {
         const folders = folderList(body.folders);
-        if (!folders.length) return { ok: false, error: "폴더를 하나 이상 고르세요." };
-        await grantChat(gate, { email, peer, folders });
+        const sources = sourceList(body.sources);
+        if (!folders.length && !sources.length) return { ok: false, error: NOTHING_CHOSEN };
+        await grantChat(gate, { email, peer, folders, sources });
       }
     }
-    const projects = body.approve && body.kind !== "collect" ? hubFolderNames(folderList(body.folders)) : null;
+    const projects = body.approve && body.kind !== "collect" ? hubNames(folderList(body.folders), sourceList(body.sources)) : null;
     const answer = await hubCall("POST", `/api/requests/${id}/decide`, { approve: Boolean(body.approve), ...(projects ? { projects } : {}) }, { paths });
     return { ok: true, request: answer.request || answer };
   },
@@ -184,7 +192,10 @@ const ROUTES = {
     }
   },
 
-  /** The owner changes the folders open to a teammate (`folders`), or closes chat (`close: true`). */
+  /**
+   * The owner changes what is open to a teammate (`folders`, `sources`), turns their
+   * chat off for now or on again (`off`), or closes it (`close: true`).
+   */
   "/api/team/grant": async (body) => {
     const { paths, gate } = await context();
     const email = String(body.email || "");
@@ -194,13 +205,23 @@ const ROUTES = {
       if (/^r-[0-9a-f]{16}$/.test(request)) await hubCall("POST", `/api/requests/${request}/revoke`, {}, { paths }).catch(() => null);
       return { ok: true, closed: true };
     }
-    const folders = folderList(body.folders);
-    if (!folders.length) return { ok: false, error: "폴더를 하나 이상 고르세요. 모두 닫으려면 열기를 끄세요." };
-    await grantChat(gate, { email, peer: String(body.peer || ""), folders });
-    if (/^r-[0-9a-f]{16}$/.test(request)) {
-      await hubCall("POST", `/api/requests/${request}/projects`, { projects: hubFolderNames(folders) }, { paths }).catch(() => null);
+    if (typeof body.off === "boolean") {
+      try {
+        await setChatOff(gate, { email, off: body.off });
+      } catch (error) {
+        if (error.code === "not_opened") return { ok: false, error: "이 팀원에게는 아직 내 기억이 열려 있지 않습니다. chat 요청을 승인하면 열립니다." };
+        throw error;
+      }
+      return { ok: true, off: body.off };
     }
-    return { ok: true, folders };
+    const folders = folderList(body.folders);
+    const sources = sourceList(body.sources);
+    if (!folders.length && !sources.length) return { ok: false, error: `${NOTHING_CHOSEN} 모두 닫으려면 끊기를 누르세요.` };
+    await grantChat(gate, { email, peer: String(body.peer || ""), folders, sources });
+    if (/^r-[0-9a-f]{16}$/.test(request)) {
+      await hubCall("POST", `/api/requests/${request}/projects`, { projects: hubNames(folders, sources) }, { paths }).catch(() => null);
+    }
+    return { ok: true, folders, sources };
   },
 
   /** The owner stops a teammate's computers collecting into this server. */

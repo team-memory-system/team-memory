@@ -1,7 +1,7 @@
 // 가드 시험: the owner asks a question as a teammate would and sees each step the
 // team server takes with it: the question judged, the answer made from the memory of
-// the folders a teammate has open (or of every folder) or written here, the answer
-// judged, and what the teammate gets.
+// what a teammate has open (folders and ChatGPT 기록), or of every folder, or
+// written here, the answer judged, and what the teammate gets.
 // It is one line at the top of 조회 기록, a question and a chip for the answer, and
 // Enter judges it. This visit's trials stay under it, newest first, the earlier
 // ones folded to a line. The memory server's own MCP bridge runs it (the dashboard
@@ -11,7 +11,7 @@ import { post } from "./api.js";
 import { h, clear } from "./dom.js";
 import { folderOpens, folderRowsOf, grantFromTicked } from "./folder-grants.js";
 import { folderTree } from "./folder-tree.js";
-import { number } from "./format.js";
+import { appRecords, number } from "./format.js";
 import { callScores, reasonText, scoreText, trialOutcome, trialTag, verdictTag } from "./guard.js";
 import { icon } from "./icons.js";
 import { kv } from "./kit.js";
@@ -142,19 +142,27 @@ export function guardTrial() {
     try {
       const [listed, requests] = await Promise.all([teamCall("/api/team/folders", {}), loadRequests().catch(() => null)]);
       const folders = listed.folders || [];
-      const sessions = (entries) => folders
+      const apps = listed.apps || [];
+      const sessions = ({ folders: entries, sources = [] }) => folders
         .filter((folder) => entries.some((entry) => folderOpens(entry, folder.path)))
-        .reduce((sum, folder) => sum + Number(folder.sessions || 0), 0);
+        .reduce((sum, folder) => sum + Number(folder.sessions || 0), 0)
+        + apps.filter((one) => sources.includes(one.source)).reduce((sum, one) => sum + Number(one.sessions || 0), 0);
       const rows = folderRowsOf(folders);
       const every = grantFromTicked(folderTree(rows), new Set(rows.map((row) => row.path)));
+      // A teammate's: their folders, then their apps (철수에게 연 폴더 · ChatGPT 기록).
+      const opened = (grant) => {
+        const names = [grant.chat.folders.length ? "폴더" : null, ...(grant.chat.sources || []).map(appRecords)].filter(Boolean);
+        return `${grant.peer || grant.email.split("@")[0]}에게 연 ${names.join(" · ")}`;
+      };
       targets = [
-        ...(requests?.grants || []).filter((grant) => grant.chat?.folders?.length).map((grant) => ({
+        ...(requests?.grants || []).filter((grant) => grant.chat?.folders?.length || grant.chat?.sources?.length).map((grant) => ({
           key: `mate:${grant.email}`,
-          name: `${grant.peer || grant.email.split("@")[0]}에게 연 폴더`,
-          folders: grant.chat.folders,
+          name: opened(grant),
+          folders: grant.chat.folders || [],
+          sources: grant.chat.sources || [],
         })),
         ...(every.length ? [{ key: "all", name: "모든 폴더", folders: every }] : []),
-      ].map((target) => ({ ...target, sessions: sessions(target.folders) }));
+      ].map((target) => ({ ...target, sessions: sessions(target) }));
       if (!targets.length) clear(note, icon("warn"), "이 서버에 쌓인 대화가 아직 없습니다. 직접 쓰기나 질문만으로 시험하세요.");
     } catch (error) {
       targets = [];
@@ -212,7 +220,7 @@ export function guardTrial() {
       const trial = await post("/api/dashboard/guard-trial", {
         query: asked.query,
         ...(asked.answer != null ? { answer: asked.answer } : {}),
-        ...(asked.target ? { folders: asked.target.folders } : {}),
+        ...(asked.target ? { folders: asked.target.folders, ...(asked.target.sources?.length ? { sources: asked.target.sources } : {}) } : {}),
       });
       if (trial.enabled === false) {
         item.failed(notice("warn", h("b", {}, "이 기억 서버는 아직 가드 시험을 보여 주지 않습니다."), " 서버에서 기억 서버를 멈췄다가 다시 시작하면 됩니다."));

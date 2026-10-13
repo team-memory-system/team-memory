@@ -11,9 +11,9 @@
 import { post } from "./api.js";
 import { bellSource, refreshBell } from "./bell.js";
 import { h, clear } from "./dom.js";
-import { folderRowsOf, grantFromTicked, grantedPaths } from "./folder-grants.js";
+import { appRowsOf, folderRowsOf, grantFromTicked, grantedPaths, openedText } from "./folder-grants.js";
 import { folderTree, folderTreeTable, openAtFirst } from "./folder-tree.js";
-import { number } from "./format.js";
+import { josa, number } from "./format.js";
 import { listItem, modal } from "./kit.js";
 import { ago, clientOutcome, connectTeammate, mateName, registerWith, teamCall, teamDirectory, teamRequests, teamStatus } from "./team.js";
 import { app, loadContext, refreshStatus } from "./state.js";
@@ -29,6 +29,9 @@ const CODEX_WAIT_MS = 10 * 60_000;
 // fits the header it hands the MCP bridge (gate.mjs MAX_FOLDERS_HEADER, base64url).
 const MAX_GRANT_FOLDERS = 100;
 const MAX_GRANT_BYTES = 8_000;
+// Honcho answers one chat from at most this many conversations (its session
+// allowlist); with more open, the MCP bridge refuses every question the teammate asks.
+const MAX_OPEN_CONVERSATIONS = 1_000;
 
 /**
  * The hub's requests with this server's own grants and computers, asked at most once
@@ -64,66 +67,81 @@ function personName(request, field = "from") {
 }
 
 /**
- * The folders window: which folders a teammate's chat answers from. Used to approve a
- * request (T2) and to change what is open later (T4). Resolves the entries to open
- * ([{ path, subfolders }], folder-grants.js), or null when closed.
+ * The folders window: what a teammate's chat answers from, folders and, under 폴더
+ * 없는 대화, ChatGPT 기록 and other apps' conversations. Used to approve a request
+ * (T2) and to change what is open later (T4). `who` is the teammate. Resolves
+ * `{ folders: [{ path, subfolders }], sources: ["chatgpt"] }` (folder-grants.js), or
+ * null when closed.
  */
-export function chooseFolders({ title, lead, chosen = [], confirm = "승인", extra = null }) {
+export function chooseFolders({ title, lead, who, chosen = [], chosenSources = [], confirm = "승인", extra = null }) {
   return new Promise((resolve) => {
     let entries = null;
     const win = modal({ title, big: true, small: true, onClose: (value) => resolve(value === "ok" ? entries : null) });
     const box = h("div", {}, spinner());
-    const summary = h("p", { class: "hint" });
+    const summary = h("span", { class: "foot-hint" });
     const problem = h("div", {});
     let rows = null;
+    let apps = [];
     let tree = [];
     const checked = new Set();
+    const sources = new Set();
     const tooMany = (list) => list.length > MAX_GRANT_FOLDERS || new TextEncoder().encode(JSON.stringify(list)).length > MAX_GRANT_BYTES;
+    const apply = button(confirm, { kind: "primary", onClick: () => {
+      if (!rows) return;
+      const picked = grantFromTicked(tree, checked);
+      const opened = apps.filter((row) => sources.has(row.key)).map((row) => row.key);
+      if (!picked.length && !opened.length) { clear(problem, notice("warn", "폴더나 ChatGPT 기록을 하나 이상 고르세요.")); return; }
+      if (tooMany(picked)) { clear(problem, notice("warn", "고른 폴더가 너무 많습니다. 위쪽 폴더를 통째로 고르면 줄어듭니다.")); return; }
+      entries = { folders: picked, sources: opened };
+      win.close("ok");
+    } });
     const drawSummary = () => {
       clear(problem);
       const ticked = (rows || []).filter((row) => checked.has(row.path));
-      const conversations = ticked.reduce((sum, row) => sum + row.count, 0);
-      clear(summary, ticked.length ? `폴더 ${number(ticked.length)}개 · 대화 ${number(conversations)}개를 엽니다.` : "");
+      const opened = apps.filter((row) => sources.has(row.key));
+      const conversations = ticked.reduce((sum, row) => sum + row.count, 0) + opened.reduce((sum, row) => sum + row.count, 0);
+      const what = [ticked.length ? `폴더 ${number(ticked.length)}개` : null, ...opened.map((row) => row.label)].filter(Boolean);
+      clear(summary, what.length ? `${what.join(" · ")} · 대화 ${number(conversations)}개를 엽니다` : rows ? "폴더나 ChatGPT 기록을 하나 이상 고르세요." : "");
+      const over = conversations > MAX_OPEN_CONVERSATIONS;
+      if (over) {
+        clear(problem, notice("warn", `대화는 ${number(MAX_OPEN_CONVERSATIONS)}개까지 열 수 있습니다. 지금 ${number(conversations)}개라 이대로면 ${josa(who, "이/가")} 물을 때마다 거절됩니다. 폴더를 줄이세요.`));
+      }
+      apply.disabled = !rows || !what.length || over;
     };
     win.body(
       h("p", { class: "lead", style: { marginTop: "4px" } }, lead),
-      h("p", { class: "hint" }, "폴더를 고르면 그 안의 폴더도 같이 열립니다. 나중에 그 안에 생기는 폴더도 열립니다."),
-      box, summary, problem);
-    win.foot(extra, [
-      button("취소", { kind: "quiet", onClick: () => win.close() }),
-      button(confirm, { kind: "primary", onClick: () => {
-        if (!rows) return;
-        const picked = grantFromTicked(tree, checked);
-        if (!picked.length) { clear(problem, notice("warn", "폴더를 하나 이상 고르세요.")); return; }
-        if (tooMany(picked)) { clear(problem, notice("warn", "고른 폴더가 너무 많습니다. 위쪽 폴더를 통째로 고르면 줄어듭니다.")); return; }
-        entries = picked;
-        win.close("ok");
-      } }),
-    ]);
+      box,
+      h("p", { class: "hint" }, "폴더를 고르면 그 안의 폴더도 같이 열립니다. 나중에 그 안에 생기는 폴더도 열립니다. ChatGPT 기록은 나중에 더 가져오는 것도 열립니다."),
+      problem);
+    // On a narrow screen the summary takes a line of its own, and the buttons stay together on the right.
+    win.foot(extra, [summary, h("span", { class: "foot-btns" }, button("취소", { kind: "quiet", onClick: () => win.close() }), apply)]);
+    drawSummary();
     win.open();
     teamCall("/api/team/folders", {}).then((result) => {
-      const list = folderRowsOf(result.folders || [], chosen);
-      rows = list;
+      rows = folderRowsOf(result.folders || [], chosen);
+      apps = appRowsOf(result.apps || [], chosenSources);
       tree = folderTree(rows);
       for (const path of grantedPaths(rows, chosen)) checked.add(path);
-      clear(box, rows.length
-        ? folderTreeTable(rows, checked, { open: openAtFirst(rows), onChange: drawSummary })
+      for (const row of apps) if (chosenSources.includes(row.key)) sources.add(row.key);
+      clear(box, rows.length || apps.some((row) => !row.disabled)
+        ? folderTreeTable(rows, checked, { open: openAtFirst(rows), onChange: drawSummary, loose: { rows: apps, checked: sources } })
         : notice("warn", "이 서버에 쌓인 대화가 아직 없습니다. 대화가 쌓이면 그 폴더가 여기에 나옵니다."));
       drawSummary();
     }, (error) => clear(box, notice("bad", h("b", {}, error.message), h("div", {}, "서버 화면에서 기억 서버가 켜져 있는지 확인하고, 이 창을 닫았다가 다시 여세요."))));
   });
 }
 
-/** 승인 on a chat request: the folders first, then the server opens and the hub hears. */
+/** 승인 on a chat request: what to open first, then the server opens and the hub hears. */
 export async function approveChat(request) {
   const who = personName(request);
-  const folders = await chooseFolders({
+  const chosen = await chooseFolders({
     title: `${who}에게 내 기억 열기`,
-    lead: `${who}가 chat으로 물을 때 답에 쓸 폴더를 고르세요.`,
+    lead: `${josa(who, "이/가")} chat으로 물을 때 답에 쓸 폴더를 고르세요.`,
+    who,
   });
-  if (!folders) return false;
-  await teamCall("/api/team/decide", { id: request.id, approve: true, kind: "chat", email: request.from, peer: request.fromPeer, folders });
-  toast(`${who}에게 폴더를 열었습니다.`, "ok");
+  if (!chosen) return false;
+  await teamCall("/api/team/decide", { id: request.id, approve: true, kind: "chat", email: request.from, peer: request.fromPeer, ...chosen });
+  toast(`${who}에게 내 기억을 열었습니다.`, "ok");
   return true;
 }
 
@@ -298,7 +316,7 @@ async function bellRows() {
     if (request.status === "approved" && request.kind === "chat") {
       rows.push(listItem({
         title: owner,
-        sub: `chat 요청을 승인했습니다 · 열린 폴더 ${(request.projects || []).length}개 · ${ago(request.decidedAt)}`,
+        sub: `chat 요청을 승인했습니다 · ${openedText(request.projects)} · ${ago(request.decidedAt)}`,
         end: act("연결", "primary small", () => connectApproved(request)),
       }));
     } else if (request.status === "approved" && request.kind === "collect") {

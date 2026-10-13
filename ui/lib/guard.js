@@ -12,6 +12,7 @@ export function reasonText(reason, allowed, { cause = false } = {}) {
   const text = String(reason || "").trim();
   const said = (whole, why) => (cause ? why : whole);
   if (text === "out of scope") return "사적인 질문으로 판정";
+  if (text.startsWith("The owner of this memory has turned your chat off")) return "꺼 둔 동안 물음";
   if (text.startsWith("No conversation in the folders open")) return "열린 폴더에 대화 없음";
   if (text.startsWith("The folders open to you on this MCP server hold more than")) return "열린 폴더의 대화가 너무 많음";
   if (text.startsWith("The conversations in the folders open to you could not be listed")) return "열린 폴더의 대화를 읽지 못함";

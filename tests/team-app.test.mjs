@@ -4,13 +4,16 @@
 // refusals come back with their code. A browser login that came back with an error
 // shows in the status at once, starting again is a new login, and a login Access
 // stopped refreshing is reported as ended, with which one to log in to again. The
-// admin's Jev key goes to the hub, and no route hands it back.
+// admin's Jev key goes to the hub, and no route hands it back. The owner opens
+// folders and ChatGPT 기록 to a teammate, turns them off for now and on again, and
+// the hub's record names what is open.
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
 
+import { gateStatePaths, readGateAccess } from "../scripts/gate-access.mjs";
 import { fakeTeam } from "./fake-team.mjs";
 
 const HUB = "team.example.com";
@@ -73,6 +76,10 @@ before(async () => {
               people: [{ email: "me@example.com", peer: "me", admin: meAdmin, joined: true, servers: [] }],
               servers: [],
             });
+          }
+          if (/^\/api\/requests\/r-[0-9a-f]{16}\/(decide|projects)$/.test(url.pathname) && request.method === "POST") {
+            hubSeen.at(-1).body = await request.json();
+            return Response.json({ request: { id: url.pathname.split("/")[3], status: "approved" } });
           }
           if (url.pathname.startsWith("/api/admin/people/") && request.method === "PUT") {
             const body = await request.json();
@@ -251,4 +258,36 @@ test("an admin makes a teammate an admin or takes it away through the hub, and t
   meAdmin = true;
   await send("/api/team/directory", { method: "POST", body: {} });
   assert.equal((await send("/api/team/status")).json.admin, true);
+});
+
+test("the owner opens folders and ChatGPT 기록 to a teammate, turns them off and on, and the hub names what is open", async () => {
+  const REQUEST = "r-0123456789abcdef";
+  const HONCHO = { path: "/Users/me/dev/honcho", subfolders: true };
+  const chatOf = async () => (await readGateAccess(gateStatePaths())).people["mate@example.com"]?.chat;
+  const post = async (route, body) => (await send(route, { method: "POST", body })).json;
+  const asked = hubSeen.length;
+
+  // Nothing chosen opens nothing, and the hub hears nothing.
+  const approve = { id: REQUEST, approve: true, kind: "chat", email: "mate@example.com", peer: "mate" };
+  assert.deepEqual(await post("/api/team/decide", { ...approve, folders: [], sources: ["Not An App"] }), { ok: false, error: "폴더나 ChatGPT 기록을 하나 이상 고르세요." });
+  assert.equal(hubSeen.length, asked);
+  assert.equal(await chatOf(), undefined);
+
+  assert.equal((await post("/api/team/decide", { ...approve, folders: [HONCHO], sources: ["chatgpt"] })).ok, true);
+  assert.deepEqual(await chatOf(), { folders: [HONCHO], sources: ["chatgpt"], since: (await chatOf()).since });
+  assert.deepEqual(hubSeen.at(-1), { method: "POST", path: `/api/requests/${REQUEST}/decide`, email: "me@example.com", body: { approve: true, projects: ["ChatGPT 기록", "~/dev/honcho"] } });
+
+  // Off for now, with what is open kept, and still off while the folders change.
+  assert.deepEqual(await post("/api/team/grant", { email: "Mate@Example.com", off: true }), { ok: true, off: true });
+  assert.equal((await chatOf()).off, true);
+  assert.equal((await post("/api/team/grant", { email: "mate@example.com", request: REQUEST, folders: [HONCHO], sources: [] })).ok, true);
+  assert.deepEqual([(await chatOf()).sources, (await chatOf()).off], [undefined, true]);
+  assert.deepEqual(hubSeen.at(-1).body, { projects: ["~/dev/honcho"] });
+  assert.deepEqual(await post("/api/team/grant", { email: "mate@example.com", off: false }), { ok: true, off: false });
+  assert.equal((await chatOf()).off, undefined);
+
+  // A teammate chat was never opened to is not turned on here, and closing takes 끊기.
+  assert.match((await post("/api/team/grant", { email: "nobody@example.com", off: false })).error, /chat 요청을 승인하면 열립니다/);
+  assert.equal((await post("/api/team/grant", { email: "mate@example.com", folders: [], sources: [] })).error, "폴더나 ChatGPT 기록을 하나 이상 고르세요. 모두 닫으려면 끊기를 누르세요.");
+  assert.deepEqual((await chatOf()).folders, [HONCHO]);
 });
