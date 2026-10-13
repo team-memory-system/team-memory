@@ -6,7 +6,9 @@
 // stopped refreshing is reported as ended, with which one to log in to again. The
 // admin's Jev key goes to the hub, and no route hands it back. The owner opens
 // folders and ChatGPT 기록 to a teammate, turns them off for now and on again, and
-// the hub's record names what is open.
+// the hub's record names what is open. A member's hub login goes on to the servers'
+// in the same window, only while this computer has none, and one turned down there
+// leaves the hub's in place.
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -14,9 +16,10 @@ import path from "node:path";
 import test, { after, before } from "node:test";
 
 import { gateStatePaths, readGateAccess } from "../scripts/gate-access.mjs";
-import { fakeTeam } from "./fake-team.mjs";
+import { fakeTeam, ISSUER_HOST } from "./fake-team.mjs";
 
 const HUB = "team.example.com";
+const SERVER = "mate.example.com";
 let server;
 let port;
 let tmp;
@@ -28,17 +31,21 @@ const JEV_KEY = "ts-jev-key-for-tests-0123456789";
 let jev = null;
 // Whether the stand-in hub's directory says this person is an admin.
 let meAdmin = true;
+// The servers the stand-in hub's directory lists, and who Access lets in to each app.
+let teamServers = [];
+const appPeople = { hub: null, servers: null };
 
-async function send(pathname, { method = "GET", body, headers = {} } = {}) {
+async function send(pathname, { method = "GET", body, headers = {}, redirect = "follow" } = {}) {
   const response = await realFetch(`http://127.0.0.1:${port}${pathname}`, {
     method,
+    redirect,
     headers: { ...(body !== undefined ? { "content-type": "application/json" } : {}), ...headers },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
   const text = await response.text();
   let json = null;
   try { json = JSON.parse(text); } catch {}
-  return { status: response.status, text, json };
+  return { status: response.status, text, json, location: response.headers.get("location") };
 }
 
 before(async () => {
@@ -46,7 +53,9 @@ before(async () => {
   process.env.HONCHO_AGENT_BRIDGE_HOME = path.join(tmp, "home");
   process.env.HONCHO_AGENT_TEAM_AUTH = path.join(tmp, "home", "data", "state", "team-auth.json");
   fake = fakeTeam({
+    people: appPeople,
     hosts: {
+      [SERVER]: { app: "servers", handle: async () => Response.json({ ok: true }) },
       [HUB]: {
         app: "hub",
         handle: async (request, { email, url }) => {
@@ -71,10 +80,11 @@ before(async () => {
             return Response.json({ set: Boolean(jev), setAt: jev?.setAt ?? null, setBy: jev?.setBy ?? null, ...(jev ? { key: jev.key } : {}) });
           }
           if (url.pathname === "/api/team" && request.method === "GET") {
+            if (email !== "me@example.com") return Response.json({ error: "not_member", detail: `${email} is not on the team's roster` }, { status: 403 });
             return Response.json({
               team: { name: "예시 팀", host: HUB, zone: "example.com" },
               people: [{ email: "me@example.com", peer: "me", admin: meAdmin, joined: true, servers: [] }],
-              servers: [],
+              servers: teamServers,
             });
           }
           if (/^\/api\/requests\/r-[0-9a-f]{16}\/(decide|projects)$/.test(url.pathname) && request.method === "POST") {
@@ -300,4 +310,65 @@ test("the owner opens folders and ChatGPT 기록 to a teammate, turns them off a
   assert.match((await post("/api/team/grant", { email: "nobody@example.com", off: false })).error, /요청을 승인하면 열립니다/);
   assert.equal((await post("/api/team/grant", { email: "mate@example.com", folders: [], sources: [] })).error, "폴더나 ChatGPT 기록을 하나 이상 고르세요. 모두 닫으려면 끊기를 누르세요.");
   assert.deepEqual((await chatOf()).folders, [HONCHO]);
+});
+
+test("a member's hub login goes on to the servers' in the same window, once, and only for a member", async () => {
+  const hubLogin = async () => {
+    const started = await send("/api/team/login", { method: "POST", body: { kind: "hub", hub: HUB } });
+    const back = new URL(fake.browserLogin(started.json.url));
+    return send(`${back.pathname}${back.search}`, { redirect: "manual" });
+  };
+  const status = async () => (await send("/api/team/status")).json;
+  teamServers = [{ host: SERVER, label: "", owner: "mate@example.com", ownerPeer: "mate", workspace: "memory", company: false }];
+  assert.equal((await status()).serversLogin.signedIn, false);
+
+  // Back from the hub's login, the browser goes on to the servers' (Access knows the
+  // person by now and asks only to allow it), and comes back here once more.
+  const hop = await hubLogin();
+  assert.equal(hop.status, 302);
+  const authorize = new URL(hop.location);
+  assert.equal(authorize.hostname, ISSUER_HOST);
+  assert.equal(authorize.searchParams.get("resource"), `https://${SERVER}`);
+  assert.equal(authorize.searchParams.get("redirect_uri"), `http://127.0.0.1:${port}/oauth/callback`);
+  const back = new URL(fake.browserLogin(authorize.toString()));
+  const done = await send(`${back.pathname}${back.search}`, { redirect: "manual" });
+  assert.equal(done.status, 200);
+  assert.match(done.text, /로그인됐습니다/);
+  const both = await status();
+  assert.equal(both.hubLogin.signedIn, true);
+  assert.deepEqual([both.serversLogin.signedIn, both.serversLogin.host], [true, SERVER]);
+
+  // With the servers login kept, the hub's comes back alone.
+  assert.equal((await hubLogin()).status, 200);
+
+  // Turned down at Access: the hub login stays, and the page says the rest waits.
+  const file = process.env.HONCHO_AGENT_TEAM_AUTH;
+  const auth = JSON.parse(await fs.readFile(file, "utf8"));
+  delete auth.logins.servers;
+  await fs.writeFile(file, JSON.stringify(auth));
+  appPeople.servers = ["mate@example.com"];
+  try {
+    const denied = await hubLogin();
+    assert.equal(denied.status, 302);
+    const refused = new URL(fake.browserLogin(denied.location));
+    assert.equal(refused.searchParams.get("error"), "access_denied");
+    const page = await send(`${refused.pathname}${refused.search}`, { redirect: "manual" });
+    assert.equal(page.status, 200);
+    assert.match(page.text, /팀원 서버 로그인은 하지 않았습니다/);
+    const left = await status();
+    assert.deepEqual([left.hubLogin.signedIn, left.serversLogin.signedIn], [true, false]);
+  } finally {
+    appPeople.servers = null;
+  }
+
+  // Someone the hub does not know never goes on, nor does a member of a team with no server yet.
+  fake.state.loginAs = "stranger@example.com";
+  try {
+    assert.equal((await hubLogin()).status, 200);
+  } finally {
+    fake.state.loginAs = "me@example.com";
+  }
+  teamServers = [];
+  assert.equal((await hubLogin()).status, 200);
+  assert.equal((await status()).serversLogin.signedIn, false);
 });

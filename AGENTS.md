@@ -786,6 +786,15 @@ do what on it.
   for ten minutes in `team-login.json` under the login's id, and `/api/team/status`
   lists it in `failed`, so the waiting page shows it at once with 다시 로그인;
   브라우저 다시 열기 starts a new login rather than opening the spent address again.
+  A member's hub login goes on to the servers' in the same browser window: back at
+  the callback, while this computer has no servers login, the hub lists the person
+  (`GET /api/team`) and the team has a server, the app starts the servers login to
+  the first server and sends the browser there instead of the closing page. Access
+  knows the person by then and asks only to allow it, so joining is one Google
+  login, and 팀 서버 로그인 is left to a computer that joined before 0.7.0, joined a
+  team with no server yet, or whose servers login ended. One turned down there
+  keeps the hub login, and its page says the app asks again when a teammate's
+  memory needs it.
 - **A login that ended.** A refresh Access refuses (400 or 401, as after the team
   changed its Google login) ends that login: `team-auth.json` keeps when, whose
   (the email) and where (the host) under `ended`, the status reports it as
@@ -918,8 +927,9 @@ everything the owner has to answer, or the asker has to press, goes to the bell.
   (`chat.folders`, `chat.sources`), and only then does the hub hear "approved",
   with the folders' and apps' names (in the request's `projects`, which predates
   folders: ChatGPT 기록 beside ~/dev/app). The asker's row then says 열림, and while
-  their computer has no servers login, the row and their bell offer 팀 서버 로그인:
-  one Google login through Access for every server of the team. From then on their
+  their computer has no servers login (joining makes one; see "The app's login"),
+  the 팀 page, once above the list, and their bell offer 팀 서버 로그인: one Google
+  login through Access for every server of the team. From then on their
   Claude Code and Codex read it through the plugin's `team-memory` server. The gate
   passes such a person's `/mcp` to the MCP bridge with `x-honcho-scope-mode:
   folders`, the opened folders in `x-honcho-allowed-folders` and the opened apps in
@@ -1112,7 +1122,7 @@ The plugin's second MCP server, `team-memory` (`scripts/team-mcp-server.mjs`, be
 - `member` lists the teammates whose memory can be read: each one's name, email and server, and what they opened (folders, ChatGPT 기록), 꺼 둠, or why it cannot be read yet. The people and servers come from the hub (`GET https://<hub>/api/team`, kept a minute), and what each opened from that server's gate (`/team-memory/whoami`). A person goes by the nickname an admin gave them (관리자 → 이름 바꾸기), else their peer; a company server by its label. The user's own servers are left out.
 - `list_conversations`, `search_messages`, `read_conversation` and `search_conclusions` name the teammate in `member` (their nickname, peer, email or its start, or the server's host or label; a name that fits two says both, and the user's own says to use the `honcho` tools) and go to that teammate's server as the bridge's tools of the same names (`https://<host>/mcp`, streamable HTTP, one MCP session per server, made again once when the server has forgotten it). The bridge there holds each call to the folders opened (see "Folders"). Every call carries `question`, the user's own words, which the teammate reads in 조회 기록. Times go out and come back in this computer's time zone, where a bare date is the whole local day.
 
-Every request goes with this computer's servers login (`teamFetch`), the one 팀 서버 로그인 makes on the 팀 page or in the bell: a Google login through Access that reaches every server of the team. Without it each tool says to open the app and press 팀 서버 로그인, and a refusal at a teammate's gate is said with that teammate's name. No agent logs in to anything itself.
+Every request goes with this computer's servers login (`teamFetch`): a Google login through Access that reaches every server of the team, made right after the hub login when this computer joined, or by 팀 서버 로그인 on the 팀 page or in the bell when it has none. Without it each tool says to open the app and press 팀 서버 로그인, and a refusal at a teammate's gate is said with that teammate's name. No agent logs in to anything itself.
 
 Up to 0.6.8 each teammate's server was an entry of its own in Claude Code and Codex, `team-<name>`, with Codex's approval of `chat` beside it. `setup apply`, the app as it starts and `teammates drop-entries` take out the ones this app made: a `team-*` entry whose address is exactly `https://<host>/mcp` for a server this computer knows (the invite's team list in `runtime/share.json`, the owner's `team-access.json`, its own shared server) or for a host under the team hub's zone. Claude Code's goes with `claude mcp remove <entry> --scope user`, Codex's with `codex mcp remove <entry>`, and then its `tools.chat` table when that holds nothing but the approval (Codex reads no config at all with that table and no entry). Any other `team-*` entry is the user's and stays, and a client that is not installed is left alone. `setup apply` reports it as `teamEntries` only when something went or could not go.
 

@@ -15,7 +15,9 @@
 //             the team, so it can name the email it saw to someone who is not
 //   servers   every server of the team, one application with one destination per
 //             server, so one login reaches all of them
-// Which login a request needs follows from its host: the hub's, or any other.
+// Which login a request needs follows from its host: the hub's, or any other. A
+// member's hub login goes straight on to the servers' in the same browser window
+// (team-app.mjs), so a person logs in once.
 //
 // A server also tells this computer's requests from the owner's other computers:
 // each computer registers once with a server's gate (POST /team-memory/devices) and
@@ -249,9 +251,10 @@ export function accessLogouts(host, issuer) {
  * to open, the login's `id` (not its state, which stays secret) for the page to ask
  * about it, and where to sign out of Access. The state and the PKCE verifier wait in
  * team-login.json. Every start is a new state: one that something came back for is
- * spent, so opening its address again never works.
+ * spent, so opening its address again never works. `after: "hub"` marks the servers
+ * login that goes on from the hub's in the same window, so its failure is told apart.
  */
-export async function startLogin({ host, kind, redirectUri, paths, fetchImpl = globalThis.fetch, now = Date.now() }) {
+export async function startLogin({ host, kind, redirectUri, paths, fetchImpl = globalThis.fetch, now = Date.now(), after = null }) {
   const name = teamHost(host);
   if (!name) throw new TeamLoginError("login_failed", "The address to log in to is not a host name");
   if (!LOGIN_KINDS.includes(kind)) throw new TeamLoginError("login_failed", `Unknown login: ${kind}`);
@@ -282,6 +285,7 @@ export async function startLogin({ host, kind, redirectUri, paths, fetchImpl = g
     issuer: meta.issuer,
     tokenEndpoint: meta.tokenEndpoint,
     revocationEndpoint: meta.revocationEndpoint,
+    ...(after ? { after } : {}),
     createdAt: now,
   };
   await writeLogins(paths, { pending, failed });
@@ -344,6 +348,7 @@ export async function finishLogin({ state, code, error, errorDescription, paths,
       at: now,
     });
     await writeLogins(paths, { pending: latest.pending, failed: latest.failed.slice(-10) });
+    if (started.after && problem && typeof problem === "object") problem.after = started.after;
     throw problem;
   }
 }
@@ -382,7 +387,7 @@ async function exchangeCode(started, { code, error, errorDescription, paths, fet
       },
     },
   }));
-  return { ok: true, kind: started.kind, host: started.host };
+  return { ok: true, kind: started.kind, host: started.host, redirectUri: started.redirectUri };
 }
 
 /**
@@ -447,15 +452,16 @@ function isAccessChallenge(response) {
 }
 
 /**
- * fetch to a host of the team with this computer's login, and its device key for
- * that host when it has one (unless `device: false`). A token Access turns down is
- * refreshed once and the request sent again.
+ * fetch to a host of the team with this computer's login (the one `login` names, else
+ * the one its host needs), and its device key for that host when it has one (unless
+ * `device: false`). A token Access turns down is refreshed once and the request sent
+ * again.
  */
-export async function teamFetch(url, init = {}, { paths, fetchImpl = globalThis.fetch, device = true, now } = {}) {
+export async function teamFetch(url, init = {}, { paths, fetchImpl = globalThis.fetch, device = true, now, login = null } = {}) {
   const target = new URL(url);
   if (target.protocol !== "https:") throw new TeamLoginError("login_failed", "A team host is only reached over https");
   const auth = await readTeamAuth(paths);
-  const kind = loginKindFor(auth, target.hostname);
+  const kind = login || loginKindFor(auth, target.hostname);
   const send = async (force) => {
     const token = await accessToken({ kind, paths, fetchImpl, force, ...(now ? { now } : {}) }).catch((error) => {
       if (error instanceof TeamLoginError && !error.host) error.host = target.hostname;
@@ -480,12 +486,12 @@ export async function teamFetch(url, init = {}, { paths, fetchImpl = globalThis.
 }
 
 /** teamFetch for JSON: the body, or an error naming the status and the server's own words. */
-export async function teamJson(url, { method = "GET", body, paths, fetchImpl, device = true } = {}) {
+export async function teamJson(url, { method = "GET", body, paths, fetchImpl, device = true, login = null } = {}) {
   const response = await teamFetch(url, {
     method,
     headers: { accept: "application/json", ...(body !== undefined ? { "content-type": "application/json" } : {}) },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  }, { paths, fetchImpl, device });
+  }, { paths, fetchImpl, device, login });
   const text = await response.text().catch(() => "");
   let value = null;
   try { value = text ? JSON.parse(text) : null; } catch {}

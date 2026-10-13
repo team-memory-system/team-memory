@@ -13,7 +13,7 @@
 import { loadConfig } from "./config.mjs";
 import { folderList, gateDevices, gateGrants, gateStatePaths, grantChat, grantCollect, revokeDevice, revokePerson, setChatOff, sourceList } from "./gate-access.mjs";
 import { serverFolders } from "./server-folders.mjs";
-import { CALLBACK_PATH, finishLogin, registerDevice, serverWhoami, setTeam, signOut, startLogin, teamAuthPaths, teamHost, teamLoginStatus } from "./team-auth.mjs";
+import { CALLBACK_PATH, finishLogin, registerDevice, serverWhoami, setTeam, signOut, startLogin, teamAuthPaths, teamHost, teamJson, teamLoginStatus } from "./team-auth.mjs";
 import { computerName, hubCall, madeTeam, teamWhoami } from "./team-hub.mjs";
 
 /** The routes that only read, so a GET may ask them. */
@@ -316,16 +316,33 @@ const ROUTES = {
 /**
  * The page the browser shows when the login comes back here. It closes itself either
  * way, since the app says what happened; a failure stays a little longer, with why.
+ * `skipped`: the hub login went through and the servers' that followed it did not,
+ * which the app asks for again only when a teammate's memory needs it.
  */
-function loginPage(ok, message) {
+function loginPage(ok, message, { skipped = false } = {}) {
   const escape = (text) => String(text).replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]);
-  const title = ok ? "로그인됐습니다" : "로그인하지 못했습니다";
-  const text = ok ? "이 창을 닫고 팀 메모리 앱으로 돌아가세요." : "이 창을 닫고 팀 메모리 앱에서 다시 로그인을 누르세요.";
+  const title = ok || skipped ? "로그인됐습니다" : "로그인하지 못했습니다";
+  const text = skipped
+    ? "팀원 서버 로그인은 하지 않았습니다. 팀원 기억을 읽을 때 앱이 다시 묻습니다."
+    : ok ? "이 창을 닫고 팀 메모리 앱으로 돌아가세요." : "이 창을 닫고 팀 메모리 앱에서 다시 로그인을 누르세요.";
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
 <style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#faf8f4;color:#1d1c19;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
 main{max-width:420px;padding:28px 32px;border:1px solid #e3dfd6;border-radius:14px;background:#fff}h1{margin:0 0 8px;font-size:20px}p{margin:0;color:#57534b;line-height:1.6}p.why{margin-top:10px;color:#8a857a;font-size:13px}</style></head>
-<body><main><h1>${title}</h1><p>${text}</p>${ok || !message ? "" : `<p class="why">${escape(message)}</p>`}</main>
+<body><main><h1>${title}</h1><p>${text}</p>${ok || skipped || !message ? "" : `<p class="why">${escape(message)}</p>`}</main>
 <script>setTimeout(() => window.close(), ${ok ? 1500 : 4000})</script></body></html>`;
+}
+
+/**
+ * After a member's hub login, the servers' at once, in the same browser window:
+ * Access knows them by now and only asks to allow it, so a memory a teammate opens
+ * later needs no 팀 서버 로그인. Null when this computer has that login, the hub says
+ * this is no member, or the team has no server yet.
+ */
+async function serversLoginAfterHub({ host: hub, redirectUri }, paths) {
+  if ((await teamLoginStatus({ paths })).serversLogin.signedIn) return null;
+  const directory = await teamJson(`https://${hub}/api/team`, { paths, device: false, login: "hub" });
+  const server = teamHost(list(directory?.servers)[0]?.host);
+  return server ? startLogin({ host: server, kind: "servers", redirectUri, paths, after: "hub" }) : null;
 }
 
 /** GET /oauth/callback: finishes the login this app started (an unknown state does nothing). */
@@ -333,8 +350,10 @@ export async function handleLoginCallback(url, res) {
   const { paths } = await context();
   let ok = false;
   let message = "";
+  let skipped = false;
+  let next = null;
   try {
-    await finishLogin({
+    const finished = await finishLogin({
       state: url.searchParams.get("state"),
       code: url.searchParams.get("code"),
       error: url.searchParams.get("error"),
@@ -342,11 +361,18 @@ export async function handleLoginCallback(url, res) {
       paths,
     });
     ok = true;
+    if (finished.kind === "hub") next = await serversLoginAfterHub(finished, paths).catch(() => null);
   } catch (error) {
     message = String(error?.message || error);
+    skipped = error?.after === "hub";
   }
-  const html = loginPage(ok, message);
-  res.writeHead(ok ? 200 : 400, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+  if (next) {
+    res.writeHead(302, { location: next.url, "cache-control": "no-store" });
+    res.end();
+    return;
+  }
+  const html = loginPage(ok, message, { skipped });
+  res.writeHead(ok || skipped ? 200 : 400, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
   res.end(html);
 }
 

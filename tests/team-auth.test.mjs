@@ -96,7 +96,7 @@ test("a browser login registers the app once, binds the code with PKCE and keeps
 
   const back = new URL(fake.browserLogin(started.url));
   const done = await finishLogin({ state: back.searchParams.get("state"), code: back.searchParams.get("code"), paths, fetchImpl: fake.fetch });
-  assert.deepEqual(done, { ok: true, kind: "hub", host: HUB });
+  assert.deepEqual(done, { ok: true, kind: "hub", host: HUB, redirectUri: REDIRECT });
   const auth = await readTeamAuth(paths);
   assert.match(auth.logins.hub.accessToken, /^oauth:/);
   assert.ok(auth.logins.hub.refreshToken);
