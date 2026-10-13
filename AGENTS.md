@@ -419,6 +419,24 @@ codex plugin marketplace upgrade
 codex plugin add team-memory@team-memory
 ```
 
+A computer that has the plugin under its old name (0.6.6 and before) installs
+`team-memory` and then removes the old one. The memory, `config.json`, the server
+and the login jobs stay where they are, since none of them lives in the plugin folder:
+
+```sh
+claude plugin marketplace add team-memory-system/team-memory
+claude plugin install team-memory@team-memory --scope user
+claude plugin uninstall honcho-agent-bridge@honcho-agent-bridge
+claude plugin marketplace remove honcho-agent-bridge
+
+codex plugin remove honcho-agent-bridge@honcho-agent-bridge
+codex plugin marketplace remove honcho-agent-bridge
+```
+
+Then `setup apply` from the new plugin folder puts `team-memory` into Codex. The
+app serves its pages from the plugin folder it was started from, so stop the one
+answering at 4180 and start it again with `ui open` from the new folder.
+
 For a local checkout, pass its absolute directory instead of the repository name. Start a new Codex session or reload Claude plugins after installation. Then invoke `$setup-memory` in Codex or `/team-memory setup` in Claude Code.
 
 ## Setup
