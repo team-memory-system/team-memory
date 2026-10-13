@@ -61,11 +61,16 @@ export function teamStatus() {
   return get("/api/team/status");
 }
 
-/** A blank tab opened in the click that asked, for the login to go to (a later one is blocked). */
+/**
+ * A blank tab opened in the click that asked, for the login to go to (a later one is
+ * blocked). Whoever opened it closes it when the login stops without getting there.
+ */
 export function loginTab(message) {
   const tab = window.open("", "_blank");
   try {
     tab?.document.write(`<!doctype html><meta charset="utf-8"><title>팀 메모리</title><p style="font:15px system-ui,sans-serif;color:#57534b;margin:40px">${message}</p>`);
+    // Left open, the browser shows the tab as still loading.
+    tab?.document.close();
   } catch {}
   return tab;
 }
@@ -195,7 +200,12 @@ function reloginButton({ kind, host, onDone }) {
   return button("다시 로그인", { kind: "primary small", onClick: (event) => {
     const tab = loginTab("Google 로그인으로 넘어가는 중입니다…");
     busy(event.currentTarget, async () => {
-      await relogin({ kind, host, tab });
+      try {
+        await relogin({ kind, host, tab });
+      } catch (error) {
+        tab?.close();
+        throw error;
+      }
       await loadContext();
       refreshBell();
       await onDone?.();

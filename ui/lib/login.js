@@ -51,6 +51,8 @@ export function gatewayLogin({ backend, accountId = null, prompt: given = null, 
   let timer = null;
   let added = false;
   let settled = false;
+  // Polls that found the CLI exited 0 and the account still not logged in.
+  let endedPolls = 0;
   let finish;
   const done = new Promise((resolve) => { finish = resolve; });
   const say = (message, bad = false) => {
@@ -64,6 +66,7 @@ export function gatewayLogin({ backend, accountId = null, prompt: given = null, 
     clearInterval(timer);
     timer = null;
     turning.style.visibility = "hidden";
+    cancel.hidden = true;
     if (!result && added) {
       const id = accountId;
       added = false;
@@ -131,7 +134,14 @@ export function gatewayLogin({ backend, accountId = null, prompt: given = null, 
         stop(true);
         return;
       }
-      if (account?.pendingLogin) show(loginPrompt(account.pendingLogin));
+      const prompt = loginPrompt(account?.pendingLogin);
+      if (prompt) show(prompt);
+      // The CLI exited without logging in (a wrong account, say): the login is over, and
+      // waiting on would only look stuck. One that exited 0 gets one more look, in case
+      // its login has not shown up yet.
+      if (loginEnded(prompt) && (prompt.exitCode !== 0 || ++endedPolls > 1)) {
+        fail(`로그인이 되지 않았습니다${prompt.message ? ` (${String(prompt.message).trim()})` : ""}.`, "로그인을 다시 누르세요.");
+      }
     } catch {}
   }
 

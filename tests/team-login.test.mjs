@@ -169,8 +169,9 @@ test("a login that ended is found in the status, said plainly, and offered again
   assert.match(await read("app.js"), /watchRequests\(\);\n\s*watchTeamLogin\(/);
   const lib = await read("lib/team.js");
   assert.match(lib, /bellSource\(async \(\) => \{[\s\S]*?loginsToRedo\(status, error\)[\s\S]*?end: reloginButton\(\{ \.\.\.item, onDone \}\)/);
-  // 다시 로그인 runs the same browser login for the login that ended, then the screen again.
-  assert.match(lib, /await relogin\(\{ kind, host, tab \}\);\n\s*await loadContext\(\);\n\s*refreshBell\(\);\n\s*await onDone\?\.\(\);/);
+  // 다시 로그인 runs the same browser login for the login that ended, then the screen
+  // again; one that fails closes the tab it opened, so nothing is left looking busy.
+  assert.match(lib, /await relogin\(\{ kind, host, tab \}\);\n\s*\} catch \(error\) \{\n\s*tab\?\.close\(\);\n\s*throw error;\n\s*\}\n\s*await loadContext\(\);\n\s*refreshBell\(\);\n\s*await onDone\?\.\(\);/);
 });
 
 test("다시 로그인 logs in to the login that ended and, for the hub, asks who this is again", async () => {

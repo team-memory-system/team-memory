@@ -294,6 +294,9 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
       login.tab = null;
       await admit();
     } catch (error) {
+      // A tab still at 넘어가는 중 would look like a login going on.
+      login.tab?.close();
+      login.tab = null;
       if (error?.name === "AbortError") return;
       login.phase = "error";
       login.error = error?.message || String(error);

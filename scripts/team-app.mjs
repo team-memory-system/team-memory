@@ -306,15 +306,19 @@ const ROUTES = {
   },
 };
 
-/** The page the browser shows when the login comes back here. */
+/**
+ * The page the browser shows when the login comes back here. It closes itself either
+ * way, since the app says what happened; a failure stays a little longer, with why.
+ */
 function loginPage(ok, message) {
+  const escape = (text) => String(text).replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]);
   const title = ok ? "로그인됐습니다" : "로그인하지 못했습니다";
-  const text = ok ? "이 창을 닫고 팀 메모리 앱으로 돌아가세요." : message;
+  const text = ok ? "이 창을 닫고 팀 메모리 앱으로 돌아가세요." : "이 창을 닫고 팀 메모리 앱에서 다시 로그인을 누르세요.";
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
 <style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#faf8f4;color:#1d1c19;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
-main{max-width:420px;padding:28px 32px;border:1px solid #e3dfd6;border-radius:14px;background:#fff}h1{margin:0 0 8px;font-size:20px}p{margin:0;color:#57534b;line-height:1.6}</style></head>
-<body><main><h1>${title}</h1><p>${text.replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c])}</p></main>
-${ok ? "<script>setTimeout(() => window.close(), 1500)</script>" : ""}</body></html>`;
+main{max-width:420px;padding:28px 32px;border:1px solid #e3dfd6;border-radius:14px;background:#fff}h1{margin:0 0 8px;font-size:20px}p{margin:0;color:#57534b;line-height:1.6}p.why{margin-top:10px;color:#8a857a;font-size:13px}</style></head>
+<body><main><h1>${title}</h1><p>${text}</p>${ok || !message ? "" : `<p class="why">${escape(message)}</p>`}</main>
+<script>setTimeout(() => window.close(), ${ok ? 1500 : 4000})</script></body></html>`;
 }
 
 /** GET /oauth/callback: finishes the login this app started (an unknown state does nothing). */
