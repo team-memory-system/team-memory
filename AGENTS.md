@@ -970,6 +970,12 @@ everything the owner has to answer, or the asker has to press, goes to the bell.
   둔 동안 물음. 수정's window keeps the folders and apps already open to that
   person, even ones the server now has no conversations in. A grant made before
   0.6.4, of projects, opens nothing until the owner opens folders again.
+  A teammate the hub has as approved whose grant this server lacks (the team's
+  address moved here from another computer, whose access.json stayed behind) shows
+  there with 열린 폴더 없음 and 폴더 고르기: its window ticks what the approval
+  opened as the hub named it (`projects`, `grantFromHubNames` in
+  `ui/lib/folder-grants.js`: ~ on each computer's home, a cut-short name left out,
+  each folder with the ones inside it), and 적용 writes the grant.
 - **Collecting into the company server.** 함께 쌓을 서버 → 회사 in the server step,
   with the folders in the project step's 회사 서버 column, sends a collect request and
   keeps that server off (`target add --team`). Once the owner approves, the asker's

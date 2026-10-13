@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { appRowsOf, folderKey, folderOpens, folderRowsOf, grantFromTicked, grantedPaths, openedText, rowPaths } from "../ui/lib/folder-grants.js";
+import { appRowsOf, folderKey, folderOpens, folderRowsOf, grantFromHubNames, grantFromTicked, grantedPaths, openedText, rowPaths } from "../ui/lib/folder-grants.js";
 import { folderTree } from "../ui/lib/folder-tree.js";
 import { josa } from "../ui/lib/format.js";
 
@@ -134,4 +134,23 @@ test("a name takes the particle its last sound does", () => {
     ["철수를", "민준을", "naddle을", "chenjing을", "luna를", "team2를", "team3을"]);
   assert.equal(josa("철수", "이/가"), "철수가");
   assert.equal(josa("민준", "은/는"), "민준은");
+});
+
+test("what an approval opened, as the hub named it, ticks again on a server that never had it", () => {
+  const rows = folderRowsOf(LISTED);
+  const { folders, sources } = grantFromHubNames(["~/dev/honcho", "/tmp/x", "ChatGPT 기록", "…/cut/short"], rows);
+  assert.deepEqual(sources, ["chatgpt"]);
+  // ~ is each computer's home a row shows, written with that computer's separator.
+  assert.deepEqual(folders, [
+    { path: "/Users/me/dev/honcho", subfolders: true },
+    { path: "C:\\Users\\me\\dev\\honcho", subfolders: true },
+    { path: "/tmp/x", subfolders: true },
+  ]);
+  assert.deepEqual([...grantedPaths(rows, folders)].sort(), ["/Users/me/dev/honcho", "/tmp/x"]);
+
+  // The whole home opens what is under it, and nothing named opens nothing.
+  const home = grantFromHubNames(["~"], rows).folders;
+  assert.deepEqual(home.map((entry) => entry.path), ["/Users/me", "C:\\Users\\me"]);
+  assert.ok(grantedPaths(rows, home).has("/Users/me/dev/wiki"));
+  assert.deepEqual(grantFromHubNames(null, rows), { folders: [], sources: [] });
 });

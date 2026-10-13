@@ -14,7 +14,7 @@
 import { post } from "./api.js";
 import { bellSource, refreshBell } from "./bell.js";
 import { h, clear } from "./dom.js";
-import { appRowsOf, folderRowsOf, grantFromTicked, grantedPaths } from "./folder-grants.js";
+import { appRowsOf, folderRowsOf, grantFromHubNames, grantFromTicked, grantedPaths } from "./folder-grants.js";
 import { folderTree, folderTreeTable, openAtFirst } from "./folder-tree.js";
 import { josa, number } from "./format.js";
 import { listItem, modal } from "./kit.js";
@@ -70,11 +70,13 @@ function personName(request, field = "from") {
 /**
  * The folders window: what a teammate's agents may search and read, folders and,
  * under 폴더 없는 대화, ChatGPT 기록 and other apps' conversations. Used to approve a request
- * (T2) and to change what is open later (T4). `who` is the teammate. Resolves
+ * (T2) and to change what is open later (T4). `who` is the teammate. `chosenNames`
+ * ticks what an approval opened as the hub named it, where this server has no grant
+ * to show (grantFromHubNames). Resolves
  * `{ folders: [{ path, subfolders }], sources: ["chatgpt"] }` (folder-grants.js), or
  * null when closed.
  */
-export function chooseFolders({ title, lead, who, chosen = [], chosenSources = [], confirm = "승인", extra = null }) {
+export function chooseFolders({ title, lead, who, chosen = [], chosenSources = [], chosenNames = [], confirm = "승인", extra = null }) {
   return new Promise((resolve) => {
     let entries = null;
     const win = modal({ title, big: true, small: true, onClose: (value) => resolve(value === "ok" ? entries : null) });
@@ -119,6 +121,9 @@ export function chooseFolders({ title, lead, who, chosen = [], chosenSources = [
     drawSummary();
     win.open();
     teamCall("/api/team/folders", {}).then((result) => {
+      const named = grantFromHubNames(chosenNames, folderRowsOf(result.folders || [], chosen));
+      chosen = [...chosen, ...named.folders];
+      chosenSources = [...new Set([...chosenSources, ...named.sources])];
       rows = folderRowsOf(result.folders || [], chosen);
       apps = appRowsOf(result.apps || [], chosenSources);
       tree = folderTree(rows);

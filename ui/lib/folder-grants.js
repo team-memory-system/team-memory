@@ -163,3 +163,42 @@ export function openedText(projects) {
   const apps = names.filter((name) => !FOLDER_NAME.test(name));
   return [folders ? `열린 폴더 ${number(folders)}개` : null, ...apps].filter(Boolean).join(" · ") || "열린 폴더 0개";
 }
+
+// The names the hub gives apps (team-app.mjs hubAppName), back to their sources.
+const APP_SOURCES = { "ChatGPT 기록": "chatgpt", "기타 대화": "unknown" };
+
+/**
+ * What an approval opened, from the names the hub kept of it (`projects`), as
+ * entries of `rows` (folderRowsOf): to open it again on a server that never had it,
+ * such as one the team's address moved to. A folder under ~ opens on each computer
+ * whose home a row shows; one the hub cut short (…) cannot be told and is left out.
+ * The hub keeps no "그 폴더만", so each opens with the folders inside it.
+ */
+export function grantFromHubNames(projects, rows) {
+  const names = Array.isArray(projects) ? projects.map(String) : [];
+  const folders = [];
+  const sources = [];
+  const seen = new Set();
+  const add = (folder) => {
+    const key = folderKey(folder);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    folders.push({ path: folder, subfolders: true });
+  };
+  const homes = (Array.isArray(rows) ? rows : []).flatMap((row) => rowPaths(row).map((folder) => [folder, shortPath(folder)]))
+    .filter(([, display]) => display.startsWith("~"));
+  for (const name of names) {
+    if (!FOLDER_NAME.test(name)) {
+      const source = APP_SOURCES[name] || /^(\S+) 기록$/.exec(name)?.[1];
+      if (source && !sources.includes(source)) sources.push(source);
+      continue;
+    }
+    if (name.startsWith("…")) continue;
+    if (!name.startsWith("~")) {
+      add(name);
+      continue;
+    }
+    for (const [folder, display] of homes) add(realPrefix(folder, display, name));
+  }
+  return { folders, sources };
+}

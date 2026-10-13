@@ -7,7 +7,9 @@
 // row offers while it is missing. 내 기억을 여는 팀원 is the other way: what this
 // computer's server opened to whom (its gate's access.json), with 수정 for the
 // folders and ChatGPT 기록 and for closing it again, a switch that turns a
-// teammate's access off for now and on again, and who collects into it. Who read my
+// teammate's access off for now and on again, and who collects into it. A teammate
+// the hub has as approved but this server opened nothing to (the team's address
+// moved here from another computer) gets 폴더 고르기, ticked as the hub named it. Who read my
 // memory is the 조회 기록 menu (audit.js). A team login that ended says so, with 다시
 // 로그인, instead of the screen.
 import { h, clear } from "../lib/dom.js";
@@ -122,7 +124,21 @@ export default {
       const people = new Map((directory.people || []).map((person) => [person.email, person]));
       const approved = new Map();
       for (const request of requests?.granted || []) approved.set(`${request.kind}:${request.from}`, request);
-      return (requests?.grants || []).flatMap((grant) => {
+      const opened = new Set((requests?.grants || []).filter((grant) => grant.chat).map((grant) => grant.email));
+      const unopened = [...approved.values()]
+        .filter((request) => request.kind === "chat" && !opened.has(request.from))
+        .map((request) => {
+          const person = people.get(request.from) || { email: request.from, peer: request.fromPeer, name: request.fromName };
+          return listItem({
+            title: nameOf(person),
+            tags: [" ", tag("기억 열람"), tag("열린 폴더 없음", "warn")],
+            sub: "승인했지만 이 서버에는 연 폴더가 없습니다. 폴더 고르기를 누르세요.",
+            end: button("폴더 고르기", { kind: "small", onClick: (event) => busy(event.currentTarget, async () => {
+              await openAgain(person, request);
+            }) }),
+          });
+        });
+      return [...unopened, ...(requests?.grants || []).flatMap((grant) => {
         const person = people.get(grant.email) || { email: grant.email, peer: grant.peer };
         const rows = [];
         if (grant.chat) {
@@ -165,7 +181,23 @@ export default {
           }));
         }
         return rows;
+      })];
+    }
+
+    /** 폴더 고르기: what the approval opened, as the hub named it, ticked to open on this server. */
+    async function openAgain(person, request) {
+      const name = nameOf(person);
+      const chosen = await chooseFolders({
+        title: `${name}에게 연 폴더`,
+        lead: `${name}의 에이전트가 찾아서 그대로 읽는 폴더입니다. 승인할 때 연 폴더를 골라 두었습니다.`,
+        who: name,
+        chosenNames: request.projects || [],
+        confirm: "적용",
       });
+      if (!chosen) return;
+      await teamCall("/api/team/grant", { email: request.from, peer: request.fromPeer || person.peer, ...chosen, request: request.id });
+      await draw();
+      toast(`${name}에게 내 기억을 열었습니다`, "ok");
     }
 
     /** 수정: the folders and ChatGPT 기록 open to a teammate, or 끊기 to close my memory to them. */
