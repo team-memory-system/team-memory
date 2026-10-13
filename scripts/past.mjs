@@ -1173,11 +1173,17 @@ async function appendLedger(paths, entries) {
   await fsp.appendFile(paths.ledger, entries.map((entry) => `${JSON.stringify(entry)}\n`).join(""), { mode: 0o600 });
 }
 
-function ledgerEntry(item, outcome, reason = null) {
+/** Which server a ledger entry was written against: its address and workspace. */
+function serverKey(server) {
+  return server ? `${server.url}#${server.workspace}` : null;
+}
+
+function ledgerEntry(item, outcome, reason = null, server = null) {
   return {
     k: item.key,
     o: outcome,
     ...(reason ? { r: reason } : {}),
+    ...(server ? { s: serverKey(server) } : {}),
     from: item.from,
     ...(item.lost?.length ? { lost: item.lost } : {}),
     start: item.start,
@@ -1238,9 +1244,10 @@ export async function pastPlan(config, options = {}) {
   for (const item of taken) {
     if (item.lost.length) counts.dupes += 1;
     const before = ledger.get(item.key);
-    // Put in by an earlier run, and nothing newer here since. One this server does not
-    // hold went to another server: the computer has since moved to this one.
-    const held = before?.o === "empty" || !index || index.sessions.has(item.session);
+    // Put in by an earlier run to this same server, and nothing newer here since. One
+    // written against another server, or before entries named theirs, is placed again:
+    // the computer may have moved, and the server asked may hold only part of it.
+    const held = before?.o === "empty" || !index || (before?.s === serverKey(server) && index.sessions.has(item.session));
     if (before && held && ["sent", "server", "empty"].includes(before.o) && !(item.last !== null && before.last !== undefined && item.last > (before.last ?? 0) + NEWER_SLACK_MS)) {
       counts.already += 1;
       continue;
@@ -1248,14 +1255,14 @@ export async function pastPlan(config, options = {}) {
     const place = placeOf(item, index);
     if (place === "server") {
       counts.onServer += 1;
-      recorded.push(ledgerEntry(item, "server"));
+      recorded.push(ledgerEntry(item, "server", null, server));
       continue;
     }
     if (place === "late") {
       counts.late += 1;
       if (skipLate) {
         counts.skippedLate += 1;
-        recorded.push(ledgerEntry(item, "late"));
+        recorded.push(ledgerEntry(item, "late", null, server));
         continue;
       }
     }
@@ -1583,7 +1590,7 @@ export async function pastRun(config, { retry = false } = {}) {
           await copy.cleanup().catch(() => {});
         }
       }
-      await appendLedger(paths, [{ ...ledgerEntry(item, outcome.o, outcome.r), ...(outcome.error ? { e: sanitizeUrlsInText(outcome.error).slice(0, 300) } : {}) }]);
+      await appendLedger(paths, [{ ...ledgerEntry(item, outcome.o, outcome.r, server), ...(outcome.error ? { e: sanitizeUrlsInText(outcome.error).slice(0, 300) } : {}) }]);
       run.done += 1;
       if (outcome.o === "sent" || outcome.o === "server") {
         run.sent += 1;

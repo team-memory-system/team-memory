@@ -541,6 +541,37 @@ test("conversations put in on one server go in again after the computer moves to
   assert.deepEqual(second.texts("claude-moved"), ["moved 1", "moved 2"]);
 });
 
+test("a server that holds an older part of a conversation the computer put in elsewhere gets the rest", async (t) => {
+  const first = await fakeHoncho();
+  t.after(() => first.server.close());
+  const second = await fakeHoncho();
+  t.after(() => second.server.close());
+  const install = await makeInstall(t, first);
+  const rows = [["user", "moved 1", "2025-05-01T10:00:00Z"], ["assistant", "moved 2", "2025-05-01T10:05:00Z"]];
+  await writeClaude(claudeFile(install, "moved"), { sessionId: "moved", cwd: install.team, turns: rows });
+  await scan(install);
+  assert.equal((await cli(["past", "plan"], install.env)).body.total, 1);
+  assert.equal((await cli(["past", "run"], install.env)).body.sent, 1);
+
+  // The second server got the first turn long ago, from a collector that kept no identity.
+  const [old] = first.sessions.get("claude-moved").messages;
+  second.sessions.set("claude-moved", {
+    id: "claude-moved",
+    metadata: {},
+    created_at: "2025-05-01T10:00:00Z",
+    messages: [{ id: 900, session_id: "claude-moved", peer_id: old.peer_id, content: "moved 1", metadata: {}, created_at: "2025-05-01T10:00:00Z" }],
+  });
+  const configPath = path.join(install.env.HONCHO_AGENT_BRIDGE_HOME, "config.json");
+  const config = JSON.parse(await fsp.readFile(configPath, "utf8"));
+  await fsp.writeFile(configPath, `${JSON.stringify({ ...config, honcho: { ...config.honcho, baseUrl: second.url } }, null, 2)}\n`);
+  const plan = (await cli(["past", "plan"], install.env)).body;
+  assert.equal(plan.already, 0);
+  assert.equal(plan.total, 1);
+  assert.equal((await cli(["past", "run"], install.env)).body.sent, 1);
+  assert.deepEqual(second.texts("claude-moved"), ["moved 1", "moved 2"]);
+  assert.equal((await cli(["past", "plan"], install.env)).body.already, 1, "now put in on this server");
+});
+
 test("new turns wait while the run goes and follow it, and none is sent twice", async (t) => {
   const honcho = await fakeHoncho();
   t.after(() => honcho.server.close());

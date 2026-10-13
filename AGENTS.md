@@ -564,6 +564,13 @@ How it goes:
   one conversation at a time through `collector.mjs --serve`, each outcome a line of
   `<dataDir>/past/ledger.jsonl`. When it ends, the held turns go, as a hook would send
   them. A hold no run took over lapses after 30 minutes.
+- **Moving to another server.** Each ledger line names the server it was written
+  against (`s`, address and workspace). A conversation counts as put in already only
+  when its line names the server asked now and that server holds it; any other one,
+  lines from before 0.7.3 included, is placed again, and one the server holds only
+  part of goes through the collector, which sends what it lacks. On 2026-10-13 the
+  Mac Studio held old copies of 320 of the company MacBook's 448 conversations,
+  sent there before the MacBook had a server of its own.
 - **Stopping and failing.** `past stop` (멈추기) ends the run after the conversation it
   is sending, and `past start` (이어서 쌓기) carries on from the ledger. Three network
   failures in a row stop the run with new turns still held, and it starts again by
