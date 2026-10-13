@@ -104,10 +104,31 @@ export function stepper(labels, at, { onPick } = {}) {
     const cls = `st${on ? " on" : done ? " done" : ""}`;
     const content = [h("span", { class: "n" }, done ? "✓" : String(index + 1)), h("span", { class: "lbl" }, label)];
     parts.push(onPick && !on
-      ? h("button", { type: "button", class: cls, onclick: () => onPick(index) }, content)
-      : h("span", { class: cls, "aria-current": on ? "step" : null }, content));
+      ? h("button", { type: "button", class: cls, title: label, "aria-label": label, onclick: () => onPick(index) }, content)
+      : h("span", { class: cls, title: label, "aria-current": on ? "step" : null }, content));
   });
-  return h("div", { class: "stepper" }, parts);
+  const root = h("div", { class: "stepper" }, parts);
+  fitSteps(root);
+  return root;
+}
+
+/**
+ * Steps wider than the window (nine of them, joining a team) keep their numbers and
+ * only the current one its name; the others show theirs on hover. Narrower still,
+ * they wrap. Measured again whenever the window's width changes.
+ */
+function fitSteps(root) {
+  if (typeof ResizeObserver !== "function") return;
+  let width = -1;
+  const observer = new ResizeObserver(([entry]) => {
+    if (!root.isConnected) { observer.disconnect(); return; }
+    if (entry.contentRect.width === width) return;
+    width = entry.contentRect.width;
+    root.classList.remove("tight", "wrap");
+    if (root.scrollWidth > root.clientWidth) root.classList.add("tight");
+    if (root.scrollWidth > root.clientWidth) root.classList.add("wrap");
+  });
+  observer.observe(root);
 }
 
 /**
