@@ -105,7 +105,7 @@ test("bundled MCP starts read-only, exposes all 31 tools when enabled, forwards 
   const rpc = rpcClient(child);
 
   const initialized = await rpc("initialize", { protocolVersion: "2025-11-25", capabilities: {} });
-  assert.equal(initialized.serverInfo.name, "Honcho Agent Bridge");
+  assert.equal(initialized.serverInfo.name, "Team Memory");
   const negotiated = await rpc("initialize", { protocolVersion: "2099-01-01", capabilities: {} });
   assert.equal(negotiated.protocolVersion, "2025-11-25");
   await assert.rejects(rpc("initialize", { capabilities: {} }), /protocolVersion/);

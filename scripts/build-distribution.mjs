@@ -398,10 +398,10 @@ export async function buildDistribution(args, {
   const packageJson = JSON.parse(await fsp.readFile(path.join(ROOT, "package.json"), "utf8"));
   const packageDirty = git(ROOT, ["status", "--porcelain"]);
   if (packageDirty && !args["allow-dirty"]) {
-    throw new Error("Honcho Agent Bridge source has uncommitted changes; commit them or pass --allow-dirty intentionally");
+    throw new Error("Team Memory source has uncommitted changes; commit them or pass --allow-dirty intentionally");
   }
-  const outputRoot = path.resolve(args.output || path.join(path.dirname(ROOT), "honcho-agent-bridge-releases"));
-  const bundleName = safeBundleName(args.name || `honcho-agent-bridge-${packageJson.version}`);
+  const outputRoot = path.resolve(args.output || path.join(path.dirname(ROOT), "team-memory-releases"));
+  const bundleName = safeBundleName(args.name || `team-memory-${packageJson.version}`);
   const bundle = path.join(outputRoot, bundleName);
   const archive = `${bundle}.tar.gz`;
   for (const required of ["selfhost-source.json", "scripts/prepare-source.mjs", "LICENSE", "local-dashboard/Dockerfile"]) {

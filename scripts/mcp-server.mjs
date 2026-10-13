@@ -13,7 +13,7 @@ import {
 import { WRITE_TOOLS } from "./mcp-tool-defaults.mjs";
 import { VERSION } from "./version.mjs";
 
-const SERVER_NAME = "Honcho Agent Bridge";
+const SERVER_NAME = "Team Memory";
 const SERVER_VERSION = VERSION;
 const DEFAULT_PROTOCOL_VERSION = "2025-11-25";
 const SUPPORTED_PROTOCOL_VERSIONS = new Set([
@@ -83,12 +83,12 @@ function boolParam(value) {
 async function runtimeContext() {
   const config = await loadConfig();
   if (!config) {
-    throw new Error("Honcho Agent Bridge is not configured. Run the setup-memory skill first.");
+    throw new Error("Team Memory is not configured. Run the setup-memory skill first.");
   }
   const baseUrl = String(config.honcho?.baseUrl || "http://127.0.0.1:8001").replace(/\/+$/, "");
   const workspaceId = String(config.honcho?.workspaceId || "memory");
   const userName = String(config.user?.peerId || "").trim();
-  if (!userName) throw new Error("Honcho Agent Bridge has no user peer ID. Run setup again.");
+  if (!userName) throw new Error("Team Memory has no user peer ID. Run setup again.");
   const assistantName = PROVIDER === "agent" ? "assistant" : `assistant_${PROVIDER}`;
   const token = String(config.honcho?.apiToken || process.env.HONCHO_API_BEARER_TOKEN || "").trim();
   // The memory server's own Access service token.
@@ -198,7 +198,7 @@ const workspaceProp = { workspace_id: { ...STRING, description: "Workspace ID; d
 const filterProp = { filters: { ...OBJECT, description: "Optional Honcho API filters." } };
 
 const TOOLS = [
-  tool("server_info", "Inspect this local Honcho Agent Bridge bridge and its upstream Honcho health.", {}, [], async (context) => {
+  tool("server_info", "Inspect this computer's Team Memory connection and its Honcho server's health.", {}, [], async (context) => {
     const disabled = await disabledToolNames(context.config);
     return {
       mcp_name: SERVER_NAME,

@@ -21,7 +21,8 @@ test("Codex, Claude, package, and marketplace metadata stay aligned", async () =
     json(".mcp.json"),
     json(".mcp.claude.json"),
   ]);
-  assert.equal(codex.name, "honcho-agent-bridge");
+  assert.equal(codex.name, "team-memory");
+  assert.equal(codex.interface.displayName, "Team Memory");
   assert.equal(claude.name, codex.name);
   assert.equal(pkg.name, codex.name);
   assert.equal(marketplace.name, codex.name);
@@ -35,8 +36,8 @@ test("Codex, Claude, package, and marketplace metadata stay aligned", async () =
   );
   assert.equal(codex.mcpServers, "./.mcp.json");
   assert.equal(claude.mcpServers, "./.mcp.claude.json");
-  assert.ok(codexMcp.mcpServers["honcho-agent-bridge"]);
-  assert.ok(claudeMcp.mcpServers["honcho-agent-bridge"]);
+  assert.ok(codexMcp.mcpServers["team-memory"]);
+  assert.ok(claudeMcp.mcpServers["team-memory"]);
 });
 
 test("the Claude Stop hook is outside the path Codex loads plugin hooks from", async () => {

@@ -7,8 +7,8 @@
 // that has it (Claude Code's for Codex, Codex's for Claude Code), else this
 // repository on GitHub. Each host's own CLI does the install, through the same
 // argument-checked runner `teammates connect` uses:
-//   codex  plugin marketplace add <source> [--ref <ref>]; codex plugin add honcho-agent-bridge@<marketplace>
-//   claude plugin marketplace add <source>[#<ref>];        claude plugin install honcho-agent-bridge@<marketplace> --scope user
+//   codex  plugin marketplace add <source> [--ref <ref>]; codex plugin add team-memory@<marketplace>
+//   claude plugin marketplace add <source>[#<ref>];        claude plugin install team-memory@<marketplace> --scope user
 // A marketplace the host already has is not added again: Claude Code would point
 // it at the new source, and Codex refuses a second source under the same name. A
 // clone Codex left behind with no table in config.toml makes Codex refuse the same
@@ -19,9 +19,9 @@ import path from "node:path";
 
 import { CLIENT_NAMES, clientFailure, findClient, runClient, safeClientArgument } from "./team-access.mjs";
 
-export const PLUGIN_NAME = "honcho-agent-bridge";
-export const DEFAULT_MARKETPLACE = "honcho-agent-bridge";
-export const DEFAULT_SOURCE = "team-memory-system/honcho-agent-bridge";
+export const PLUGIN_NAME = "team-memory";
+export const DEFAULT_MARKETPLACE = "team-memory";
+export const DEFAULT_SOURCE = "team-memory-system/team-memory";
 // A marketplace add clones from git; 60 s is not always enough for that.
 export const PLUGIN_INSTALL_TIMEOUT_MS = 180_000;
 // The Codex CLI the desktop app ships on macOS, for a computer with the app only.
@@ -134,7 +134,7 @@ function fromCodexRecord(table) {
 /**
  * Where to install this plugin into `host` from: {source, ref?, marketplace, from}.
  * The other host's record when it maps to an argument the CLI can take, else
- * team-memory-system/honcho-agent-bridge.
+ * team-memory-system/team-memory.
  */
 export async function pluginSource(host, { home }) {
   const record = host === "codex" ? await claudeMarketplaceRecord(home) : await codexMarketplaceRecord(home);

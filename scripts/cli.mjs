@@ -66,7 +66,7 @@ import {
   teammateUnshare,
 } from "./team-access.mjs";
 import { CHAT_ROLES, gatewayDirectory, gatewayOpen, THINKING_EFFORTS } from "./gateway.mjs";
-import { hostPluginPlan, installHostPlugins } from "./host-plugins.mjs";
+import { hostPluginPlan, installHostPlugins, PLUGIN_NAME } from "./host-plugins.mjs";
 import { getProvider } from "./providers/index.mjs";
 import {
   TARGET_ID,
@@ -90,6 +90,8 @@ import { transcriptFiles } from "./projects.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const MAIN_SCRIPT = path.join(SCRIPT_DIR, "main.mjs");
+// The plugin's first name stays in the marker: the hooks already written carry it,
+// and Codex asks to approve a Stop hook again once its command changes.
 const CURRENT_HOOK_MARKER = "--managed-by honcho-agent-bridge";
 const LEGACY_HOOK_MARKERS = ["codex-honcho-sync", "honcho-turn-gate"];
 
@@ -244,7 +246,7 @@ async function claudePluginStatus() {
   if (process.env.CLAUDE_PLUGIN_ROOT) return { installed: true, enabled: true, source: "plugin-root" };
   const document = await readJson(path.join(userHome(), ".claude", "plugins", "installed_plugins.json"), {});
   const names = Object.keys(document?.plugins || {}).filter(
-    (name) => name === "honcho-agent-bridge" || name.startsWith("honcho-agent-bridge@"),
+    (name) => name === PLUGIN_NAME || name.startsWith(`${PLUGIN_NAME}@`),
   );
   const settings = await readJson(path.join(userHome(), ".claude", "settings.json"), {});
   const enabledPlugins = settings?.enabledPlugins || {};
@@ -263,7 +265,7 @@ async function codexPluginStatus() {
   try {
     text = await fsp.readFile(configPath, "utf8");
   } catch {}
-  const header = text.match(/^\[plugins\."(honcho-agent-bridge(?:@[^"]+)?)"\]\s*$/m);
+  const header = text.match(new RegExp(`^\\[plugins\\."(${PLUGIN_NAME}(?:@[^"]+)?)"\\]\\s*$`, "m"));
   const remainder = header ? text.slice((header.index || 0) + header[0].length) : "";
   const nextSection = remainder.match(/^\[/m);
   const body = nextSection ? remainder.slice(0, nextSection.index) : remainder;
@@ -455,10 +457,10 @@ async function setupPlan(options = {}) {
   });
   for (const entry of plugins) {
     if (entry.state === "disabled") {
-      warnings.push(`${entry.agent} collection is enabled, but the Honcho Agent Bridge plugin was not detected as enabled in ${entry.agent}`);
+      warnings.push(`${entry.agent} collection is enabled, but the Team Memory plugin was not detected as enabled in ${entry.agent}`);
     }
     if (entry.state === "missing-cli") {
-      warnings.push(`${entry.agent} collection is enabled, but the Honcho Agent Bridge plugin is not installed in ${entry.agent} and the ${entry.agent} command was not found; install it by running ${entry.commands.join(", then ")}`);
+      warnings.push(`${entry.agent} collection is enabled, but the Team Memory plugin is not installed in ${entry.agent} and the ${entry.agent} command was not found; install it by running ${entry.commands.join(", then ")}`);
     }
   }
   // The address this plan writes, which is not always the one detect tried.
@@ -708,7 +710,7 @@ async function withSetupLock(appHome, fn) {
     staleMs: 600_000,
     reclaimDeadImmediately: true,
   });
-  if (!lock) throw new Error("Honcho Agent Bridge setup is already running");
+  if (!lock) throw new Error("Team Memory setup is already running");
   try {
     return await fn();
   } finally {
@@ -732,7 +734,7 @@ function setupNextSteps(agents, plugins = [], entries = []) {
       agent: item.agent,
       action: "install-plugin",
       commands,
-      message: `Install the Honcho Agent Bridge plugin in ${name} yourself: run the commands below in order.`,
+      message: `Install the Team Memory plugin in ${name} yourself: run the commands below in order.`,
     });
   }
   if (agents.codex) {
@@ -740,7 +742,7 @@ function setupNextSteps(agents, plugins = [], entries = []) {
       agent: "codex",
       action: "approve-hook",
       message: action("codex") === "installed"
-        ? "Setup installed the Honcho Agent Bridge plugin in Codex. Open a new Codex session; it asks to approve the new Stop hook (or open /hooks). Approve 'Syncing codex conversation to personal memory'; nothing is collected from Codex until then."
+        ? "Setup installed the Team Memory plugin in Codex. Open a new Codex session; it asks to approve the new Stop hook (or open /hooks). Approve 'Syncing codex conversation to personal memory'; nothing is collected from Codex until then."
         : "Codex asks to approve the new Stop hook when a session starts (or open /hooks). Approve 'Syncing codex conversation to personal memory'; nothing is collected from Codex until then.",
     });
   }
@@ -749,7 +751,7 @@ function setupNextSteps(agents, plugins = [], entries = []) {
       agent: "claude",
       action: "reload-plugins",
       message: action("claude") === "installed"
-        ? "Setup installed the Honcho Agent Bridge plugin in Claude Code. Open Claude Code anew, or run /reload-plugins in a session that is already open, to load its hook and MCP server."
+        ? "Setup installed the Team Memory plugin in Claude Code. Open Claude Code anew, or run /reload-plugins in a session that is already open, to load its hook and MCP server."
         : "Claude Code sessions that were already open need /reload-plugins (or a restart) to load the plugin's hook and MCP server; new sessions load them by themselves. Turns from before the reload are sent with the next one.",
     });
   }
@@ -936,7 +938,7 @@ async function probeMcpServer(serverPath, timeoutMs = 2500, env = process.env) {
       jsonrpc: "2.0",
       id: 1,
       method: "initialize",
-      params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "honcho-agent-bridge-doctor", version: VERSION } },
+      params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "team-memory-doctor", version: VERSION } },
     })}\n`);
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} })}\n`);
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`);
@@ -993,8 +995,8 @@ async function doctor() {
           ok: plugin.installed && plugin.enabled,
           mode: "bundled-plugin",
           note: plugin.installed && plugin.enabled
-            ? "The hook is loaded by the installed Honcho Agent Bridge Claude plugin."
-            : "Install or enable Honcho Agent Bridge in Claude Code so its bundled hook can load.",
+            ? "The hook is loaded by the installed Team Memory Claude plugin."
+            : "Install or enable Team Memory in Claude Code so its bundled hook can load.",
         });
       } else {
         const target = hostConfigPaths()[provider];

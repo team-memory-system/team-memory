@@ -1,5 +1,5 @@
 {
-  "name": "honcho-agent-bridge",
+  "name": "team-memory",
   "version": "0.6.6",
   "description": "Install and operate a self-hosted personal memory for Codex and Claude Code.",
   "author": {
@@ -10,7 +10,7 @@
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
-    "displayName": "Honcho Agent Bridge",
+    "displayName": "Team Memory",
     "shortDescription": "Self-hosted memory for coding agents",
     "longDescription": "Set up and operate one local personal memory shared by Codex and Claude Code, including an optional bundled Honcho Docker server.",
     "developerName": "chenjing",

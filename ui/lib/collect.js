@@ -552,8 +552,8 @@ export function setupBody(draft, context, localUrl = context?.localServer?.apiUr
 // ── What setup said, in the words the screens use ────────
 
 const WARNINGS = [
-  [/(\w+) collection is enabled, but the Honcho Agent Bridge plugin is not installed in \w+ and the \w+ command was not found; install it by running (.+), then (.+)$/, (m) => `${m[1] === "codex" ? "Codex" : "Claude Code"}: 터미널에서 차례로 실행하세요. ${m[2]} → ${m[3]}`],
-  [/(\w+) collection is enabled, but the Honcho Agent Bridge plugin was not detected as enabled in (\w+)/, (m) => `${m[2] === "codex" ? "Codex" : "Claude Code"}에 팀 메모리 플러그인이 켜져 있지 않습니다. 플러그인을 켜야 대화가 모입니다.`],
+  [/(\w+) collection is enabled, but the Team Memory plugin is not installed in \w+ and the \w+ command was not found; install it by running (.+), then (.+)$/, (m) => `${m[1] === "codex" ? "Codex" : "Claude Code"}: 터미널에서 차례로 실행하세요. ${m[2]} → ${m[3]}`],
+  [/(\w+) collection is enabled, but the Team Memory plugin was not detected as enabled in (\w+)/, (m) => `${m[2] === "codex" ? "Codex" : "Claude Code"}에 팀 메모리 플러그인이 켜져 있지 않습니다. 플러그인을 켜야 대화가 모입니다.`],
   [/A Honcho server answers at (\S+), but it is not the server this plugin installed/, (m) => `${m[1]}에 기억 서버가 있지만 이 앱이 설치한 서버는 아닙니다. 내 서버가 맞는지 확인하세요.`],
   [/requires an API token/, () => "이 서버는 token이 필요합니다. 서버 token 칸을 채우세요."],
   [/is behind Cloudflare Access and refused this computer/, () => "Cloudflare Access가 이 컴퓨터를 막았습니다. Access 서비스 토큰을 열고 그 서버의 서비스 토큰 ID와 비밀을 넣으세요."],
