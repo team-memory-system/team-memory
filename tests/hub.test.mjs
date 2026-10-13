@@ -414,9 +414,9 @@ test("the team lists its people and servers to members only", async (t) => {
   assert.deepEqual(listed.json, {
     team: { name: "예시 팀", host: HUB_HOST, zone: ZONE },
     people: [
-      { email: ADMIN, peer: "chief", admin: true, joined: false, servers: ["memory.example.com"] },
-      { email: "bob@example.com", peer: "bob", admin: false, joined: true, servers: ["memory-bob.example.com"] },
-      { email: "carol@example.com", peer: null, admin: false, joined: false, servers: [] },
+      { email: ADMIN, peer: "chief", nickname: null, admin: true, joined: false, servers: ["memory.example.com"] },
+      { email: "bob@example.com", peer: "bob", nickname: null, admin: false, joined: true, servers: ["memory-bob.example.com"] },
+      { email: "carol@example.com", peer: null, nickname: null, admin: false, joined: false, servers: [] },
     ],
     servers: [
       { host: "memory-bob.example.com", label: "bob", owner: "bob@example.com", ownerPeer: "bob", workspace: "bobs", company: false, createdOn: null },
@@ -846,7 +846,7 @@ test("admins add people to the people policy and the roster; others may not", as
   const added = await f.as(ADMIN).post("/api/admin/people", { email: " Mate@Example.com " });
   assert.equal(added.status, 201);
   assert.deepEqual({ ...added.json.person, addedAt: "a" }, {
-    email: "mate@example.com", peer: null, admin: false, joined: false, servers: [], addedAt: "a", addedBy: ADMIN, lastLoginAt: null,
+    email: "mate@example.com", peer: null, nickname: null, admin: false, joined: false, servers: [], addedAt: "a", addedBy: ADMIN, lastLoginAt: null,
   });
   assert.deepEqual(f.people(), [ADMIN, "bob@example.com", "mate@example.com"]);
 
@@ -865,7 +865,7 @@ test("admins add people to the people policy and the roster; others may not", as
     ["mate@example.com", false, true, ADMIN],
   ]);
   for (const person of listed.json.people) {
-    assert.deepEqual(Object.keys(person), ["email", "peer", "admin", "joined", "servers", "addedAt", "addedBy", "lastLoginAt"]);
+    assert.deepEqual(Object.keys(person), ["email", "peer", "nickname", "admin", "joined", "servers", "addedAt", "addedBy", "lastLoginAt"]);
   }
   assert.ok(listed.json.people[2].lastLoginAt);
 });
@@ -931,7 +931,7 @@ test("an admin makes a teammate an admin or takes it away from another admin, ne
   const made = await f.as(ADMIN).put("/api/admin/people/Bob%40Example.com", { admin: true });
   assert.equal(made.status, 200);
   assert.deepEqual([made.json.person.email, made.json.person.admin, made.json.person.peer, made.json.person.addedBy], ["bob@example.com", true, "bob", ADMIN]);
-  assert.deepEqual(Object.keys(made.json.person), ["email", "peer", "admin", "joined", "servers", "addedAt", "addedBy", "lastLoginAt"]);
+  assert.deepEqual(Object.keys(made.json.person), ["email", "peer", "nickname", "admin", "joined", "servers", "addedAt", "addedBy", "lastLoginAt"]);
   assert.deepEqual(admins(), [ADMIN, "bob@example.com"]);
   assert.equal((await f.as("bob@example.com").get("/api/me")).json.admin, true);
   assert.equal((await f.as("bob@example.com").get("/api/admin/people")).status, 200);
@@ -1008,6 +1008,38 @@ test("an admin gives a member, themselves too, another peer name that nobody els
   assert.deepEqual([own.status, own.json.error], [409, "own_email"]);
   assert.deepEqual([f.data.get(`person:${ADMIN}`).peer, f.data.get(`person:${ADMIN}`).admin], ["user_chen", true]);
   assert.equal(f.cf.writes().length, writes, "Cloudflare is not asked: the server address keeps its name");
+});
+
+test("an admin names a member, themselves too, with a nickname nobody else has, which the team list shows", async (t) => {
+  const f = await hubFixture(t);
+  await f.addPeople({ "bob@example.com": "bob", "carol@example.com": "carol" });
+  const name = async (as, who, body) => {
+    const answer = await f.as(as).put(`/api/admin/people/${encodeURIComponent(who)}`, body);
+    return [answer.status, answer.status === 200 ? answer.json.person.nickname : answer.json.error];
+  };
+  assert.deepEqual(await name(ADMIN, "bob@example.com", { nickname: "  김밥  " }), [200, "김밥"]);
+  assert.deepEqual(await name(ADMIN, ADMIN, { nickname: "첸" }), [200, "첸"]);
+  const team = (await f.as("carol@example.com").get("/api/team")).json;
+  assert.deepEqual(team.people.map((person) => [person.email, person.nickname]).sort(), [[ADMIN, "첸"], ["bob@example.com", "김밥"], ["carol@example.com", null]]);
+  assert.equal((await f.as(ADMIN).get("/api/admin/people")).json.people.find((person) => person.email === "bob@example.com").nickname, "김밥");
+
+  // Someone else's, whatever its case, is refused; one's own again is kept.
+  assert.deepEqual(await name(ADMIN, "carol@example.com", { nickname: "김밥" }), [409, "nickname_taken"]);
+  assert.deepEqual(await name(ADMIN, "bob@example.com", { nickname: "김밥" }), [200, "김밥"]);
+  await name(ADMIN, "bob@example.com", { nickname: "Bobby" });
+  assert.deepEqual(await name(ADMIN, "carol@example.com", { nickname: "BOBBY" }), [409, "nickname_taken"]);
+  assert.deepEqual(await name(ADMIN, "carol@example.com", { nickname: "Bob" }), [409, "nickname_taken"], "another's peer and the start of their email");
+  assert.deepEqual(await name(ADMIN, "carol@example.com", { nickname: "Carol" }), [200, "Carol"], "one's own peer is free");
+  for (const wanted of ["a".repeat(33), "tab\there", 5, true]) {
+    assert.deepEqual(await name(ADMIN, "carol@example.com", { nickname: wanted }), [400, "bad_request"], JSON.stringify(wanted));
+  }
+  // Empty or null takes it away, and the name is free again.
+  assert.deepEqual(await name(ADMIN, "bob@example.com", { nickname: "" }), [200, null]);
+  assert.deepEqual(await name(ADMIN, "carol@example.com", { nickname: "bobby" }), [200, "bobby"]);
+  assert.deepEqual(await name(ADMIN, "carol@example.com", { nickname: null }), [200, null]);
+  assert.equal("nickname" in f.data.get("person:carol@example.com") ? f.data.get("person:carol@example.com").nickname : null, null);
+  // Only an admin.
+  assert.deepEqual(await name("bob@example.com", "bob@example.com", { nickname: "me" }), [403, "not_admin"]);
 });
 
 test("each email TEAM names is made an admin once: a new deploy's email is added, and an admin taken off or removed stays so", async (t) => {

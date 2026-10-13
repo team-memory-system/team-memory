@@ -75,6 +75,8 @@ const KINDS = new Set(["chat", "collect"]);
 const MAX_NAMES = 50;
 const NAME_LENGTH = 64;
 const TEAM_NAME_LENGTH = 60;
+// A member's nickname, the name teammates' agents and screens call them by.
+const NICKNAME_LENGTH = 32;
 // A Jev API key: one token of printable ASCII, no spaces.
 const JEV_KEY = /^[\x21-\x7e]{8,1024}$/;
 const GUARD_TOKEN = /^bearer +([0-9a-f]{64})$/i;
@@ -637,6 +639,7 @@ function personView(person, servers) {
   return {
     email: person.email,
     peer: person.peer ?? null,
+    nickname: person.nickname ?? null,
     admin: Boolean(person.admin),
     joined: Boolean(person.firstLoginAt),
     servers: servers.filter((server) => server.owner === person.email).map((server) => server.host),
@@ -1153,21 +1156,30 @@ export class TeamHub {
   }
 
   /**
-   * PUT /api/admin/people/<email> { admin, peer }: makes a member an admin, or takes
-   * it away, and gives them another peer name. As with removing a person, an admin
-   * does not take admin from themselves; another admin can. So the team keeps an
-   * admin: whoever takes it from someone else is one. A new peer name is nobody
-   * else's, and the requests that person sent name it from now on; their computer
-   * takes it the next time it asks the hub who it is (a setup), and their server's
-   * HONCHO_TEAM_PEER the next time it is shared.
+   * PUT /api/admin/people/<email> { admin, peer, nickname }: makes a member an admin,
+   * or takes it away, gives them another peer name, and names them (an empty or null
+   * nickname takes the name away). As with removing a person, an admin does not take
+   * admin from themselves; another admin can. So the team keeps an admin: whoever
+   * takes it from someone else is one. A new peer name is nobody else's, and the
+   * requests that person sent name it from now on; their computer takes it the next
+   * time it asks the hub who it is (a setup), and their server's HONCHO_TEAM_PEER the
+   * next time it is shared. A nickname is nobody else's nickname, peer or start of the
+   * email either, so a teammate's agent that asks for someone by it finds one person.
    */
   async changePerson({ request, email, params: [rawEmail] }) {
     await this.admin(email);
     const wanted = normalizeEmail(rawEmail);
-    const { admin, peer } = await readJson(request);
-    if (admin === undefined && peer === undefined) throw new HubError(400, "bad_request", "admin is true or false, or peer a peer name");
+    const { admin, peer, nickname: rawNickname } = await readJson(request);
+    if (admin === undefined && peer === undefined && rawNickname === undefined) {
+      throw new HubError(400, "bad_request", "admin is true or false, peer a peer name, or nickname a name");
+    }
     if (admin !== undefined && typeof admin !== "boolean") throw new HubError(400, "bad_request", "admin is true or false");
     if (peer !== undefined && !validPeer(peer)) throw new HubError(400, "bad_request", PEER_RULE);
+    const clearing = rawNickname === null || (typeof rawNickname === "string" && !rawNickname.trim());
+    const nickname = rawNickname === undefined || clearing ? null : printable(rawNickname, NICKNAME_LENGTH);
+    if (rawNickname !== undefined && !clearing && !nickname) {
+      throw new HubError(400, "bad_request", `nickname takes 1 to ${NICKNAME_LENGTH} printable characters`);
+    }
     const person = await this.exclusive(async () => {
       // Again here: an admin taken off meanwhile changes no one.
       await this.admin(email);
@@ -1185,6 +1197,16 @@ export class TeamHub {
           throw new HubError(409, "peer_taken", `Someone in the team already has the peer ${peer}`);
         }
         changed = { ...changed, peer };
+      }
+      if (rawNickname !== undefined && nickname !== (found.nickname ?? null)) {
+        if (nickname !== null) {
+          // Nobody else's nickname, peer or start of the email, whatever its case.
+          const others = [...(await this.people()).values()].filter((item) => item.email !== wanted);
+          const called = (item) => [item.nickname, item.peer, String(item.email || "").split("@")[0]]
+            .some((name) => String(name || "").toLowerCase() === nickname.toLowerCase());
+          if (others.some(called)) throw new HubError(409, "nickname_taken", `Someone in the team is already called ${nickname}`);
+        }
+        changed = { ...changed, nickname };
       }
       if (changed === found) return found;
       await this.storage.put(personKey(wanted), changed);
