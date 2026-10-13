@@ -961,6 +961,55 @@ test("an admin makes a teammate an admin or takes it away from another admin, ne
   assert.equal(f.cf.writes().length, writes, "Cloudflare is not asked: the people policy has them already");
 });
 
+test("an admin gives a member, themselves too, another peer name that nobody else has, and their requests name it", async (t) => {
+  const f = await hubFixture(t);
+  await f.addPeople({ "bob@example.com": "bob", "carol@example.com": "carol", "dan@example.com": null });
+  await f.as(ADMIN).post("/api/me", { peer: "chenjingdev" });
+  const bobs = (await f.as("bob@example.com").post("/api/servers", { workspace: WORKSPACE })).json.server;
+  const asked = (await f.as("carol@example.com").post("/api/requests", { kind: "chat", server: bobs.host })).json.request;
+  assert.equal(asked.fromPeer, "carol");
+  const writes = f.cf.writes().length;
+  const rename = async (as, who, body) => {
+    const answer = await f.as(as).put(`/api/admin/people/${encodeURIComponent(who)}`, body);
+    return [answer.status, answer.json.person?.peer ?? answer.json.error];
+  };
+
+  // The admin's own: the name their memory already has on another server.
+  assert.deepEqual(await rename(ADMIN, ADMIN, { peer: "user_chen" }), [200, "user_chen"]);
+  assert.equal((await f.as(ADMIN).get("/api/me")).json.peer, "user_chen");
+  assert.deepEqual([f.data.get(`person:${ADMIN}`).peer, f.data.get(`person:${ADMIN}`).admin], ["user_chen", true]);
+
+  // Another member's, and the requests they sent say it from now on.
+  assert.deepEqual(await rename(ADMIN, "Carol@Example.com", { peer: "carol.k" }), [200, "carol.k"]);
+  assert.equal(f.data.get(`request:${asked.id}`).fromPeer, "carol.k");
+  const listed = (await f.as("bob@example.com").get("/api/requests")).json;
+  assert.ok(JSON.stringify(listed).includes('"fromPeer":"carol.k"'));
+  // One without a peer yet gets one, and then sets no other.
+  assert.deepEqual(await rename(ADMIN, "dan@example.com", { peer: "dan" }), [200, "dan"]);
+  assert.equal((await f.as("dan@example.com").post("/api/me", { peer: "daniel" })).json.error, "peer_set");
+
+  // Its own name again, or only its case changed, is no one else's.
+  assert.deepEqual(await rename(ADMIN, "bob@example.com", { peer: "bob" }), [200, "bob"]);
+  assert.deepEqual(await rename(ADMIN, "bob@example.com", { peer: "Bob" }), [200, "Bob"]);
+  // Anyone else's, whatever its case, is refused, and so is a name no person may have.
+  assert.deepEqual(await rename(ADMIN, "bob@example.com", { peer: "CAROL.K" }), [409, "peer_taken"]);
+  for (const wanted of ["bad peer!", "a".repeat(65), "assistant_claude", "Automation_x", 5, null, ""]) {
+    assert.deepEqual(await rename(ADMIN, "bob@example.com", { peer: wanted }), [400, "bad_request"], JSON.stringify(wanted));
+  }
+  assert.equal(f.data.get("person:bob@example.com").peer, "Bob");
+  // Only an admin, and only someone on the roster.
+  assert.deepEqual(await rename("bob@example.com", "bob@example.com", { peer: "robert" }), [403, "not_admin"]);
+  assert.deepEqual(await rename(ADMIN, "nobody@example.com", { peer: "nobody" }), [404, "not_found"]);
+
+  // With admin in the same body: both change, or, refused, neither does.
+  const both = await f.as(ADMIN).put("/api/admin/people/bob%40example.com", { admin: true, peer: "robert" });
+  assert.deepEqual([both.status, both.json.person.admin, both.json.person.peer], [200, true, "robert"]);
+  const own = await f.as(ADMIN).put(`/api/admin/people/${encodeURIComponent(ADMIN)}`, { admin: false, peer: "chen" });
+  assert.deepEqual([own.status, own.json.error], [409, "own_email"]);
+  assert.deepEqual([f.data.get(`person:${ADMIN}`).peer, f.data.get(`person:${ADMIN}`).admin], ["user_chen", true]);
+  assert.equal(f.cf.writes().length, writes, "Cloudflare is not asked: the server address keeps its name");
+});
+
 test("each email TEAM names is made an admin once: a new deploy's email is added, and an admin taken off or removed stays so", async (t) => {
   const f = await hubFixture(t);
   await f.addPeople({ "bob@example.com": "bob" });

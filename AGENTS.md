@@ -964,7 +964,11 @@ address and closes their requests, so they can no longer log in, ask or collect.
 another admin (`PUT /api/admin/people/<email>` with `{admin}`); no admin takes it
 from themselves, so the team always keeps one. The teammate's app takes it from the
 hub whenever it reads the team (the 팀 page, the bell) and shows or hides 관리자 once
-the page loads again.
+the page loads again. The same request with `{peer}`, which no button sends, gives a
+member, an admin themselves too, another peer name that nobody else in the team has
+(compared without case): the requests that person sent name it from then on, their
+computer takes it the next time setup asks the hub who it is, and their server's
+`HONCHO_TEAM_PEER` the next time it is shared.
 On the computer that made the team, the Cloudflare block holds the zone and
 token 바꾸기.
 

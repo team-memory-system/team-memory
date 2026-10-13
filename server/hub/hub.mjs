@@ -66,6 +66,7 @@ const COMPANY_LABEL = "memory";
 const PEER = /^[A-Za-z0-9_.:@-]{1,64}$/;
 // Agents write as assistant_* and automation_* peers; a person's peer is never one.
 const AGENT_PEER = /^(?:assistant|automation)_/i;
+const PEER_RULE = "peer takes 1 to 64 letters, digits and _ . : @ -, and does not start with assistant_ or automation_";
 const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 const WORKSPACE = /^[A-Za-z0-9_.:@-]{1,128}$/;
 const EMAIL = /^[\x21-\x7e]+@[\x21-\x7e]+$/;
@@ -672,7 +673,7 @@ const ROUTES = [
   ["GET", /^\/api\/admin\/people$/, "adminPeople"],
   ["POST", /^\/api\/admin\/people$/, "addPerson"],
   ["DELETE", /^\/api\/admin\/people\/([^/]+)$/, "removePerson"],
-  ["PUT", /^\/api\/admin\/people\/([^/]+)$/, "setAdmin"],
+  ["PUT", /^\/api\/admin\/people\/([^/]+)$/, "changePerson"],
   ["PUT", /^\/api\/admin\/team$/, "renameTeam"],
   ["GET", /^\/api\/admin\/jev$/, "jevStatus"],
   ["PUT", /^\/api\/admin\/jev$/, "setJev"],
@@ -856,7 +857,7 @@ export class TeamHub {
     const body = await readJson(request);
     const wanted = body.peer === undefined || body.peer === null || body.peer === "" ? null : body.peer;
     if (wanted !== null && !validPeer(wanted)) {
-      throw new HubError(400, "bad_request", "peer takes 1 to 64 letters, digits and _ . : @ -, and does not start with assistant_ or automation_");
+      throw new HubError(400, "bad_request", PEER_RULE);
     }
     if (person.peer) {
       if (wanted === null || wanted === person.peer) return json(200, { peer: person.peer });
@@ -1152,25 +1153,46 @@ export class TeamHub {
   }
 
   /**
-   * PUT /api/admin/people/<email> { admin }: makes a member an admin, or takes it
-   * away. As with removing a person, an admin does not take it from themselves;
-   * another admin can. So the team keeps an admin: whoever takes it from someone
-   * else is one.
+   * PUT /api/admin/people/<email> { admin, peer }: makes a member an admin, or takes
+   * it away, and gives them another peer name. As with removing a person, an admin
+   * does not take admin from themselves; another admin can. So the team keeps an
+   * admin: whoever takes it from someone else is one. A new peer name is nobody
+   * else's, and the requests that person sent name it from now on; their computer
+   * takes it the next time it asks the hub who it is (a setup), and their server's
+   * HONCHO_TEAM_PEER the next time it is shared.
    */
-  async setAdmin({ request, email, params: [rawEmail] }) {
+  async changePerson({ request, email, params: [rawEmail] }) {
     await this.admin(email);
     const wanted = normalizeEmail(rawEmail);
-    const { admin } = await readJson(request);
-    if (typeof admin !== "boolean") throw new HubError(400, "bad_request", "admin is true or false");
+    const { admin, peer } = await readJson(request);
+    if (admin === undefined && peer === undefined) throw new HubError(400, "bad_request", "admin is true or false, or peer a peer name");
+    if (admin !== undefined && typeof admin !== "boolean") throw new HubError(400, "bad_request", "admin is true or false");
+    if (peer !== undefined && !validPeer(peer)) throw new HubError(400, "bad_request", PEER_RULE);
     const person = await this.exclusive(async () => {
       // Again here: an admin taken off meanwhile changes no one.
       await this.admin(email);
       const found = wanted ? await this.person(wanted) : null;
       if (!found) throw new HubError(404, "not_found", "No one with that email is on the roster");
-      if (Boolean(found.admin) === admin) return found;
-      if (!admin && wanted === email) throw new HubError(409, "own_email", "An admin cannot take admin from themselves; another admin can");
-      const changed = { ...found, admin };
+      let changed = found;
+      if (admin !== undefined && Boolean(found.admin) !== admin) {
+        if (!admin && wanted === email) throw new HubError(409, "own_email", "An admin cannot take admin from themselves; another admin can");
+        changed = { ...changed, admin };
+      }
+      if (peer !== undefined && peer !== found.peer) {
+        // Compared without case, as when a member sets it.
+        const others = [...(await this.people()).values()].filter((item) => item.email !== wanted);
+        if (others.some((item) => String(item.peer || "").toLowerCase() === peer.toLowerCase())) {
+          throw new HubError(409, "peer_taken", `Someone in the team already has the peer ${peer}`);
+        }
+        changed = { ...changed, peer };
+      }
+      if (changed === found) return found;
       await this.storage.put(personKey(wanted), changed);
+      if (changed.peer !== found.peer) {
+        for (const item of await this.requests()) {
+          if (item.from === wanted) await this.storage.put(requestKey(item.id), { ...item, fromPeer: changed.peer });
+        }
+      }
       return changed;
     });
     return json(200, { person: adminPersonView(person, await this.servers()) });
