@@ -189,8 +189,9 @@ export default {
               // No confirm: what is open stays, and the switch puts it back.
               toggle(!off, async (next) => {
                 await teamCall("/api/team/grant", { email: grant.email, off: !next });
-                toast(`${josa(name, "을/를")} ${next ? "켰습니다" : "껐습니다"}`, "ok");
+                // Said once the row shows it, not while it still says 꺼 둠.
                 await draw();
+                toast(`${josa(name, "을/를")} ${next ? "켰습니다" : "껐습니다"}`, "ok");
               }, { label: `${name}에게 내 기억 열기` }),
             ],
           }));
