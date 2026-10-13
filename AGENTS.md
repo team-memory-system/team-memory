@@ -199,6 +199,16 @@ answer.
   and role as an earlier file's was skipped; on the owner's Mac those were sent
   then (`memory_trigger` `segment_backfill`, plus `segment_backfill_recheck` for
   parent-file tails).
+- **Turns an older collector sent are matched by their words.** What the collector
+  before Team Memory stored carries no `source_turn_hash` (much of it has metadata
+  `{}`), and its Codex line index can be one off from the one computed now (477
+  against 476). When the collector reads a conversation back from the server (the
+  first hook for it, and every 지난 대화 run), a pending turn whose every message
+  matches, by peer and text, a stored message no turn here accounts for counts as
+  sent, one stored copy per turn in transcript order (`withoutStoredCopies` in
+  `scripts/collector.mjs`, `stored_copy_turns` in the log). Before 0.7.1 they went
+  in again: on 2026-10-13 the Mac Studio's 지난 대화 put 2,120 copies into 23 old
+  conversations, removed the same night.
 - **Only what the person typed goes in as their words.** The parsers drop what the
   app wrote in the user role: Codex's in-app browser and Chrome tab state, IDE
   context, mentioned-file lists and ChatGPT reference previews in front of

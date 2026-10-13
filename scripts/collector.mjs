@@ -502,9 +502,65 @@ function hashesFromStoredMessage(provider, sessionId, message) {
   }).slice(0, -1);
 }
 
+function copyKey(peer, content) {
+  return `${peer || ""}\u0000${content || ""}`;
+}
+
+/**
+ * An older collector's messages can sit on the server with no identity this one
+ * reads: no source_turn_hash (some with metadata {}), or a Codex line index one off
+ * from the one computed now. Their turns would look unsent and go in a second time.
+ * So when the server's messages for this conversation were just read (`stored`), a
+ * pending turn whose every message matches, by peer and text, a stored message that
+ * no turn here accounts for is taken as sent. Each stored message stands for one
+ * copy, taken in transcript order, so a line said twice still goes in once if the
+ * server holds it once. Of a Codex thread, only the stored messages of this file
+ * (or of no known file) count, since its other files reuse the same words.
+ */
+function withoutStoredCopies(provider, sessionId, turns, stored, messages, pendingHashes, segmentId = null) {
+  const none = { messages, pendingHashes, copies: [] };
+  if (!stored?.length || !messages.length) return none;
+  const known = new Set();
+  for (const turn of turns) for (const candidate of turnHashCandidates(sessionId, turn)) known.add(candidate);
+  const unclaimed = new Map();
+  for (const message of stored) {
+    const storedPath = provider === "codex" ? message?.metadata?.codex_rollout_path : null;
+    if (storedPath && (codexSegmentId(storedPath) || null) !== (segmentId || null)) continue;
+    const identity = hashesFromStoredMessage(provider, sessionId, message);
+    if (segmentId) identity.push(...segmentHashesFromStoredMessages(sessionId, segmentId, [message]));
+    if (identity.some((candidate) => known.has(candidate))) continue;
+    const key = copyKey(message?.peer_id, message?.content);
+    unclaimed.set(key, (unclaimed.get(key) || 0) + 1);
+  }
+  if (!unclaimed.size) return none;
+  const turnMessages = new Map();
+  for (const message of messages) {
+    const hash = message.metadata.source_turn_hash;
+    if (!turnMessages.has(hash)) turnMessages.set(hash, []);
+    turnMessages.get(hash).push(message);
+  }
+  const copies = new Set();
+  for (const [hash, group] of turnMessages) {
+    const needed = new Map();
+    for (const message of group) {
+      const key = copyKey(message.peer_id, message.content);
+      needed.set(key, (needed.get(key) || 0) + 1);
+    }
+    if (![...needed].every(([key, count]) => (unclaimed.get(key) || 0) >= count)) continue;
+    for (const [key, count] of needed) unclaimed.set(key, unclaimed.get(key) - count);
+    copies.add(hash);
+  }
+  if (!copies.size) return none;
+  return {
+    messages: messages.filter((message) => !copies.has(message.metadata.source_turn_hash)),
+    pendingHashes: pendingHashes.filter((hash) => !copies.has(hash)),
+    copies: [...copies],
+  };
+}
+
 async function syncStateFromHoncho(provider, workspace, sessionId, sessionState) {
   if (sessionState.reconciled_source_hashes_at && !sessionState.write_in_progress) {
-    return [0, Number(sessionState.synced_from_honcho_message_total || 0), false];
+    return [0, Number(sessionState.synced_from_honcho_message_total || 0), false, null];
   }
   let listed;
   try {
@@ -514,7 +570,7 @@ async function syncStateFromHoncho(provider, workspace, sessionId, sessionState)
     if (sessionState.write_in_progress || !sessionState.reconciled_source_hashes_at) {
       throw new Error(`Cannot safely retry ${sessionId} until Honcho message reconciliation succeeds`);
     }
-    return [0, 0, false];
+    return [0, 0, false, null];
   }
 
   const existing = new Set(sessionState.imported_hashes || []);
@@ -531,7 +587,7 @@ async function syncStateFromHoncho(provider, workspace, sessionId, sessionState)
   delete sessionState.write_in_progress;
   sessionState.reconciled_source_hashes_at = utcNow();
   sessionState.synced_from_honcho_message_total = listed.total;
-  return [recovered.length, listed.total, true];
+  return [recovered.length, listed.total, true, listed.messages];
 }
 
 /**
@@ -540,11 +596,12 @@ async function syncStateFromHoncho(provider, workspace, sessionId, sessionState)
  * first time this collector reads a segment it rebuilds the segment hashes of the
  * turns Honcho already holds from that file, using each stored message's rollout
  * path. Without that list nothing is sent: the bare hashes alone cannot show which
- * of a thread's files a sent turn came from.
+ * of a thread's files a sent turn came from. Returns the messages it read, or null
+ * for a segment read before.
  */
 async function reconcileCodexSegment(workspace, sessionId, segmentId, sessionState) {
   const reconciled = Array.isArray(sessionState.reconciled_segments) ? sessionState.reconciled_segments : [];
-  if (reconciled.includes(segmentId)) return false;
+  if (reconciled.includes(segmentId)) return null;
   let listed;
   try {
     listed = await existingMessages(workspace, sessionId);
@@ -557,7 +614,7 @@ async function reconcileCodexSegment(workspace, sessionId, segmentId, sessionSta
     segmentHashesFromStoredMessages(sessionId, segmentId, listed.messages),
   );
   sessionState.reconciled_segments = [...reconciled, segmentId];
-  return true;
+  return listed.messages;
 }
 
 async function withStateLock(provider, fn) {
@@ -595,13 +652,19 @@ async function importCodex(args, hookInput) {
     sessionState.rollout_path = rolloutPath;
     const basePeers = new Set([DEFAULT_USER_PEER, assistantPeer("codex")]);
     if (!args.dryRun) await ensureSession(args.workspace, "codex", sessionId, parsed, basePeers, args.sessionMetadata);
-    const [syncedTurns, honchoMessageTotal, stateReconciled] = args.dryRun
-      ? [0, 0, false]
+    const [syncedTurns, honchoMessageTotal, stateReconciled, stored] = args.dryRun
+      ? [0, 0, false, null]
       : await syncStateFromHoncho("codex", args.workspace, sessionId, sessionState);
-    const segmentReconciled = segmentId && !args.dryRun
+    const segmentListed = segmentId && !args.dryRun
       ? await reconcileCodexSegment(args.workspace, sessionId, segmentId, sessionState)
-      : false;
-    const [messages, pendingHashes, peers] = buildCodexMessages(sessionId, parsed, sessionState);
+      : null;
+    const segmentReconciled = Boolean(segmentListed);
+    const built = buildCodexMessages(sessionId, parsed, sessionState);
+    const { messages, pendingHashes, copies } = withoutStoredCopies(
+      "codex", sessionId, parsed.turns, stored || segmentListed, built[0], built[1], segmentId,
+    );
+    const peers = built[2];
+    if (copies.length) sessionState.imported_hashes = mergeStateHashes(sessionState.imported_hashes || [], copies);
     const result = {
       ok: true,
       provider: "codex",
@@ -615,6 +678,7 @@ async function importCodex(args, hookInput) {
       dry_run: Boolean(args.dryRun),
       state_synced_turns: syncedTurns,
       honcho_message_total: honchoMessageTotal,
+      ...(copies.length ? { stored_copy_turns: copies.length } : {}),
     };
     if (args.dryRun || messages.length === 0) {
       if (!args.dryRun) await ensureSession(args.workspace, "codex", sessionId, parsed, basePeers, args.sessionMetadata, { complete: true });
@@ -670,10 +734,13 @@ async function importParsedSession(args, parsed, transcriptPath, options = {}) {
     sessionState.transcript_path = transcriptPath;
     const basePeers = new Set([DEFAULT_USER_PEER, assistantPeer(args.provider)]);
     if (!args.dryRun) await ensureSession(args.workspace, args.provider, sessionId, parsed, basePeers, args.sessionMetadata);
-    const [syncedTurns, honchoMessageTotal, stateReconciled] = args.dryRun
-      ? [0, 0, false]
+    const [syncedTurns, honchoMessageTotal, stateReconciled, stored] = args.dryRun
+      ? [0, 0, false, null]
       : await syncStateFromHoncho(args.provider, args.workspace, sessionId, sessionState);
-    const [messages, pendingHashes, peers] = buildMessages(args.provider, sessionId, parsed, sessionState);
+    const built = buildMessages(args.provider, sessionId, parsed, sessionState);
+    const { messages, pendingHashes, copies } = withoutStoredCopies(args.provider, sessionId, parsed.turns, stored, built[0], built[1]);
+    const peers = built[2];
+    if (copies.length) sessionState.imported_hashes = mergeStateHashes(sessionState.imported_hashes || [], copies);
     options.onMessages?.(messages);
     const result = {
       ok: true,
@@ -688,6 +755,7 @@ async function importParsedSession(args, parsed, transcriptPath, options = {}) {
       dry_run: Boolean(args.dryRun),
       state_synced_turns: syncedTurns,
       honcho_message_total: honchoMessageTotal,
+      ...(copies.length ? { stored_copy_turns: copies.length } : {}),
     };
 
     if (args.dryRun || messages.length === 0) {
