@@ -1238,8 +1238,10 @@ export async function pastPlan(config, options = {}) {
   for (const item of taken) {
     if (item.lost.length) counts.dupes += 1;
     const before = ledger.get(item.key);
-    // Put in by an earlier run, and nothing newer here since.
-    if (before && ["sent", "server", "empty"].includes(before.o) && !(item.last !== null && before.last !== undefined && item.last > (before.last ?? 0) + NEWER_SLACK_MS)) {
+    // Put in by an earlier run, and nothing newer here since. One this server does not
+    // hold went to another server: the computer has since moved to this one.
+    const held = before?.o === "empty" || !index || index.sessions.has(item.session);
+    if (before && held && ["sent", "server", "empty"].includes(before.o) && !(item.last !== null && before.last !== undefined && item.last > (before.last ?? 0) + NEWER_SLACK_MS)) {
       counts.already += 1;
       continue;
     }

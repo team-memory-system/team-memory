@@ -519,6 +519,28 @@ test("a conversation on the server stays out unless a copy here has turns after 
   assert.ok(honcho.sessions.has("claude-lateone"));
 });
 
+test("conversations put in on one server go in again after the computer moves to another", async (t) => {
+  const first = await fakeHoncho();
+  t.after(() => first.server.close());
+  const second = await fakeHoncho();
+  t.after(() => second.server.close());
+  const install = await makeInstall(t, first);
+  await writeClaude(claudeFile(install, "moved"), { sessionId: "moved", cwd: install.team, turns: turns("moved", "2025-05-01T10:00:00Z") });
+  await scan(install);
+  assert.equal((await cli(["past", "plan"], install.env)).body.total, 1);
+  assert.equal((await cli(["past", "run"], install.env)).body.sent, 1);
+  assert.equal((await cli(["past", "plan"], install.env)).body.already, 1, "the same server holds it");
+
+  const configPath = path.join(install.env.HONCHO_AGENT_BRIDGE_HOME, "config.json");
+  const config = JSON.parse(await fsp.readFile(configPath, "utf8"));
+  await fsp.writeFile(configPath, `${JSON.stringify({ ...config, honcho: { ...config.honcho, baseUrl: second.url } }, null, 2)}\n`);
+  const plan = (await cli(["past", "plan"], install.env)).body;
+  assert.equal(plan.already, 0);
+  assert.equal(plan.total, 1);
+  assert.equal((await cli(["past", "run"], install.env)).body.sent, 1);
+  assert.deepEqual(second.texts("claude-moved"), ["moved 1", "moved 2"]);
+});
+
 test("new turns wait while the run goes and follow it, and none is sent twice", async (t) => {
   const honcho = await fakeHoncho();
   t.after(() => honcho.server.close());
