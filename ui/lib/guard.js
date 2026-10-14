@@ -12,6 +12,12 @@ export function reasonText(reason, allowed, { cause = false } = {}) {
   const text = String(reason || "").trim();
   const said = (whole, why) => (cause ? why : whole);
   if (text === "out of scope") return "사적인 질문으로 판정";
+  // A number whose form alone says what it is, refused before Jev is asked.
+  const held = /^(out of scope|answer withheld): it holds a (resident registration number|card number)$/.exec(text);
+  if (held) {
+    const number = held[2] === "card number" ? "카드번호" : "주민등록번호";
+    return held[1] === "out of scope" ? `${number}가 든 질문` : said(`${number}가 든 답이라 막음`, `${number}가 든 답`);
+  }
   // "access" since teammates search; "chat" in the rows from before.
   if (/^The owner of this memory has turned your (access|chat) off/.test(text)) return "꺼 둔 동안 물음";
   if (text.startsWith("No conversation with that id is open to you")) return "열리지 않은 대화를 찾음";

@@ -20,6 +20,10 @@ test("each reason the bridge records reads as a few words, by how the call went"
   assert.equal(denied("query too long to judge"), "너무 길어 판정하지 않고 거부");
   assert.equal(denied("answer withheld: it discloses private matters"), "답에 민감한 내용이 있어 막음");
   assert.equal(denied("answer too long to judge"), "답이 너무 길어 판정하지 않고 막음");
+  // A number whose form alone says what it is, refused before Jev is asked.
+  assert.equal(denied("out of scope: it holds a resident registration number"), "주민등록번호가 든 질문");
+  assert.equal(denied("answer withheld: it holds a card number"), "카드번호가 든 답이라 막음");
+  assert.equal(reasonText("answer withheld: it holds a resident registration number", false, { cause: true }), "주민등록번호가 든 답");
   // A Jev that did not answer stops or lets through by the server's fail mode.
   assert.equal(denied("jev unavailable: team guard: HTTP 502 jev_failed"), "Jev가 답하지 않아 거부");
   assert.equal(passed("jev unavailable: team guard: ConnectError"), "판정 없이 통과 · Jev가 답하지 않음");
