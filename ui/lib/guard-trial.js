@@ -12,7 +12,7 @@ import { h, clear } from "./dom.js";
 import { folderOpens, folderRowsOf, grantFromTicked } from "./folder-grants.js";
 import { folderTree } from "./folder-tree.js";
 import { appRecords, number } from "./format.js";
-import { callScores, reasonText, scoreText, trialOutcome, trialTag, verdictTag } from "./guard.js";
+import { callScores, maskedText, reasonText, scoreText, trialOutcome, trialTag, verdictTag } from "./guard.js";
 import { icon } from "./icons.js";
 import { kv } from "./kit.js";
 import { loadRequests } from "./requests.js";
@@ -61,7 +61,8 @@ function drawTrial(trial, asked) {
   return h("div", { class: "trial-result" },
     h("div", { class: "audit-facts" },
       step("질문 검사", trial.query, "query", gate),
-      step("답 검사", trial.answer_check, "answer", gate) || kv("답 검사", h("span", { class: "muted" }, skipped))),
+      step("답 검사", trial.answer_check, "answer", gate) || kv("답 검사", h("span", { class: "muted" }, skipped)),
+      maskedText(trial.masked) ? kv("가린 것", maskedText(trial.masked)) : null),
     trial.answer != null ? h("div", {}, h("div", { class: "audit-label" }, source), h("pre", { class: "audit-full" }, found)) : null,
     notice(outcome.kind, h("b", {}, outcome.title), outcome.text ? ` ${outcome.text}` : "",
       outcome.message ? h("div", { class: "trial-message" }, outcome.message) : null),

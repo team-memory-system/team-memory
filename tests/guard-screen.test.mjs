@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { callReason, callScores, reasonText, trialOutcome, trialTag, verdictTag } from "../ui/lib/guard.js";
+import { callReason, callScores, maskedText, reasonText, trialOutcome, trialTag, verdictTag } from "../ui/lib/guard.js";
 
 test("each reason the bridge records reads as a few words, by how the call went", () => {
   const denied = (error) => callReason({ status: "denied", error });
@@ -24,6 +24,10 @@ test("each reason the bridge records reads as a few words, by how the call went"
   assert.equal(denied("out of scope: it holds a resident registration number"), "주민등록번호가 든 질문");
   assert.equal(denied("answer withheld: it holds a card number"), "카드번호가 든 답이라 막음");
   assert.equal(reasonText("answer withheld: it holds a resident registration number", false, { cause: true }), "주민등록번호가 든 답");
+  assert.equal(denied("out of scope: it holds a passport number"), "여권번호가 든 질문");
+  assert.equal(denied("out of scope: it holds a driver's license number"), "운전면허번호가 든 질문");
+  assert.equal(denied("out of scope: it holds a foreign registration number"), "외국인등록번호가 든 질문");
+  assert.equal(denied("out of scope: it holds a hat"), "out of scope: it holds a hat", "a kind the screen does not know stays as it came");
   // A Jev that did not answer stops or lets through by the server's fail mode.
   assert.equal(denied("jev unavailable: team guard: HTTP 502 jev_failed"), "Jev가 답하지 않아 거부");
   assert.equal(passed("jev unavailable: team guard: ConnectError"), "판정 없이 통과 · Jev가 답하지 않음");
@@ -116,4 +120,13 @@ test("a trial folds to one tag: how it ends for the teammate", () => {
   assert.deepEqual(trialTag({ gate: true, outcome: "passed", query: judged, answer_check: unjudged }), ["판정 없이 통과", "warn"]);
   assert.deepEqual(trialTag({ gate: false, outcome: "passed", query: judged }), ["판정 꺼짐", "warn"]);
   assert.deepEqual(trialTag({ outcome: "later" }), ["알 수 없음", "warn"]);
+});
+
+test("what was hidden in a teammate's answer reads as kinds and counts", () => {
+  assert.equal(maskedText({ card: 1, resident: 2 }), "카드번호 1개, 주민등록번호 2개 가림");
+  assert.equal(maskedText({ api_key: 1, coordinate: 1, password: 3 }), "API 키 1개, 좌표 1개, 비밀번호 3개 가림");
+  assert.equal(maskedText({ something_new: 1 }), "something_new 1개 가림");
+  assert.equal(maskedText({}), "");
+  assert.equal(maskedText(undefined), "");
+  assert.equal(maskedText({ card: 0, bad: "x" }), "");
 });

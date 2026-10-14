@@ -2,6 +2,38 @@
 // verdict is labelled, and what a trial (가드 시험) comes to for the teammate. No
 // DOM here, so the tests can load it.
 
+// The bridge's names for a number that picks out one person (redact.py IDENTIFIERS).
+const IDENTIFIERS = {
+  "resident registration number": "주민등록번호",
+  "foreign registration number": "외국인등록번호",
+  "passport number": "여권번호",
+  "driver's license number": "운전면허번호",
+  "card number": "카드번호",
+};
+
+// What the bridge hides in a teammate's answer, by its kind (redact.py NAMES).
+const MASKED = {
+  resident: "주민등록번호",
+  foreign: "외국인등록번호",
+  passport: "여권번호",
+  driver: "운전면허번호",
+  card: "카드번호",
+  account: "계좌번호",
+  coordinate: "좌표",
+  api_key: "API 키",
+  private_key: "비밀 키",
+  password: "비밀번호",
+};
+
+/** What was hidden in an answer, as {kind: count} came from the bridge: "카드번호 1개 가림". */
+export function maskedText(masked) {
+  if (!masked || typeof masked !== "object") return "";
+  const parts = Object.entries(masked)
+    .filter(([, count]) => Number.isFinite(count) && count > 0)
+    .map(([kind, count]) => `${MASKED[kind] || kind} ${count}개`);
+  return parts.length ? `${parts.join(", ")} 가림` : "";
+}
+
 /**
  * One of the bridge's reasons for a verdict, in a few words. `allowed` is how the
  * question or answer went: when Jev does not answer, the server's fail mode lets it
@@ -12,10 +44,10 @@ export function reasonText(reason, allowed, { cause = false } = {}) {
   const text = String(reason || "").trim();
   const said = (whole, why) => (cause ? why : whole);
   if (text === "out of scope") return "사적인 질문으로 판정";
-  // A number whose form alone says what it is, refused before Jev is asked.
-  const held = /^(out of scope|answer withheld): it holds a (resident registration number|card number)$/.exec(text);
-  if (held) {
-    const number = held[2] === "card number" ? "카드번호" : "주민등록번호";
+  // A number that picks out one person, refused by its form before Jev is asked.
+  const held = /^(out of scope|answer withheld): it holds a (.+)$/.exec(text);
+  if (held && IDENTIFIERS[held[2]]) {
+    const number = IDENTIFIERS[held[2]];
     return held[1] === "out of scope" ? `${number}가 든 질문` : said(`${number}가 든 답이라 막음`, `${number}가 든 답`);
   }
   // "access" since teammates search; "chat" in the rows from before.

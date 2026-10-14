@@ -9,7 +9,7 @@ import { get } from "../lib/api.js";
 import { shortPath } from "../lib/collect.js";
 import { h, clear } from "../lib/dom.js";
 import { fullDate, number } from "../lib/format.js";
-import { callReason, callScores, scoreText } from "../lib/guard.js";
+import { callReason, callScores, maskedText, scoreText } from "../lib/guard.js";
 import { guardTrial } from "../lib/guard-trial.js";
 import { kv, list, listItem, modal } from "../lib/kit.js";
 import { button, busy, details, empty, errorNotice, notice, pageHead, spinner, tag } from "../lib/ui.js";
@@ -70,6 +70,7 @@ function openCall(row) {
       kv("누가", [row.caller || "알 수 없음", row.caller_source ? h("div", { class: "s" }, row.caller_source) : null]),
       kv("언제", `${longDay.format(at)} ${seconds.format(at)}`),
       folders.length ? kv("열린 폴더", [folders.map(shortPath).join(", "), h("div", { class: "s" }, reachOf(row))]) : null,
+      maskedText(row.arguments?.masked) ? kv("가린 것", [maskedText(row.arguments.masked), h("div", { class: "s" }, "팀원에게 간 답에서 이 자리를 가렸습니다. 기억에는 원래대로 있습니다.")]) : null,
       row.jev_score != null ? kv("질문 점수", [scoreText(row.jev_score), h("div", { class: "s" }, "Jev의 판정. 1에 가까울수록 사적인 질문입니다.")]) : null,
       row.answer_score != null ? kv("답 점수", [scoreText(row.answer_score), h("div", { class: "s" }, "Jev의 판정. 1에 가까울수록 민감한 내용이 든 답입니다.")]) : null,
       kv("도구", h("span", { class: "mono" }, row.tool || "")),
@@ -138,7 +139,7 @@ export default {
 
     function entry(row) {
       const [label, kind] = STATUS[row.status] || [row.status || "?", ""];
-      const sub = [row.caller || "알 수 없음", reachOf(row), callReason(row), callScores(row)].filter(Boolean).join(" · ");
+      const sub = [row.caller || "알 수 없음", reachOf(row), callReason(row), maskedText(row.arguments?.masked), callScores(row)].filter(Boolean).join(" · ");
       const item = listItem({
         title: [tag(label, kind), h("span", { class: "audit-q" }, row.query_text || "원문 없음")],
         sub,
