@@ -302,6 +302,19 @@ test("doctor verifies runtime version, host plugins, Honcho access, and MCP hand
     CODEX_PLUGIN_ROOT: ROOT,
     CLAUDE_PLUGIN_ROOT: ROOT,
   };
+  // An app still running from an older copy of the plugin, at a port of the test's own
+  // (the computer's own app at 4180 is never asked).
+  const oldApp = http.createServer((request, response) => {
+    if (request.url === "/api/app/context") {
+      response.setHeader("Content-Type", "application/json");
+      return response.end(JSON.stringify({ ok: true, version: "0.0.1" }));
+    }
+    response.setHeader("Content-Type", "text/html");
+    response.end('<div id="team-memory-app"></div>');
+  });
+  await new Promise((resolve) => oldApp.listen(0, "127.0.0.1", resolve));
+  t.after(() => oldApp.close());
+  env.HONCHO_AGENT_BRIDGE_UI_PORT = String(oldApp.address().port);
   await runCli(
     [
       "setup",
@@ -315,8 +328,16 @@ test("doctor verifies runtime version, host plugins, Honcho access, and MCP hand
     ],
     env,
   );
+  const stale = await runCli(["doctor"], env).catch((error) => JSON.parse(String(error.stdout || "{}")));
+  assert.equal(stale.ok, false);
+  assert.deepEqual(stale.checks.find((check) => check.name === "app"), {
+    name: "app", ok: false, url: `http://127.0.0.1:${oldApp.address().port}`, version: "0.0.1", fix: "/team-memory doctor",
+  });
+  await new Promise((resolve) => oldApp.close(resolve));
+
   const result = await runCli(["doctor"], env);
   assert.equal(result.ok, true);
+  assert.equal(result.checks.some((check) => check.name === "app"), false, "no app running, nothing to check");
   assert.equal(result.checks.find((check) => check.name === "runtime").actualVersion, VERSION);
   // Setup writes the tool file with every memory-changing tool off.
   assert.deepEqual(

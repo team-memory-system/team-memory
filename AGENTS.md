@@ -449,6 +449,28 @@ codex plugin marketplace upgrade
 codex plugin add team-memory@team-memory
 ```
 
+Then, in a new Claude Code session, `/team-memory doctor` (in a terminal, `doctor
+--fix` from the new plugin folder's `scripts/cli.mjs`) brings what the plugin installed
+up to it, with the saved settings and without asking (scripts/fix.mjs). The same holds
+after Claude Code updated the plugin on its own: the plugin files change, nothing else
+does. Plain `doctor` only looks; it marks each check `--fix` repairs with `fix`, and
+only those checks are repaired, so a current server is never restarted:
+
+1. `runtime`: `setup apply`, the collector and the hooks of this version.
+2. `server-version`, the Honcho source or the gateway behind this version's pins:
+   `server start`, which prepares again. The Honcho
+   source and the subscription gateway move to this version's pins, the images are
+   rebuilt, and the server comes back with the models it had. `setup apply` alone does
+   none of this; the gateway moves only through prepare. A server that was stopped is
+   only prepared and stays off.
+3. `app`, the app answering at 4180 from an older copy of the plugin: stopped and
+   started again from the new folder, since it serves its pages from the folder it
+   was started in. No app is started when none was running.
+
+Right after the gateway is installed again its adapters take a moment to list models,
+so prepare asks the gateway again for up to a minute while an account is logged in,
+before it reports `gateway-login`. A gateway with no login is reported at once.
+
 A computer that has the plugin under its old name (0.6.6 and before) installs
 `team-memory` and then removes the old one. The memory, `config.json`, the server
 and the login jobs stay where they are, since none of them lives in the plugin folder:

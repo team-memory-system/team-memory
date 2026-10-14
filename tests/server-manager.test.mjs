@@ -1584,7 +1584,7 @@ test("personal prepare stops at the gateway login and says where to log in, touc
   assert.equal(result.next, result.nextAction.message);
   assert.equal(result.gateway.reason, "no account is logged in");
   assert.equal("missingSecretFields" in result, false, "nothing asks the user for a key");
-  assert.deepEqual(gateway.calls, ["install", "connect-info"]);
+  assert.deepEqual(gateway.calls, ["install", "connect-info", "status"], "a gateway without a login is not waited for");
   assert.equal(hostCalled, false);
   assert.equal(await fsp.readFile(path.join(destination, ".env"), "utf8"), "CUSTOM_SETTING=keep-me\n");
   assert.equal((await fsp.readdir(root)).some((item) => item.includes(".candidate-")), false);

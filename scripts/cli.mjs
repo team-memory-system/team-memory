@@ -31,6 +31,7 @@ import { VERSION } from "./version.mjs";
 import { WRITE_TOOLS } from "./mcp-tool-defaults.mjs";
 import { automationOnly } from "./providers/automation.mjs";
 import {
+  honchoSourcePin,
   installedServerDir,
   installedServerPorts,
   serverPlan,
@@ -39,6 +40,7 @@ import {
   serverStatus,
   serverStop,
   serverVerify,
+  sourceServerDir,
 } from "./server-manager.mjs";
 import { hostPlan, hostPrepare, hostStart, hostStatus, hostStop } from "./host-manager.mjs";
 import {
@@ -54,6 +56,7 @@ import { gateDevices, gateGrants, gateStatePaths } from "./gate-access.mjs";
 import { TEAM_AUTH_ENV, teamAuthPaths, teamLoginStatus } from "./team-auth.mjs";
 import { madeTeam, teamMake, teamShare } from "./team-hub.mjs";
 import { switchCommand } from "./switch.mjs";
+import { fixable, fixChecks } from "./fix.mjs";
 import {
   API_TOKEN_ENV,
   INVITE_ENV,
@@ -63,7 +66,7 @@ import {
   teammatesList,
   teammateUnshare,
 } from "./team-access.mjs";
-import { CHAT_ROLES, gatewayDirectory, gatewayOpen, THINKING_EFFORTS } from "./gateway.mjs";
+import { CHAT_ROLES, gatewayDirectory, gatewayOpen, gatewaySourceProbe, THINKING_EFFORTS } from "./gateway.mjs";
 import { hostPluginPlan, installHostPlugins, PLUGIN_NAME } from "./host-plugins.mjs";
 import { getProvider } from "./providers/index.mjs";
 import {
@@ -948,6 +951,28 @@ async function probeMcpServer(serverPath, timeoutMs = 2500, env = process.env) {
   });
 }
 
+/**
+ * A memory server on this computer against this version's pins: the Honcho source it
+ * was prepared from, and the subscription gateway beside it. Updating the plugin moves
+ * neither; `doctor --fix` does. Null when this computer has no server.
+ */
+async function serverSourceCheck(config) {
+  const serverDir = installedServerDir(config);
+  if (!(await pathExists(path.join(serverDir, "compose.yaml")))) return null;
+  const [installed, wanted] = await Promise.all([honchoSourcePin(serverDir), honchoSourcePin(sourceServerDir())]);
+  const honchoCurrent = !wanted.ok || (installed.ok && installed.commit === wanted.commit);
+  const gateway = await gatewaySourceProbe({ pinDirectory: sourceServerDir(), directory: gatewayDirectory(serverDir) }).catch(() => null);
+  const gatewayCurrent = !gateway?.present || gateway.state !== "stale";
+  const ok = honchoCurrent && gatewayCurrent;
+  return {
+    name: "server-version",
+    ok,
+    honcho: { installed: installed.commit || null, expected: wanted.commit || null },
+    gateway: gateway?.present ? { installed: gateway.commit || null, expected: gateway.pin?.commit || null } : null,
+    ...(ok ? {} : { fix: "/team-memory doctor" }),
+  };
+}
+
 async function doctor() {
   const configuration = await inspectConfiguration();
   const config = configuration.config;
@@ -974,15 +999,19 @@ async function doctor() {
     if (!(await pathExists(path.join(paths.runtimeDir, file)))) missingRuntimeFiles.push(file);
   }
   const runtimeVersion = await installedRuntimeVersion(paths.runtimeDir);
+  const runtimeOk = missingRuntimeFiles.length === 0 && runtimeVersion === VERSION && config?.installedVersion === VERSION;
   checks.push({
     name: "runtime",
-    ok: missingRuntimeFiles.length === 0 && runtimeVersion === VERSION && config?.installedVersion === VERSION,
+    ok: runtimeOk,
     path: paths.runtimeDir,
     expectedVersion: VERSION,
     actualVersion: runtimeVersion || null,
     configuredVersion: config?.installedVersion || null,
     missingFiles: missingRuntimeFiles,
+    ...(runtimeOk || !config ? {} : { fix: "/team-memory doctor" }),
   });
+  const serverSource = await serverSourceCheck(config);
+  if (serverSource) checks.push(serverSource);
   if (config) {
     const health = await probeHealth(config.honcho.baseUrl, config);
     checks.push({ name: "honcho-health", ...health, url: publicUrl(config.honcho.baseUrl) });
@@ -1014,7 +1043,35 @@ async function doctor() {
       checks.push({ name: `target-${target.id}`, ok: probe.ok, url: publicUrl(target.honcho.baseUrl), health: probe.health, workspace: probe.workspace });
     }
   }
+  // The app serves its pages from the plugin folder it was started in, so one
+  // started before an update shows the old screens.
+  const appUrl = `http://${UI_HOST}:${uiPort()}/`;
+  if ((await uiState(appUrl)) === "ours") {
+    const running = await uiVersion(appUrl);
+    checks.push({ name: "app", ok: running === VERSION, url: appUrl, version: running || null, ...(running === VERSION ? {} : { fix: "/team-memory doctor" }) });
+  }
   return { ok: checks.every((check) => check.ok), version: VERSION, checks };
+}
+
+/**
+ * /team-memory doctor: the checks, and what they mark with `fix` repaired at once
+ * (scripts/fix.mjs), then the checks again. Plain `doctor` only looks.
+ */
+async function doctorAndFix() {
+  const before = await doctor();
+  if (!fixable(before.checks).size) return before;
+  const fixed = await fixChecks(before.checks, {
+    setupApply,
+    serverStatus,
+    serverStart,
+    serverPrepare,
+    restartApp: async () => {
+      const opened = await uiOpen({ noBrowser: true, replaceOlder: true });
+      return { ok: opened.ok, ...(opened.error ? { error: opened.error } : {}) };
+    },
+  });
+  const after = await doctor();
+  return { ...after, fixed: { ok: fixed.ok, steps: fixed.steps }, said: fixed.said };
 }
 
 // ------------------------------------------------------- the old shared bridge
@@ -1627,6 +1684,38 @@ async function uiState(url) {
   }
 }
 
+const uiPort = () => Number(process.env.HONCHO_AGENT_BRIDGE_UI_PORT || 4180);
+
+/** The version the app answering at `url` gives, or "" when it gives none. */
+async function uiVersion(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  try {
+    const response = await fetch(new URL("api/app/context", url), { signal: controller.signal });
+    const context = await response.json();
+    return typeof context?.version === "string" ? context.version : "";
+  } catch {
+    return "";
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** The process listening on `port` on this machine, found with the system's own tool, or null. */
+function listeningPid(port) {
+  try {
+    const output = process.platform === "win32"
+      ? execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+        `(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess`],
+      { encoding: "utf8", timeout: 20_000, windowsHide: true })
+      : execFileSync(fs.existsSync("/usr/sbin/lsof") ? "/usr/sbin/lsof" : "lsof", ["-tnP", `-iTCP:${port}`, "-sTCP:LISTEN"], { encoding: "utf8", timeout: 10_000 });
+    const pid = Number(String(output).trim().split(/\s+/)[0]);
+    return Number.isInteger(pid) && pid > 0 && pid !== process.pid ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
 function openBrowser(url) {
   const [command, args] = process.platform === "darwin"
     ? ["open", [url]]
@@ -1651,18 +1740,35 @@ function openBrowser(url) {
  * and write credentials.
  */
 async function uiOpen(options = {}) {
-  const port = Number(process.env.HONCHO_AGENT_BRIDGE_UI_PORT || 4180);
+  const port = uiPort();
   const url = `http://${UI_HOST}:${port}/`;
   // `--screen models` opens the app on that screen (its #/models route), and
   // `--screen start?team=team.example.com` first setup at that team's login.
   const screen = typeof options.screen === "string" ? options.screen.replace(/^[#/]+/, "") : "";
   if (screen && !/^[a-z0-9/_-]+(?:\?team=[a-z0-9.-]+)?$/i.test(screen)) return { ok: false, url, error: `Not a screen name: ${screen}` };
   const pageUrl = screen ? `${url}#/${screen}` : url;
-  const state = await uiState(url);
+  let state = await uiState(url);
   if (state === "other") {
     return { ok: false, url, error: `Something else is answering at ${url}. Close it, or set HONCHO_AGENT_BRIDGE_UI_PORT.` };
   }
   let pid = null;
+  let replaced = null;
+  // doctor --fix: an app started from an older copy of the plugin serves that copy's
+  // pages, so it is stopped and this one started in its place.
+  if (state === "ours" && options.replaceOlder) {
+    const running = await uiVersion(url);
+    if (running !== VERSION) {
+      const old = listeningPid(port);
+      if (!old) return { ok: false, url, error: `An older Team Memory app (${running || "unknown version"}) is running at ${url} and could not be found to stop` };
+      try { process.kill(old); } catch (error) { return { ok: false, url, error: `The older Team Memory app could not be stopped: ${error.message}` }; }
+      for (let attempt = 0; attempt < 40 && state !== "down"; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        state = await uiState(url);
+      }
+      if (state !== "down") return { ok: false, url, error: "The older Team Memory app did not stop" };
+      replaced = running || "unknown";
+    }
+  }
   if (state === "down") {
     const child = spawn(process.execPath, [path.join(SCRIPT_DIR, "ui.mjs")], {
       cwd: SCRIPT_DIR,
@@ -1680,8 +1786,9 @@ async function uiOpen(options = {}) {
     }
     if (!ready) return { ok: false, url, pid, error: "The setup screen did not start." };
   }
+  const started = pid !== null;
   const browserRequested = options.noBrowser === true ? false : openBrowser(pageUrl);
-  return { ok: true, url: pageUrl, started: state === "down", pid, browserRequested };
+  return { ok: true, url: pageUrl, started, pid, ...(replaced ? { replaced } : {}), browserRequested };
 }
 
 async function runHook(provider) {
@@ -1721,6 +1828,7 @@ function usage() {
       "team share [--label <name>] [--replace] (after logging in to the team in the app)",
       "team grants",
       "team devices",
+      "doctor [--fix] (--fix: what the checks mark with fix, which a plugin update leaves behind, is repaired: setup apply with the saved settings, then this computer's memory server and subscription gateway restarted at this version, or only prepared when stopped, and an older running app started again from here)",
       "switch [off|on|shared-off|shared-on] [<teammate's team name or email>] (/team-memory: what is on; off|on the memory server; shared-off|shared-on sharing, or what one teammate may read)",
       "teammates list",
       "teammates add <email> [--share <name> --invite-out <file>] (the Cloudflare API token in CLOUDFLARE_API_TOKEN, else the saved one)",
@@ -1743,7 +1851,7 @@ function usage() {
       "target test <id>",
       "target backfill <id> [--since YYYY-MM-DD] [--limit <n>]",
       "target remove <id>",
-      "ui open [--screen <name>] [--no-browser]",
+      "ui open [--screen <name>] [--no-browser] [--replace-older] (--replace-older: an app answering from another version is stopped and this one started)",
       "backup status [--check]",
       "backup set --folder <absolute path> | --cloud <rclone remote>:[folder] | --off [--device <id>] [--hour <0-23>]",
       "backup run [--dry-run] [--full] [--folder <path> | --cloud <remote>:[folder]] [--examples <n>] [--verbose]",
@@ -1751,7 +1859,6 @@ function usage() {
       "backup schedule on|off [--hour <0-23>] (the nightly run and the daytime check for problems)",
       "backup alert check|test (check: notify a backup problem now; test: show a sample notification)",
       "backup remotes",
-      "doctor",
       "status",
     ],
   };
@@ -1903,7 +2010,7 @@ async function main() {
   if (!process.env[TEAM_AUTH_ENV]) process.env[TEAM_AUTH_ENV] = teamAuthPaths(await loadConfig().catch(() => null)).authFile;
   if (command === "detect") return detect();
   if (command === "prereqs") return prereqs(parseOptions(args));
-  if (command === "doctor" || command === "status") return doctor();
+  if (command === "doctor" || command === "status") return parseOptions(args).fix === true ? doctorAndFix() : doctor();
   if (command === "hook") return runHook((args.shift() || "").trim().toLowerCase());
   if (command === "server") {
     const subcommand = args.shift() || "status";

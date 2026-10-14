@@ -13,6 +13,7 @@ import {
   ensureGatewaySource,
   prepareGateway,
   gatewayConnectInfo,
+  gatewayConnectInfoSettled,
   gatewayDirectory,
   gatewayEnvironment,
   gatewayInstall,
@@ -460,6 +461,46 @@ test("connect-info refuses what it cannot store safely and passes on why it is n
     assert.equal(unsafe.ok, false, JSON.stringify(apiKey));
     assert.match(unsafe.error, /router key/);
   }
+});
+
+test("connect-info waits for a gateway that has a login but no model yet, and not for one without a login", async (t) => {
+  const directory = await installedGateway(t);
+  const ready = { ok: true, ready: true, baseUrl: "http://127.0.0.1:11400/v1", apiKey: ROUTER_KEY, models: ["claude-opus-5-5"], reason: "" };
+  const starting = { ok: true, ready: false, models: [], reason: "the router lists no models" };
+  const scripted = (loggedIn, answers) => {
+    const calls = [];
+    const runner = async (_command, args) => {
+      calls.push(args[1]);
+      if (args[1] === "status") {
+        return { code: 0, stdout: JSON.stringify({ ok: true, router: { url: "http://127.0.0.1:11400", ok: true }, accounts: [{ id: "claude-1", backend: "claude", loggedIn, serving: false }], models: [] }) };
+      }
+      return { code: 0, stdout: JSON.stringify(answers.shift() || starting) };
+    };
+    return { runner, calls };
+  };
+  const slept = [];
+  const sleep = async (ms) => { slept.push(ms); };
+
+  // Just installed: logged in, the adapters still starting. It asks again until the models come.
+  const fresh = scripted(true, [starting, starting, ready]);
+  const settled = await gatewayConnectInfoSettled({ directory, runner: fresh.runner, sleep });
+  assert.equal(settled.ready, true);
+  assert.deepEqual(fresh.calls, ["connect-info", "status", "connect-info", "connect-info"]);
+  assert.deepEqual(slept, [2_000, 2_000]);
+
+  // No login: logging in is the next step, so it says so at once.
+  slept.length = 0;
+  const none = scripted(false, [starting]);
+  const notReady = await gatewayConnectInfoSettled({ directory, runner: none.runner, sleep });
+  assert.equal(notReady.ready, false);
+  assert.deepEqual(none.calls, ["connect-info", "status"]);
+  assert.deepEqual(slept, []);
+
+  // A login whose models never come is given up after the wait.
+  const stuck = scripted(true, []);
+  const late = await gatewayConnectInfoSettled({ directory, runner: stuck.runner, sleep, waitMs: 6_000 });
+  assert.equal(late.ready, false);
+  assert.equal(stuck.calls.filter((call) => call === "connect-info").length, 4);
 });
 
 test("the gateway's own Korean reason survives the sanitizer: a URL ends where the sentence goes on", async (t) => {

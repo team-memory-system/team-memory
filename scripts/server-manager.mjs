@@ -15,7 +15,7 @@ import {
   DEFAULT_GATEWAY_ROUTER_URL,
   DEFAULT_GATEWAY_UI_URL,
   ensureGatewaySource,
-  gatewayConnectInfo,
+  gatewayConnectInfoSettled,
   gatewayDirectory,
   gatewayEnvironment,
   gatewayLoginAction,
@@ -1118,7 +1118,7 @@ async function recoverPersonalUpdate({
  *
  * `values` carries the router key; it goes to initializeEnvironment and nowhere else.
  */
-async function connectGateway({ plan, installed, model, roles, sourceFetcher, runner, env, firstSetup }) {
+async function connectGateway({ plan, installed, model, roles, sourceFetcher, runner, env, firstSetup, gatewayWait }) {
   const directory = gatewayDirectory(installed);
   const stopped = { ok: false, ready: false, mode: "local-docker", profile: "personal" };
   const prepared = await prepareGateway({ pinDirectory: plan.bundle.directory, directory, sourceFetcher, runner, env });
@@ -1133,7 +1133,7 @@ async function connectGateway({ plan, installed, model, roles, sourceFetcher, ru
       stop: { ...stopped, gateway: report, issues: [prepared.error], next: "Resolve the gateway problem above, then run server prepare again" },
     };
   }
-  const connection = await gatewayConnectInfo({ directory, runner, env });
+  const connection = await gatewayConnectInfoSettled({ directory, runner, env, ...(gatewayWait ? { sleep: gatewayWait } : {}) });
   if (!connection.ok) {
     return {
       stop: {
@@ -1200,6 +1200,7 @@ async function serverPrepareUnlocked({
   honchoSourceFetcher = ensureHonchoSource,
   gatewaySourceFetcher = ensureGatewaySource,
   gatewayRunner,
+  gatewayWait,
   model = "",
   roles = {},
   dockerStarter = ensureDockerRunning,
@@ -1339,6 +1340,7 @@ async function serverPrepareUnlocked({
     roles,
     sourceFetcher: gatewaySourceFetcher,
     runner: gatewayRunner,
+    gatewayWait,
     env,
     firstSetup: !(configured ?? Boolean(await loadConfig())),
   });

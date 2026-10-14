@@ -38,7 +38,7 @@ Claude Code에서 `/team-memory`를 입력합니다. 바로 실행되고, 한 �
 | `/team-memory shared-off`, `shared-on` | 팀원과 내 다른 컴퓨터에 연 서버를 닫거나 다시 엽니다 |
 | `/team-memory shared-off <팀원>`, `shared-on <팀원>` | 그 팀원 한 사람의 열람만 끄거나 켭니다. 열어 준 폴더는 그대로 둡니다 |
 | `/team-memory setup` | 설정을 안내합니다 |
-| `/team-memory doctor` | 잘못된 곳을 찾아 알려 줍니다 |
+| `/team-memory doctor` | 잘못된 곳을 찾아 알려 줍니다. 플러그인을 올린 뒤 옛 판에 머문 설정·기억 서버·게이트웨이·앱은 바로 새 판에 맞춥니다 |
 
 ## 업데이트
 
@@ -49,6 +49,9 @@ claude plugin update team-memory@team-memory
 codex plugin marketplace upgrade
 codex plugin add team-memory@team-memory
 ```
+
+그다음 Claude Code를 새로 열고 `/team-memory doctor`를 입력합니다. 이 컴퓨터에 기억 서버가 있으면
+서버와 게이트웨이도 새 판으로 다시 시작합니다. 몇 분 걸릴 수 있습니다.
 
 ## 함께 설치되는 것
 

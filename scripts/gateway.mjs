@@ -435,6 +435,33 @@ export async function gatewayConnectInfo({ directory, runner, env, nodePath } = 
 }
 
 /**
+ * connect-info, asked again for a while when the gateway has a login but lists no
+ * model yet. Right after an install its adapters are still starting, so the router
+ * lists nothing and connect-info says not ready although every account is logged in:
+ * on the Mac Studio's 0.7.8 update, no models at once and 14 a moment later. Without
+ * a login it answers at once, since logging in is then the user's next step.
+ */
+export async function gatewayConnectInfoSettled({
+  directory,
+  runner,
+  env,
+  nodePath,
+  waitMs = 60_000,
+  intervalMs = 2_000,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+} = {}) {
+  let connection = await gatewayConnectInfo({ directory, runner, env, nodePath });
+  if (!connection.ok || connection.ready) return connection;
+  const status = await gatewayStatus({ directory, runner, env, nodePath });
+  if (status.loggedIn !== true) return connection;
+  for (let waited = 0; waited < waitMs && connection.ok && !connection.ready; waited += intervalMs) {
+    await sleep(intervalMs);
+    connection = await gatewayConnectInfo({ directory, runner, env, nodePath });
+  }
+  return connection;
+}
+
+/**
  * The gateway's own uninstall: its autostart removed and what it started stopped.
  * Its logins and state stay. `stopped` names what it stopped, when it says.
  */
