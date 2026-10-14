@@ -1,9 +1,10 @@
-// The team-memory MCP server's tools: who can be asked, and one teammate's opened
-// conversations, read through their server's MCP bridge with this computer's own
-// team login. What matters: the hub's people and each server's whoami make the
-// member list, a name finds one member, every call carries the question, a bare date
-// is a whole day here, the bridge's session is kept and opened again once when it
-// forgets it, and a refusal reaches the agent in words it can pass on.
+// The team-memory MCP server's tools: who can be asked, and one teammate's memory,
+// read through their server's MCP bridge with the owner's own tools and this
+// computer's own team login. What matters: the hub's people and each server's whoami
+// make the member list, with the tools each opened; a name finds one member; every
+// call carries the question and only the arguments its tool takes; the bridge's
+// session is kept and opened again once when it forgets it; and a refusal, or a
+// server too old for a tool, reaches the agent in words it can pass on.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
@@ -14,7 +15,8 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { finishLogin, setTeam, startLogin, teamAuthPaths } from "../scripts/team-auth.mjs";
-import { answerIn, findMember, localTime, membersOf, teamMemory, timeBound } from "../scripts/team-memory-tools.mjs";
+import { OPENABLE_TOOLS } from "../scripts/openable-tools.mjs";
+import { answerIn, findMember, membersOf, TEAM_TOOLS, teamMemory } from "../scripts/team-memory-tools.mjs";
 import { fakeTeam } from "./fake-team.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,7 +25,6 @@ const BOB = "memory-bob.example.com";
 const CAROL = "memory-carol.example.com";
 const MINE = "memory-me.example.com";
 const REDIRECT = "http://127.0.0.1:4180/oauth/callback";
-const ZONE = "Asia/Seoul";
 
 const DIRECTORY = {
   team: { name: "AI 코어", host: HUB, zone: "example.com" },
@@ -46,22 +47,20 @@ const sse = (message, headers = {}) => new Response(`event: message\ndata: ${JSO
 /** Bob's MCP bridge, as FastMCP's streamable HTTP answers: a session, results as Server-Sent Events. */
 function bridge() {
   const state = { sessions: new Set(), initialized: 0, calls: [], forgetNext: false };
+  // FastMCP wraps a list as {result}.
   const answers = {
-    list_conversations: () => ({
-      conversations: [{ id: "s-1", started_at: "2026-10-12T00:14:00Z", last_at: "2026-10-12T02:02:00Z", messages: 48, folder: "/Users/bob/dev/app", app: "claude", project: "app", branch: "main", opening: "OCR 엔진을 바꾸자" }],
-      total: 1,
-      shown: 1,
-    }),
-    search_messages: (args) => (args.conversation_id === "nope"
-      ? { isError: true, text: "Error calling tool 'search_messages': No conversation with that id is open to you on this MCP server" }
-      : { messages: [{ conversation_id: "s-1", at: "2026-10-12T00:20:00Z", speaker: "bob", content: "위노라 OCR은 PaddleOCR로" }, { conversation_id: "s-1", at: "2026-10-12T00:21:00Z", speaker: "assistant_claude", content: "바꿨습니다" }] }),
-    read_conversation: () => ({ id: "s-1", folder: "/Users/bob/dev/app", app: "claude", total: 2, page: 1, pages: 1, newest_first: false, messages: [{ at: "2026-10-12T00:14:00Z", speaker: "bob", content: "OCR 엔진을 바꾸자" }] }),
-    search_conclusions: () => ({ conclusions: [{ conversation_id: "s-1", conversation_last_at: "2026-10-12T02:02:00Z", content: "bob uses PaddleOCR" }] }),
+    search: (args) => (args.session_id === "nope"
+      ? { isError: true, text: "Error calling tool 'search': No conversation with that id is open to you on this MCP server" }
+      : { result: [{ id: "m-1", session_id: "s-1", peer_id: "bob", content: "위노라 OCR은 PaddleOCR로", created_at: "2026-10-12T00:20:00Z" }] }),
+    list_sessions: () => ({ items: [{ id: "s-1", metadata: { cwd: "/Users/bob/dev/app" } }], total: 1, page: 1, pages: 1 }),
+    get_session_messages: () => ({ items: [{ id: "m-0", peer_id: "bob", content: "OCR 엔진을 바꾸자" }], total: 1, page: 1, pages: 1 }),
+    query_conclusions: () => ({ result: [{ id: "c-1", session_id: "s-1", content: "bob uses PaddleOCR" }] }),
+    chat: () => ({ isError: true, text: "Error calling tool 'chat': chat is not open to you on this MCP server; use search, list_sessions" }),
   };
   async function handle(request, { email }) {
     const url = new URL(request.url);
     if (url.pathname === "/team-memory/whoami") {
-      return json(200, { email, owner: false, chat: { folders: [{ path: "/Users/bob/dev/app", subfolders: true }], sources: ["chatgpt"], off: false }, collect: false, device: null });
+      return json(200, { email, owner: false, chat: { folders: [{ path: "/Users/bob/dev/app", subfolders: true }], sources: ["chatgpt"], off: false, tools: ["search", "list_sessions", "get_session_messages", "query_conclusions"] }, collect: false, device: null });
     }
     if (url.pathname !== "/mcp") return json(404, { error: "not_found" });
     const message = await request.json();
@@ -81,6 +80,7 @@ function bridge() {
     }
     const { name, arguments: args } = message.params;
     state.calls.push({ name, args, email, session });
+    if (!answers[name]) return sse({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: `Unknown tool: '${name}'` }], isError: true } });
     const value = answers[name](args);
     if (value.isError) return sse({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: value.text }], isError: true } });
     return sse({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value, isError: false } });
@@ -114,14 +114,14 @@ async function setup(t, { servers = true } = {}) {
   await setTeam({ hub: HUB, email: "me@example.com" }, { paths });
   await login(HUB, "hub");
   if (servers) await login(BOB, "servers");
-  return { paths, fake, bob, team: teamMemory({ paths, fetchImpl: fake.fetch, timeZone: ZONE }) };
+  return { paths, fake, bob, team: teamMemory({ paths, fetchImpl: fake.fetch }) };
 }
 
 test("member lists who can be asked, what each opened, and leaves this person out", async (t) => {
   const { team, fake } = await setup(t);
   const text = await team.call("member", {});
   assert.match(text, /Team "AI 코어"/);
-  assert.match(text, /- 밥 \(bob@example\.com · memory-bob\.example\.com\): open to you: folders ~\/dev\/app; ChatGPT records/);
+  assert.match(text, /- 밥 \(bob@example\.com · memory-bob\.example\.com\): open to you: folders ~\/dev\/app; ChatGPT records\. Tools you may use: search, list_sessions, get_session_messages, query_conclusions/);
   assert.match(text, /- carol \(carol@example\.com · memory-carol\.example\.com\): not open to you/);
   assert.match(text, /- dave \(dave@example\.com\): has no memory server/);
   assert.doesNotMatch(text, /me@example\.com/);
@@ -129,36 +129,31 @@ test("member lists who can be asked, what each opened, and leaves this person ou
   assert.equal(fake.state.requests.some((request) => new URL(request.url).hostname === MINE), false);
 });
 
-test("a search goes to the member's bridge with the question, a whole local day, and one session", async (t) => {
+test("a call goes to the member's bridge with the question and only what its tool takes, in one session", async (t) => {
   const { team, bob } = await setup(t);
-  const found = await team.call("search_messages", { member: "밥", question: "밥이 OCR 뭐로 바꿨어?", query: "OCR 엔진", since: "2026-10-12", until: "2026-10-12" });
-  assert.deepEqual(bob.state.calls[0].args, {
-    question: "밥이 OCR 뭐로 바꿨어?",
-    query: "OCR 엔진",
-    since: "2026-10-11T15:00:00.000Z",
-    until: "2026-10-12T14:59:59.999Z",
-  });
+  const found = await team.call("search", { member: "밥", question: "밥이 OCR 뭐로 바꿨어?", query: "OCR 엔진", limit: 5, workspace_id: "other" });
+  assert.deepEqual(bob.state.calls[0].args, { question: "밥이 OCR 뭐로 바꿨어?", query: "OCR 엔진", limit: 5 }, "nothing past its schema");
   assert.equal(bob.state.calls[0].email, "me@example.com");
-  assert.match(found, /2 messages matched "OCR 엔진"\. Times are Asia\/Seoul\./);
-  assert.match(found, /\[1\] conversation s-1 · 2026-10-12 09:20 · bob \(밥\)\n위노라 OCR은 PaddleOCR로/);
-  assert.match(found, /assistant_claude \(their agent\)/);
+  assert.match(found, /^밥 \(peer bob\) · search:\n/);
+  assert.match(found, /"content": "위노라 OCR은 PaddleOCR로"/);
 
   // By email or peer it is the same member, and the session stays open.
-  const listed = await team.call("list_conversations", { member: "bob@example.com", question: "밥 대화 목록", limit: 5 });
-  assert.match(listed, /s-1 \| 2026-10-12 09:14 → 2026-10-12 11:02 \| 48 messages \| ~\/dev\/app · claude · project app · branch main\n  opens with: OCR 엔진을 바꾸자/);
-  const read = await team.call("read_conversation", { member: "bob", question: "그 대화 읽어 줘", conversation_id: "s-1" });
-  assert.match(read, /밥 · conversation s-1 · ~\/dev\/app · claude · page 1 of 1 \(2 messages, oldest first\)/);
-  const facts = await team.call("search_conclusions", { member: "memory-bob", question: "밥 OCR", query: "OCR" });
-  assert.match(facts, /- bob uses PaddleOCR \(conversation s-1, last active 2026-10-12 11:02\)/);
+  assert.match(await team.call("list_sessions", { member: "bob@example.com", question: "밥 대화 목록", size: 5 }), /"cwd": "\/Users\/bob\/dev\/app"/);
+  assert.match(await team.call("get_session_messages", { member: "bob", question: "그 대화 읽어 줘", session_id: "s-1" }), /OCR 엔진을 바꾸자/);
+  assert.match(await team.call("query_conclusions", { member: "memory-bob", question: "밥 OCR", query: "OCR", observer_id: "bob", observed_id: "bob" }), /bob uses PaddleOCR/);
   assert.equal(bob.state.initialized, 1);
-  assert.deepEqual(bob.state.calls.map((call) => call.args.question), ["밥이 OCR 뭐로 바꿨어?", "밥 대화 목록", "그 대화 읽어 줘", "밥 OCR"]);
+  assert.deepEqual(bob.state.calls.map((call) => [call.name, call.args.question]), [
+    ["search", "밥이 OCR 뭐로 바꿨어?"], ["list_sessions", "밥 대화 목록"], ["get_session_messages", "그 대화 읽어 줘"], ["query_conclusions", "밥 OCR"],
+  ]);
+  await assert.rejects(team.call("get_session_messages", { member: "bob", question: "q" }), /session_id is required/);
 });
 
 test("a session the bridge forgot is opened again, once", async (t) => {
   const { team, bob } = await setup(t);
-  await team.call("search_conclusions", { member: "bob", question: "q", query: "OCR" });
+  const ask = { member: "bob", question: "q", query: "OCR", observer_id: "bob", observed_id: "bob" };
+  await team.call("query_conclusions", ask);
   bob.state.forgetNext = true;
-  const facts = await team.call("search_conclusions", { member: "bob", question: "q", query: "OCR" });
+  const facts = await team.call("query_conclusions", ask);
   assert.match(facts, /PaddleOCR/);
   assert.equal(bob.state.initialized, 2);
 });
@@ -166,25 +161,35 @@ test("a session the bridge forgot is opened again, once", async (t) => {
 test("a refusal reaches the agent in the member's name and the bridge's words", async (t) => {
   const { team } = await setup(t);
   await assert.rejects(
-    team.call("search_messages", { member: "bob", question: "q", query: "x", conversation_id: "nope" }),
+    team.call("search", { member: "bob", question: "q", query: "x", session_id: "nope" }),
     { message: "밥: No conversation with that id is open to you on this MCP server" },
   );
   await assert.rejects(
-    team.call("search_messages", { member: "carol", question: "q", query: "x" }),
+    team.call("chat", { member: "bob", question: "q", query: "x" }),
+    { message: "밥: chat is not open to you on this MCP server; use search, list_sessions" },
+  );
+  // A server from before the owner's tools could be opened.
+  await assert.rejects(
+    team.call("get_peer_card", { member: "bob", question: "q", peer_id: "bob" }),
+    { message: "밥's server runs an older Team Memory without get_peer_card. Ask them to update (/team-memory doctor)." },
+  );
+  await assert.rejects(
+    team.call("search", { member: "carol", question: "q", query: "x" }),
     { message: "carol: This server's owner has not opened its memory to you." },
   );
-  await assert.rejects(team.call("search_messages", { member: "dave", question: "q", query: "x" }), /dave has no memory server/);
-  await assert.rejects(team.call("search_messages", { member: "bob", query: "x" }), /question is required/);
+  await assert.rejects(team.call("search", { member: "dave", question: "q", query: "x" }), /dave has no memory server/);
+  await assert.rejects(team.call("search", { member: "bob", query: "x" }), /question is required/);
+  await assert.rejects(team.call("search_messages", { member: "bob", question: "q", query: "x" }), /Unknown tool: search_messages/);
   for (const member of ["me", "ME@example.com", "나"]) {
-    await assert.rejects(team.call("search_messages", { member, question: "q", query: "x" }), /use the honcho tools/, member);
+    await assert.rejects(team.call("search", { member, question: "q", query: "x" }), /use the honcho tools/, member);
   }
-  await assert.rejects(team.call("search_messages", { member: "zed", question: "q", query: "x" }), /No teammate is called "zed"\. Teammates: 밥 \(bob@example\.com\), carol/);
+  await assert.rejects(team.call("search", { member: "zed", question: "q", query: "x" }), /No teammate is called "zed"\. Teammates: 밥 \(bob@example\.com\), carol/);
 });
 
 test("without the servers login the tools say where to log in", async (t) => {
   const { team } = await setup(t, { servers: false });
   await assert.rejects(team.call("member", {}), /팀 서버 로그인/);
-  await assert.rejects(team.call("search_messages", { member: "bob", question: "q", query: "x" }), /팀 서버 로그인/);
+  await assert.rejects(team.call("search", { member: "bob", question: "q", query: "x" }), /팀 서버 로그인/);
 });
 
 test("a name finds one member: exactly first, then by its start; two are named back", () => {
@@ -216,17 +221,6 @@ test("a company server goes by its label, even its owner's", () => {
     ],
   }, "me@example.com");
   assert.deepEqual(members.map((member) => [member.name, member.company]), [["boss", false], ["office", true]]);
-});
-
-test("a bare date is a whole day in the given time zone, across a clock change", () => {
-  assert.equal(timeBound("2026-03-08", "since", { timeZone: "America/New_York" }), "2026-03-08T05:00:00.000Z");
-  assert.equal(timeBound("2026-03-08", "until", { end: true, timeZone: "America/New_York" }), "2026-03-09T03:59:59.999Z");
-  assert.equal(timeBound("2026-10-12T09:00:00+09:00", "since", { timeZone: ZONE }), "2026-10-12T00:00:00.000Z");
-  assert.equal(timeBound("", "since"), undefined);
-  assert.throws(() => timeBound("2026-02-30", "since"), /since is not a date/);
-  assert.throws(() => timeBound("yesterday", "until"), /until takes a date/);
-  assert.equal(localTime("2026-10-12T00:14:00Z", ZONE), "2026-10-12 09:14");
-  assert.equal(localTime(null, ZONE), "?");
 });
 
 test("an answer is found in JSON or in Server-Sent Events", () => {
@@ -262,6 +256,8 @@ test("the stdio server offers no tools before this computer joins a team", async
   assert.deepEqual((await rpc(2, "tools/list")).result.tools, []);
   await setTeam({ hub: HUB, email: "me@example.com" }, { paths: teamAuthPaths(null, { HONCHO_AGENT_TEAM_AUTH: path.join(dir, "state", "team-auth.json") }) });
   const tools = (await rpc(3, "tools/list")).result.tools;
-  assert.deepEqual(tools.map((item) => item.name), ["member", "list_conversations", "search_messages", "read_conversation", "search_conclusions"]);
+  assert.deepEqual(tools.map((item) => item.name), TEAM_TOOLS);
+  assert.deepEqual(TEAM_TOOLS, ["member", ...Object.values(OPENABLE_TOOLS).flat()], "the owner's tools that read, and no other");
   assert.ok(tools.slice(1).every((item) => item.inputSchema.required.includes("question") && item.annotations.readOnlyHint));
+  assert.ok(tools.every((item) => !("workspace_id" in item.inputSchema.properties) && !("filters" in item.inputSchema.properties)), "the team's bridge takes neither");
 });

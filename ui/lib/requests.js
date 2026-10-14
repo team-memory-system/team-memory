@@ -20,6 +20,7 @@ import { number } from "./format.js";
 import { listItem, modal } from "./kit.js";
 import { ago, loginTab, personName as nameOfPerson, registerWith, serversLogin, teamCall, teamDirectory, teamRequests, teamStatus } from "./team.js";
 import { app, loadContext } from "./state.js";
+import { DEFAULT_TOOLS, toolPicker, toolsText } from "./tool-grants.js";
 import { button, busy, notice, spinner, toast } from "./ui.js";
 
 let latest = null;
@@ -66,17 +67,22 @@ function personName(request, field = "from") {
 
 /**
  * The folders window: what a teammate's agents may search and read, folders and,
- * under 폴더 없는 대화, ChatGPT 기록 and other apps' conversations. Used to approve a request
- * (T2) and to change what is open later (T4). `who` is the teammate. `chosenNames`
- * ticks what an approval opened as the hub named it, where this server has no grant
- * to show (grantFromHubNames). Resolves
- * `{ folders: [{ path, subfolders }], sources: ["chatgpt"] }` (folder-grants.js), or
- * null when closed.
+ * under 폴더 없는 대화, ChatGPT 기록 and other apps' conversations, on its 열 폴더 tab,
+ * and the owner's MCP tools they may call on its MCP 도구 tab (tool-grants.js), with
+ * 모든 팀원에게 같은 도구 열기 under them. Used to approve a request (T2) and to
+ * change what is open later (T4). `who` is the teammate. `chosenNames` ticks what an
+ * approval opened as the hub named it, where this server has no grant to show
+ * (grantFromHubNames); `chosenTools` what the tab starts with. Resolves
+ * `{ folders: [{ path, subfolders }], sources: ["chatgpt"], tools: ["search"], allTools }`
+ * (folder-grants.js), or null when closed.
  */
-export function chooseFolders({ title, lead, who, chosen = [], chosenSources = [], chosenNames = [], confirm = "승인", extra = null }) {
+export function chooseFolders({ title, lead, who, chosen = [], chosenSources = [], chosenNames = [], chosenTools = DEFAULT_TOOLS, confirm = "승인", extra = null }) {
   return new Promise((resolve) => {
     let entries = null;
     const win = modal({ title, big: true, small: true, onClose: (value) => resolve(value === "ok" ? entries : null) });
+    const allTools = h("input", { type: "checkbox" });
+    const toolCount = h("span", { class: "n" });
+    const picker = toolPicker(chosenTools, { onChange: () => drawSummary() });
     const box = h("div", {}, spinner());
     const summary = h("span", { class: "foot-hint" });
     const problem = h("div", {});
@@ -90,9 +96,9 @@ export function chooseFolders({ title, lead, who, chosen = [], chosenSources = [
       if (!rows) return;
       const picked = grantFromTicked(tree, checked);
       const opened = apps.filter((row) => sources.has(row.key)).map((row) => row.key);
-      if (!picked.length && !opened.length) { clear(problem, notice("warn", "폴더나 ChatGPT 기록을 하나 이상 고르세요.")); return; }
-      if (tooMany(picked)) { clear(problem, notice("warn", "고른 폴더가 너무 많습니다. 위쪽 폴더를 통째로 고르면 줄어듭니다.")); return; }
-      entries = { folders: picked, sources: opened };
+      if (!picked.length && !opened.length) { show("folders"); clear(problem, notice("warn", "폴더나 ChatGPT 기록을 하나 이상 고르세요.")); return; }
+      if (tooMany(picked)) { show("folders"); clear(problem, notice("warn", "고른 폴더가 너무 많습니다. 위쪽 폴더를 통째로 고르면 줄어듭니다.")); return; }
+      entries = { folders: picked, sources: opened, tools: picker.tools(), allTools: allTools.checked };
       win.close("ok");
     } });
     const drawSummary = () => {
@@ -101,16 +107,39 @@ export function chooseFolders({ title, lead, who, chosen = [], chosenSources = [
       const opened = apps.filter((row) => sources.has(row.key));
       const conversations = ticked.reduce((sum, row) => sum + row.count, 0) + opened.reduce((sum, row) => sum + row.count, 0);
       const what = [ticked.length ? `폴더 ${number(ticked.length)}개` : null, ...opened.map((row) => row.label)].filter(Boolean);
-      clear(summary, what.length ? `${what.join(" · ")} · 대화 ${number(conversations)}개를 엽니다` : rows ? "폴더나 ChatGPT 기록을 하나 이상 고르세요." : "");
-      apply.disabled = !rows || !what.length;
+      const tools = picker.tools().length;
+      clear(toolCount, number(tools));
+      clear(summary, !what.length ? (rows ? "폴더나 ChatGPT 기록을 하나 이상 고르세요." : "")
+        : !tools ? "MCP 도구를 하나 이상 켜세요."
+          : `${what.join(" · ")} · 대화 ${number(conversations)}개 · ${toolsText(picker.tools())}를 엽니다`);
+      apply.disabled = !rows || !what.length || !tools;
     };
+    // 열 폴더 first: what is open is the first thing to choose; the tools start as they
+    // were. Both tabs keep one height, so the window does not jump between them.
+    const panes = {
+      folders: h("div", { class: "tab-pane" }, box,
+        h("p", { class: "hint" }, "폴더를 고르면 그 안의 폴더도 같이 열립니다. 나중에 그 안에 생기는 폴더도 열립니다. ChatGPT 기록은 나중에 더 가져오는 것도 열립니다."),
+        problem),
+      tools: h("div", { class: "tab-pane", hidden: true }, picker.node),
+    };
+    const tabs = {
+      folders: h("button", { type: "button", role: "tab", "aria-selected": "true", onclick: () => show("folders") }, "열 폴더"),
+      tools: h("button", { type: "button", role: "tab", "aria-selected": "false", onclick: () => show("tools") }, "MCP 도구 ", toolCount),
+    };
+    function show(name) {
+      for (const key of Object.keys(panes)) {
+        panes[key].hidden = key !== name;
+        tabs[key].setAttribute("aria-selected", String(key === name));
+      }
+    }
     win.body(
       h("p", { class: "lead", style: { marginTop: "4px" } }, lead),
-      box,
-      h("p", { class: "hint" }, "폴더를 고르면 그 안의 폴더도 같이 열립니다. 나중에 그 안에 생기는 폴더도 열립니다. ChatGPT 기록은 나중에 더 가져오는 것도 열립니다."),
-      problem);
+      h("div", { class: "tabs m-tabs", role: "tablist" }, tabs.folders, tabs.tools),
+      panes.folders,
+      panes.tools);
     // On a narrow screen the summary takes a line of its own, and the buttons stay together on the right.
-    win.foot(extra, [summary, h("span", { class: "foot-btns" }, button("취소", { kind: "quiet", onClick: () => win.close() }), apply)]);
+    win.foot([extra, h("label", { class: "all-tools" }, allTools, "모든 팀원에게 같은 도구 열기")],
+      [summary, h("span", { class: "foot-btns" }, button("취소", { kind: "quiet", onClick: () => win.close() }), apply)]);
     drawSummary();
     win.open();
     teamCall("/api/team/folders", {}).then((result) => {
@@ -135,8 +164,9 @@ export async function approveChat(request) {
   const who = personName(request);
   const chosen = await chooseFolders({
     title: `${who}에게 내 기억 열기`,
-    lead: `고른 폴더의 대화를 ${who}의 에이전트가 찾아서 그대로 읽습니다. 열 폴더를 고르세요.`,
+    lead: `고른 폴더의 대화를 ${who}의 에이전트가 찾아서 그대로 읽습니다. 열 폴더와 쓸 MCP 도구를 고르세요.`,
     who,
+    chosenTools: latest?.teamTools || DEFAULT_TOOLS,
   });
   if (!chosen) return false;
   await teamCall("/api/team/decide", { id: request.id, approve: true, kind: "chat", email: request.from, peer: request.fromPeer, ...chosen });
@@ -268,4 +298,27 @@ export function watchRequests() {
   if (registered) return;
   registered = true;
   bellSource(bellRows);
+}
+
+/**
+ * 모든 팀원 도구: the owner's MCP tools every teammate may call, those opened to now
+ * and those approved later. Resolves the tools chosen, or null when closed.
+ */
+export function chooseTeamTools(chosenTools = DEFAULT_TOOLS) {
+  return new Promise((resolve) => {
+    let tools = null;
+    const win = modal({ title: "모든 팀원 도구", big: true, small: true, onClose: (value) => resolve(value === "ok" ? tools : null) });
+    const summary = h("span", { class: "foot-hint" });
+    const picker = toolPicker(chosenTools, { onChange: () => drawSummary() });
+    const apply = button("적용", { kind: "primary", onClick: () => { tools = picker.tools(); win.close("ok"); } });
+    const drawSummary = () => {
+      const count = picker.tools().length;
+      clear(summary, count ? `팀원 모두에게 ${toolsText(picker.tools())}를 엽니다` : "MCP 도구를 하나 이상 켜세요.");
+      apply.disabled = !count;
+    };
+    win.body(h("p", { class: "lead", style: { marginTop: "4px" } }, "적용하면 팀원 모두가 이 도구를 씁니다. 나중에 승인한 팀원도 이 목록으로 시작합니다."), picker.node);
+    win.foot(null, [summary, h("span", { class: "foot-btns" }, button("취소", { kind: "quiet", onClick: () => win.close() }), apply)]);
+    drawSummary();
+    win.open();
+  });
 }

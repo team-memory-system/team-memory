@@ -203,10 +203,12 @@ services:
   # /mcp, which has already verified the caller's Cloudflare Access login, found
   # them in access.json, and sends the team MCP token, the verified email and the
   # scope headers: x-honcho-scope-mode `all` for an owner, `folders` with
-  # x-honcho-allowed-folders for a teammate. The gate drops any x-honcho-* header a
-  # caller sent, so with HONCHO_MCP_SCOPE_FROM_GATE the bridge trusts these, and a
-  # teammate's agent lists, searches and reads only the conversations in the folders
-  # opened to them. It offers those four tools alone, over one workspace as one peer;
+  # x-honcho-allowed-folders (and -sources, -tools) for a teammate. The gate drops any
+  # x-honcho-* header a caller sent, so with HONCHO_MCP_SCOPE_FROM_GATE the bridge
+  # trusts these, and a teammate's agent calls only the owner's tools opened to them,
+  # each held to the conversations in the folders opened to them but the
+  # whole-memory ones the owner chose to open. It offers the owner's tools that read
+  # and the four a teammate's agent called before, over one workspace as one peer;
   # callers cannot point it at another by header or argument. Its /audit, the record of those calls, and /guard-trial,
   # where the owner tries a question as a teammate's, are for the dashboard only:
   # neither is under /mcp, so the gate never passes them on.
@@ -223,7 +225,7 @@ services:
       HONCHO_MCP_PATH: /mcp
       HONCHO_MCP_REQUIRE_AUTH: "1"
       HONCHO_MCP_BEARER_TOKEN: ${HONCHO_TEAM_MCP_TOKEN:-}
-      HONCHO_MCP_ENABLED_TOOLS: list_conversations,search_messages,read_conversation,search_conclusions
+      HONCHO_MCP_ENABLED_TOOLS: search,list_sessions,get_session_messages,get_session_message,get_session_context,inspect_session,get_session_peers,query_conclusions,list_conclusions,chat,get_representation,get_peer_context,get_peer_card,server_info,list_peers,get_metadata,inspect_workspace,list_workspaces,get_queue_status,list_conversations,search_messages,read_conversation,search_conclusions
       HONCHO_MCP_PIN_DEFAULTS: "1"
       HONCHO_WORKSPACE_ID: ${HONCHO_TEAM_WORKSPACE:-memory}
       HONCHO_USER_NAME: ${HONCHO_TEAM_PEER:-}
@@ -232,7 +234,8 @@ services:
       HONCHO_AUDIT_BRIDGE: team
       HONCHO_AUDIT_READ: "1"
       HONCHO_MCP_SCOPE_FROM_GATE: "1"
-      # Jev judges each teammate's question first and refuses one about the owner's
+      # Jev judges each teammate's question first, whatever the tool (HONCHO_JEV_TOOLS
+      # adds tools judged for the owner's calls too), and refuses one about the owner's
       # private life rather than shared work, then judges what their search or read
       # found and withholds what gives such things away. Off while HONCHO_JEV_GATE is
       # empty. In a team the bridge asks the team hub's guard instead

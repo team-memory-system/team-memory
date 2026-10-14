@@ -59,11 +59,14 @@ Each refusal leaves a `refused` line with the door and its reason, never an emai
 or a key, in the gate's log.
 
 `mcp` is honcho-selfhost's `local-mcp-bridge`, built from `honcho/local-mcp-
-bridge`. It offers four tools only, `list_conversations`, `search_messages`,
-`read_conversation` and `search_conclusions`, pinned to `HONCHO_TEAM_WORKSPACE`
-(default `memory`) and `HONCHO_TEAM_PEER`; with `HONCHO_MCP_SCOPE_FROM_GATE` a
-teammate lists, searches and reads only the conversations of the folders in the
-gate's scope headers, and the conclusions drawn from them. It records each
+bridge`. It offers the owner's tools that read (`search`, `list_sessions`,
+`get_session_messages`, `chat` and the rest of `scripts/openable-tools.mjs`) and the
+four a teammate's agent called before, pinned to `HONCHO_TEAM_WORKSPACE` (default
+`memory`) and `HONCHO_TEAM_PEER`; with `HONCHO_MCP_SCOPE_FROM_GATE` a teammate calls
+only the tools in the gate's `x-honcho-allowed-tools` (the folder tools when it sends
+none), each held to the conversations of the folders in the gate's scope headers and
+the conclusions drawn from them, but for the whole-memory tools (`chat`,
+`get_representation`, `get_peer_context`, `get_peer_card`) the owner chose to open. It records each
 call in the audit schema as bridge `team`, with the caller's email, and with
 `HONCHO_AUDIT_READ` serves that record at `/audit` to the team MCP token; the
 dashboard reads it there (`HONCHO_MCP_AUDIT_URL=http://mcp:8765/audit`) for the

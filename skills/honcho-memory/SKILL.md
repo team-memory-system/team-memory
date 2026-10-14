@@ -20,7 +20,7 @@ Prefer `get_peer_context` or `get_representation` plus workspace-wide `search`. 
 
 ## A teammate's memory
 
-When the user asks what a teammate did, knows or decided ("밥에게 OCR 엔진 뭐로 바꿨는지 찾아봐"), that memory is not in these tools: use the `team-memory` MCP server. Its `member` tool takes the teammate's name and says what they opened; then `search_messages`, `list_conversations`, `read_conversation` and `search_conclusions` find and read it. Each call takes the user's question in `question`, which the teammate sees in their log.
+When the user asks what a teammate did, knows or decided ("밥에게 OCR 엔진 뭐로 바꿨는지 찾아봐"), that memory is not in these tools: use the `team-memory` MCP server. Its `member` tool takes the teammate's name and says what they opened and which tools; then the same tools as these, by the same names (`search`, `list_sessions`, `get_session_messages`, `chat` and the rest), find and read it. Each call takes the user's question in `question`, which the teammate sees in their log.
 
 ## Boundaries
 

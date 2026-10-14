@@ -7,7 +7,9 @@
 // row offers while it is missing. 내 기억을 여는 팀원 is the other way: what this
 // computer's server opened to whom (its gate's access.json), with 수정 for the
 // folders and ChatGPT 기록 and for closing it again, a switch that turns a
-// teammate's access off for now and on again, and who collects into it. A teammate
+// teammate's access off for now and on again, and who collects into it. Each row says
+// how many of my MCP tools are open to them, which 수정 changes for one teammate or,
+// ticked, for all; 모든 팀원 도구 sets them for every teammate at once. A teammate
 // the hub has as approved but this server opened nothing to (the team's address
 // moved here from another computer) gets 폴더 고르기, ticked as the hub named it. Who read my
 // memory is the 조회 기록 menu (audit.js). A team login that ended says so, with 다시
@@ -17,20 +19,22 @@ import { confirmWindow, list, listItem } from "../lib/kit.js";
 import { shortPath } from "../lib/collect.js";
 import { openedText } from "../lib/folder-grants.js";
 import { appRecords, josa } from "../lib/format.js";
-import { chooseFolders, loadRequests, serversLoginButton } from "../lib/requests.js";
+import { chooseFolders, chooseTeamTools, loadRequests, serversLoginButton } from "../lib/requests.js";
+import { toolsText } from "../lib/tool-grants.js";
 import { endedLogins, loginNotice, personName as nameOf, sendRequest, teamCall, teamDirectory, teamErrorNotice, teamStatus } from "../lib/team.js";
 import { refreshBell } from "../lib/bell.js";
 import { app, go } from "../lib/state.js";
 import { button, busy, notice, pageHead, spinner, tag, toast, toggle } from "../lib/ui.js";
 
-/** What is open to a teammate: the first few folders by name, then the apps, such as ChatGPT 기록. */
-function foldersText(folders, sources = []) {
-  if (!folders.length && !sources.length) return "열린 폴더 없음";
+/** What is open to a teammate: the first few folders by name, then the apps, such as ChatGPT 기록, then how many tools. */
+function foldersText(folders, sources = [], tools = null) {
+  const count = tools ? ` · ${toolsText(tools)}` : "";
+  if (!folders.length && !sources.length) return `열린 폴더 없음${count}`;
   const names = folders.slice(0, 3).map((entry) => `${shortPath(entry.path)}${entry.subfolders ? "" : " (그 폴더만)"}`);
   const more = folders.length > 3 ? ` 외 ${folders.length - 3}개` : "";
   const apps = sources.map(appRecords);
-  if (!folders.length) return `열린 대화: ${apps.join(" · ")}`;
-  return `열린 폴더: ${[`${names.join(" · ")}${more}`, ...apps].join(" · ")}`;
+  if (!folders.length) return `열린 대화: ${apps.join(" · ")}${count}`;
+  return `열린 폴더: ${[`${names.join(" · ")}${more}`, ...apps].join(" · ")}${count}`;
 }
 
 export default {
@@ -116,7 +120,11 @@ export default {
           : null,
         list({ title: "팀원 기억", empty: "아직 다른 팀원이 없습니다." }, mates),
         opened.length ? h("p", { class: "hint" }, `Claude Code나 Codex에게 "${opened[0].name}에게 OCR 엔진 뭐로 바꿨는지 찾아봐"처럼 팀원 이름을 넣어 말하면, 열린 대화에서 찾아 답합니다.`) : null,
-        granted ? list({ title: "내 기억을 여는 팀원", empty: "아직 없습니다." }, granted) : null);
+        granted ? list({
+          title: "내 기억을 여는 팀원",
+          empty: "아직 없습니다.",
+          actions: button("모든 팀원 도구", { kind: "small", onClick: () => teamTools(requests) }),
+        }, granted) : null);
     }
 
     /** What this computer's server opened to whom: its folders to read, or collecting into it. */
@@ -148,7 +156,7 @@ export default {
           rows.push(listItem({
             title: name,
             tags: [" ", tag("기억 열람"), off ? tag("꺼 둠", "warn") : null],
-            sub: foldersText(grant.chat.folders || [], grant.chat.sources || []),
+            sub: foldersText(grant.chat.folders || [], grant.chat.sources || [], grant.chat.tools),
             dim: off,
             end: [
               button("수정", { kind: "small", onClick: (event) => busy(event.currentTarget, async () => {
@@ -184,14 +192,24 @@ export default {
       })];
     }
 
+    /** 모든 팀원 도구: the same MCP tools for every teammate, those approved later too. */
+    async function teamTools(requests) {
+      const tools = await chooseTeamTools(requests?.teamTools);
+      if (!tools) return;
+      await teamCall("/api/team/tools", { tools });
+      await draw();
+      toast(`팀원 모두에게 ${toolsText(tools)}를 열었습니다`, "ok");
+    }
+
     /** 폴더 고르기: what the approval opened, as the hub named it, ticked to open on this server. */
     async function openAgain(person, request) {
       const name = nameOf(person);
       const chosen = await chooseFolders({
-        title: `${name}에게 연 폴더`,
-        lead: `${name}의 에이전트가 찾아서 그대로 읽는 폴더입니다. 승인할 때 연 폴더를 골라 두었습니다.`,
+        title: `${name}에게 연 기억`,
+        lead: `${name}의 에이전트가 찾아서 그대로 읽는 폴더와, 쓸 수 있는 MCP 도구입니다. 승인할 때 연 폴더를 골라 두었습니다.`,
         who: name,
         chosenNames: request.projects || [],
+        chosenTools: (await loadRequests())?.teamTools,
         confirm: "적용",
       });
       if (!chosen) return;
@@ -220,11 +238,12 @@ export default {
         }, { done: `${josa(name, "을/를")} 끊었습니다` });
       } });
       const chosen = await chooseFolders({
-        title: `${name}에게 연 폴더`,
-        lead: `${name}의 에이전트가 찾아서 그대로 읽는 폴더입니다.`,
+        title: `${name}에게 연 기억`,
+        lead: `${name}의 에이전트가 찾아서 그대로 읽는 폴더와, 쓸 수 있는 MCP 도구입니다.`,
         who: name,
         chosen: grant.chat.folders || [],
         chosenSources: grant.chat.sources || [],
+        chosenTools: grant.chat.tools,
         confirm: "적용",
         extra: close,
       });

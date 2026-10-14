@@ -714,6 +714,23 @@ test("access.json is read again when it changes: a device revoked and given back
   assert.deepEqual(foldersOf(mcpSeen.at(-1)), [FOLDERS[1]]);
   assert.deepEqual(sourcesOf(mcpSeen.at(-1)), SOURCES);
 
+  // The owner's tools: theirs, else the server's for every teammate, else none is sent
+  // and the bridge opens its default. Names are kept once each, and only names.
+  const toolsOf = (received) => JSON.parse(Buffer.from(received.headers["x-honcho-allowed-tools"], "base64url").toString("utf8"));
+  assert.equal(mcpSeen.at(-1).headers["x-honcho-allowed-tools"], undefined);
+  await writeAccess(stateDir, strangerWith({ folders: [FOLDERS[1]], tools: ["search", "chat", "Bad name", "chat"] }));
+  await eventually(async () => assert.deepEqual((await strangerChat()).tools, ["search", "chat"]));
+  assert.equal((await strangerAsks()).status, 200);
+  assert.deepEqual(toolsOf(mcpSeen.at(-1)), ["search", "chat"]);
+  await writeAccess(stateDir, { ...strangerWith({ folders: [FOLDERS[1]] }), tools: ["list_sessions"] });
+  await eventually(async () => assert.deepEqual((await strangerChat()).tools, ["list_sessions"]));
+  assert.equal((await strangerAsks()).status, 200);
+  assert.deepEqual(toolsOf(mcpSeen.at(-1)), ["list_sessions"]);
+  await writeAccess(stateDir, { ...strangerWith({ folders: [FOLDERS[1]], tools: [] }), tools: ["list_sessions"] });
+  await eventually(async () => assert.deepEqual((await strangerChat()).tools, []));
+  assert.equal((await strangerAsks()).status, 200);
+  assert.deepEqual(toolsOf(mcpSeen.at(-1)), [], "every tool turned off is sent as such");
+
   // The collector is taken off and the revoked device given back.
   const { [COLLECT_EMAIL]: _collector, ...withoutCollector } = people;
   await writeAccess(stateDir, accessFile({ people: withoutCollector }));
@@ -1016,6 +1033,7 @@ test("/mcp: an owner asks every folder, a person with chat only theirs, and anyo
     "x-honcho-scope-mode": "all",
     "x-honcho-allowed-folders": Buffer.from(JSON.stringify([{ path: "/", subfolders: true }])).toString("base64url"),
     "x-honcho-allowed-sources": Buffer.from(JSON.stringify(["unknown"])).toString("base64url"),
+    "x-honcho-allowed-tools": Buffer.from(JSON.stringify(["chat"])).toString("base64url"),
     // Spelled with "_", which some servers read as "-".
     x_honcho_scope_mode: "all",
     cf_access_authenticated_user_email: "boss@example.com",
@@ -1027,6 +1045,7 @@ test("/mcp: an owner asks every folder, a person with chat only theirs, and anyo
   assert.equal(received.headers["x-honcho-scope-mode"], "all");
   assert.equal(received.headers["x-honcho-allowed-folders"], undefined, "an owner has no list: every folder");
   assert.equal(received.headers["x-honcho-allowed-sources"], undefined, "nor apps");
+  assert.equal(received.headers["x-honcho-allowed-tools"], undefined, "nor tools");
   for (const name of ["x-team-memory-device", "x_honcho_scope_mode", "cf_access_authenticated_user_email"]) {
     assert.equal(received.headers[name], undefined, `${name} is dropped`);
   }

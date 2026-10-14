@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
 
-import { gateStatePaths, readGateAccess } from "../scripts/gate-access.mjs";
+import { DEFAULT_TOOLS, gateStatePaths, readGateAccess } from "../scripts/gate-access.mjs";
 import { fakeTeam, ISSUER_HOST } from "./fake-team.mjs";
 
 const HUB = "team.example.com";
@@ -280,7 +280,7 @@ test("an admin makes a teammate an admin or takes it away through the hub, and t
   assert.equal((await send("/api/team/status")).json.admin, true);
 });
 
-test("the owner opens folders and ChatGPT 기록 to a teammate, turns them off and on, and the hub names what is open", async () => {
+test("the owner opens folders, ChatGPT 기록 and MCP tools to a teammate, turns them off and on, and the hub names what is open", async () => {
   const REQUEST = "r-0123456789abcdef";
   const HONCHO = { path: "/Users/me/dev/honcho", subfolders: true };
   const chatOf = async () => (await readGateAccess(gateStatePaths())).people["mate@example.com"]?.chat;
@@ -294,7 +294,7 @@ test("the owner opens folders and ChatGPT 기록 to a teammate, turns them off a
   assert.equal(await chatOf(), undefined);
 
   assert.equal((await post("/api/team/decide", { ...approve, folders: [HONCHO], sources: ["chatgpt"] })).ok, true);
-  assert.deepEqual(await chatOf(), { folders: [HONCHO], sources: ["chatgpt"], since: (await chatOf()).since });
+  assert.deepEqual(await chatOf(), { folders: [HONCHO], sources: ["chatgpt"], tools: [...DEFAULT_TOOLS], since: (await chatOf()).since });
   assert.deepEqual(hubSeen.at(-1), { method: "POST", path: `/api/requests/${REQUEST}/decide`, email: "me@example.com", body: { approve: true, projects: ["ChatGPT 기록", "~/dev/honcho"] } });
 
   // Off for now, with what is open kept, and still off while the folders change.
@@ -310,6 +310,17 @@ test("the owner opens folders and ChatGPT 기록 to a teammate, turns them off a
   assert.match((await post("/api/team/grant", { email: "nobody@example.com", off: false })).error, /요청을 승인하면 열립니다/);
   assert.equal((await post("/api/team/grant", { email: "mate@example.com", folders: [], sources: [] })).error, "폴더나 ChatGPT 기록을 하나 이상 고르세요. 모두 닫으려면 끊기를 누르세요.");
   assert.deepEqual((await chatOf()).folders, [HONCHO]);
+
+  // MCP tools: for this teammate, or ticked for every teammate, and the 모든 팀원 도구 window.
+  assert.match((await post("/api/team/grant", { email: "mate@example.com", folders: [HONCHO], tools: ["delete_session"] })).error, /MCP 도구를 하나 이상 켜세요/);
+  assert.equal((await post("/api/team/grant", { email: "mate@example.com", folders: [HONCHO], tools: ["search", "chat"] })).ok, true);
+  assert.deepEqual((await chatOf()).tools, ["search", "chat"]);
+  assert.deepEqual(await post("/api/team/tools", {}), { ok: true, tools: [...DEFAULT_TOOLS] }, "not set for all yet");
+  assert.equal((await post("/api/team/grant", { email: "mate@example.com", folders: [HONCHO], tools: ["search", "get_peer_card"], allTools: true })).ok, true);
+  assert.deepEqual(await post("/api/team/tools", {}), { ok: true, tools: ["search", "get_peer_card"] });
+  assert.deepEqual(await post("/api/team/tools", { tools: ["list_sessions"] }), { ok: true, tools: ["list_sessions"] });
+  assert.deepEqual((await chatOf()).tools, ["list_sessions"]);
+  assert.match((await post("/api/team/tools", { tools: [] })).error, /하나 이상/);
 });
 
 test("a member's hub login goes on to the servers' in the same window, once, and only for a member", async () => {

@@ -248,15 +248,21 @@ answer.
   `scripts/honcho-access.mjs`, and goes through `fetchHoncho`, which follows
   redirects only within that origin so an Access login redirect is seen, not
   followed.
-- **A teammate reads less than the owner.** A shared server's bridge is pinned to
-  the owner's workspace and peer, and refuses any other `workspace_id`, peer or
-  filter. Behind the gate, a teammate's agent has four tools, each held to the
-  sessions of the folders opened to them: `list_conversations`, `search_messages`
-  (one Honcho search with `filters.session_id`), `read_conversation` (a session
-  outside them is refused as if it did not exist) and `search_conclusions` (only
-  `explicit` conclusions drawn in those sessions, none of the dreamer's). `chat`
-  and the peer card are the owner's alone. More than 1000 such sessions is
-  refused; the owner opens fewer folders.
+- **A teammate reads what the owner opened, never writes.** A shared server's bridge
+  is pinned to the owner's workspace and peer, and refuses any other `workspace_id`,
+  peer or filter. Behind the gate, a teammate's agent calls the owner's own tools
+  that read, those the owner opened to them (`scripts/openable-tools.mjs`, the
+  bridge's `OPENABLE_TOOLS`; the folder tools when none were chosen). The folder
+  tools (`search`, `list_sessions`, `get_session_messages` and the rest) are held to
+  the sessions of the folders opened to them: a search or list names them in its
+  filter, a session outside them is refused as if it did not exist, conclusions are
+  only `explicit` ones drawn in those sessions, and messages come cut so Jev reads
+  an answer whole. The whole-memory tools (`chat`, `get_representation`,
+  `get_peer_context`, `get_peer_card`) read past the folders once opened, and Jev
+  judges every teammate call whatever the tool. No tool that writes can be opened.
+  The four tools a teammate's agent called before (`list_conversations`,
+  `search_messages`, `read_conversation`, `search_conclusions`) still answer, each
+  while the owner's tool it stands for is open.
 - **An install shared under 0.3.28 or before stops sharing on update.** Its tunnel
   ran on the host. `server prepare` and `server start` remove that autostart
   (moving its token into the `.env` when the `.env` has none), and drop `share` from
@@ -1070,7 +1076,7 @@ A personal server listens only on `127.0.0.1`. Sharing puts it behind a Cloudfla
 - **`gate`** (`server/gate/gate.mjs`) publishes `127.0.0.1:<gate port>` (8010, or the next free port; kept in the installed `.env` as `HONCHO_GATE_PORT` once chosen). It has two ways through:
   - `GET /health` and `/v3/*`, for the owner's other computers, with `Authorization: Bearer <gate token>`, compared in constant time. The gate token is 32 random bytes, generated once into the private `.env` as `HONCHO_GATE_TOKEN`. Bodies stream both ways (dialectic SSE included), and bodies over 20 MB are refused.
   - `/mcp`, for teammates' agents, only with a verified Cloudflare Access login: `Cf-Access-Jwt-Assertion`, checked against the team's keys and the application's AUD tag, with an email in it. The gate passes the request on to `mcp` with that email.
-- **`mcp`**, honcho-selfhost's MCP bridge, offers a teammate's four tools only (`list_conversations`, `search_messages`, `read_conversation`, `search_conclusions`), as `HONCHO_TEAM_PEER` in `HONCHO_TEAM_WORKSPACE`, and records each call with the caller's email and question in the `honcho_audit` schema of the server's PostgreSQL. With `HONCHO_JEV_GATE=1` in the `.env`, Jev judges each call's question first and what it found last: through the team hub's guard in a team, with `TYPESAFE_API_KEY` outside one (see "Who asked, and Jev").
+- **`mcp`**, honcho-selfhost's MCP bridge, offers the owner's tools that read and the four a teammate's agent called before, a teammate only those the owner opened to them (the gate's `x-honcho-allowed-tools`), as `HONCHO_TEAM_PEER` in `HONCHO_TEAM_WORKSPACE`, and records each call with the caller's email and question in the `honcho_audit` schema of the server's PostgreSQL. With `HONCHO_JEV_GATE=1` in the `.env`, Jev judges each call's question first and what it found last: through the team hub's guard in a team, with `TYPESAFE_API_KEY` outside one (see "Who asked, and Jev").
 - **`tunnel`**, `cloudflared` in a container, runs the tunnel whose token is `HONCHO_TUNNEL_TOKEN`. Its ingress, set in Cloudflare, is `http://gate:8010`.
 
 In Cloudflare the server's hostname has two Access applications. One covers `/v3` and `/health` and lets every request through to the gate, where the gate token is the lock. The other covers the rest of the hostname: it sends people to Google login and lets in only the emails on the team list, and MCP clients log in to it through Access's Managed OAuth.
@@ -1172,10 +1178,12 @@ The Team Memory app offers all of this on 서버 → 공유: "팀 만들기" (th
 
 ## Reading a teammate's memory / 팀원 기억 읽기
 
-The plugin's second MCP server, `team-memory` (`scripts/team-mcp-server.mjs`, beside `honcho` in `.mcp.json` and `.mcp.claude.json`), reads teammates' memories for Claude Code and Codex. It offers no tools until this computer has joined a team (a hub in `team-auth.json`), and then five (`scripts/team-memory-tools.mjs`):
+The plugin's second MCP server, `team-memory` (`scripts/team-mcp-server.mjs`, beside `honcho` in `.mcp.json` and `.mcp.claude.json`), reads teammates' memories for Claude Code and Codex. It offers no tools until this computer has joined a team (a hub in `team-auth.json`), and then `member` and the owner's tools that read, by the same names as the user's own `honcho` tools (`scripts/team-memory-tools.mjs`):
 
-- `member` lists the teammates whose memory can be read: each one's name, email and server, and what they opened (folders, ChatGPT 기록), 꺼 둠, or why it cannot be read yet. The people and servers come from the hub (`GET https://<hub>/api/team`, kept a minute), and what each opened from that server's gate (`/team-memory/whoami`). A person goes by the nickname an admin gave them (관리자 → 이름 바꾸기), else their peer; a company server by its label. The user's own servers are left out.
-- `list_conversations`, `search_messages`, `read_conversation` and `search_conclusions` name the teammate in `member` (their nickname, peer, email or its start, or the server's host or label; a name that fits two says both, and the user's own says to use the `honcho` tools) and go to that teammate's server as the bridge's tools of the same names (`https://<host>/mcp`, streamable HTTP, one MCP session per server, made again once when the server has forgotten it). The bridge there holds each call to the folders opened (see "Folders"). Every call carries `question`, the user's own words, which the teammate reads in 조회 기록. Times go out and come back in this computer's time zone, where a bare date is the whole local day.
+- `member` lists the teammates whose memory can be read: each one's name, email, peer and server, what they opened (folders, ChatGPT 기록) and which tools, 꺼 둠, or why it cannot be read yet. The people and servers come from the hub (`GET https://<hub>/api/team`, kept a minute), and what each opened from that server's gate (`/team-memory/whoami`). A person goes by the nickname an admin gave them (관리자 → 이름 바꾸기), else their peer; a company server by its label. The user's own servers are left out.
+- `search`, `list_sessions`, `get_session_messages`, `chat` and the rest (`scripts/openable-tools.mjs`) name the teammate in `member` (their nickname, peer, email or its start, or the server's host or label; a name that fits two says both, and the user's own says to use the `honcho` tools) and go to that teammate's server as the bridge's tools of the same names (`https://<host>/mcp`, streamable HTTP, one MCP session per server, made again once when the server has forgotten it), with only the arguments each takes; none takes `workspace_id` or `filters`, which the team's bridge refuses. The bridge there opens only the tools that teammate opened to this person and holds each to the folders opened (see "Folders"). Every call carries `question`, the user's own words, which the teammate reads in 조회 기록. An answer is the bridge's own JSON, its times UTC. A teammate's server from before 0.8.0 knows none of these tools, and the call says to ask them to update.
+
+The owner chooses the tools on 팀 → 내 기억을 여는 팀원: 수정 has two tabs, 열 폴더 and MCP 도구 (one switch per tool, in three kinds: 열린 폴더 안에서만, 기억 전체를 섞어 답함 with a line that it reads past the folders, 서버 정보), and 모든 팀원에게 같은 도구 열기 under them; 모든 팀원 도구 above the list sets them for every teammate and for those approved later (`/api/team/tools`, `access.json`'s top-level `tools`). Approving a request starts with those. Each row says how many tools are open.
 
 Every request goes with this computer's servers login (`teamFetch`): a Google login through Access that reaches every server of the team, made right after the hub login when this computer joined, or by 팀 서버 로그인 on the 팀 page or in the bell when it has none. Without it each tool says to open the app and press 팀 서버 로그인, and a refusal at a teammate's gate is said with that teammate's name. No agent logs in to anything itself.
 

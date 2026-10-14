@@ -9,158 +9,114 @@
 // servers login), as the app does, so no agent logs in to anything itself.
 //
 //   member               who can be asked: the hub's people and servers, and what each
-//                        server's gate says it lets this person read (whoami)
-//   list_conversations   the bridge's tools of the same names, on one member's server
-//   search_messages
-//   read_conversation
-//   search_conclusions
+//                        server's gate says it lets this person read (whoami): the
+//                        folders and apps, and which of the owner's tools
+//   search, list_sessions, get_session_messages, chat, ...
+//                        the owner's own MCP tools that read (gate-access.mjs
+//                        OPENABLE_TOOLS), on one member's server: their bridge holds
+//                        each to what that member opened to this person
 //
 // Every tool but member names the member and carries `question`, the user's own
-// words, which the member reads in their log. Times go to the bridge as ISO times and
-// come back in this computer's time zone, where a bare date is a whole day.
+// words, which the member reads in their log. An answer is the bridge's own, as
+// JSON; its times are UTC.
 import { loadConfig } from "./config.mjs";
+import { OPENABLE_TOOLS } from "./openable-tools.mjs";
 import { readTeamAuth, serverWhoami, TeamLoginError, teamAuthPaths, teamFetch, teamJson } from "./team-auth.mjs";
 import { VERSION } from "./version.mjs";
 
-export const REMOTE_TOOLS = Object.freeze(["list_conversations", "search_messages", "read_conversation", "search_conclusions"]);
+export const REMOTE_TOOLS = Object.freeze(Object.values(OPENABLE_TOOLS).flat());
 export const TEAM_TOOLS = Object.freeze(["member", ...REMOTE_TOOLS]);
 
 const PROTOCOL_VERSION = "2025-06-18";
 // The hub's people and servers are asked again after this long.
 const DIRECTORY_MS = 60_000;
-// A search over many conversations, or the answer check, can take a while.
-const CALL_MS = 120_000;
+// A search over many conversations, a chat, or the answer check, can take a while.
+const CALL_MS = 180_000;
 
 /** How to log in when a team server turned this computer's login down. */
 const LOGIN_NEEDED = "This computer is not logged in to the team's servers, or its login ended. Tell the user to open the Team Memory app (/team-memory), go to 팀 and press 팀 서버 로그인, then ask again.";
 const NO_TEAM = "This computer has not joined a team. Tell the user to run /team-memory setup and join their team first.";
 
 const STRING = { type: "string" };
+const INTEGER = (minimum, maximum, more = {}) => ({ type: "integer", minimum, ...(maximum ? { maximum } : {}), ...more });
+const NUMBER = { type: "number", minimum: 0, maximum: 1 };
+const BOOLEAN = { type: "boolean" };
 const MEMBER = { type: "string", minLength: 1, description: "The teammate whose memory to read: the name `member` lists, or their email." };
 const QUESTION = { type: "string", minLength: 1, description: "Your user's question in their own words. The teammate sees it in their log." };
-const TIME = (what) => ({ type: "string", description: `${what}: a date (YYYY-MM-DD, a whole day in this computer's time zone) or an ISO time.` });
+const SESSION = { type: "string", minLength: 1, description: "A session (conversation) id, as search or list_sessions gave it." };
+const PEER = (what) => ({ type: "string", minLength: 1, description: `${what}: a peer as member or list_peers names it, such as the teammate's own peer.` });
+const PAGE = INTEGER(1, null, { default: 1 });
 
 function tool(name, description, properties = {}, required = []) {
+  const remote = name !== "member";
   return {
     name,
     title: name.split("_").map((part) => part[0].toUpperCase() + part.slice(1)).join(" "),
     description,
-    inputSchema: { type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputSchema: {
+      type: "object",
+      properties: remote ? { member: MEMBER, question: QUESTION, ...properties } : properties,
+      ...(remote || required.length ? { required: remote ? ["member", "question", ...required] : required } : {}),
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: name !== "chat", openWorldHint: true },
   };
 }
 
-/** The tool definitions, as tools/list gives them. */
+const READ_REPRESENTATION = {
+  search_query: { ...STRING, description: "Bring the conclusions closest to this first." },
+  search_top_k: INTEGER(1, 100),
+  search_max_distance: NUMBER,
+  include_most_frequent: BOOLEAN,
+  max_conclusions: INTEGER(1, 100),
+};
+
+/** The tool definitions, as tools/list gives them: the owner's tools, each with member and question. */
 export const TOOL_DEFINITIONS = Object.freeze([
-  tool("member", "List the teammates whose memory you can read: each one's name, email and server, and what they opened to you (folders, ChatGPT records), or why you cannot read it yet. Call it first when you do not know the name to use."),
-  tool(
-    "list_conversations",
-    "List the conversations one teammate opened to you, the most recently active first: id, when it started and last ran, how many messages, its folder, app, project and git branch, and how it opened.",
-    {
-      member: MEMBER,
-      question: QUESTION,
-      since: TIME("Only conversations active on or after this"),
-      until: TIME("Only conversations started on or before this"),
-      contains: { ...STRING, description: "Words that must all appear in the folder, project, branch or first message." },
-      limit: { type: "integer", minimum: 1, maximum: 100, default: 30 },
-    },
-    ["member", "question"],
-  ),
-  tool(
-    "search_messages",
-    "Search the messages of the conversations one teammate opened to you, by meaning: both the teammate's own messages and their agents'. Each match comes with its conversation id, when it was said and by whom. Read a conversation to see a match in its context.",
-    {
-      member: MEMBER,
-      question: QUESTION,
-      query: { ...STRING, minLength: 1, description: "What to look for, in words likely to appear in the messages." },
-      limit: { type: "integer", minimum: 1, maximum: 30, default: 10 },
-      since: TIME("Only messages said on or after this"),
-      until: TIME("Only messages said on or before this"),
-      conversation_id: { ...STRING, description: "Only this conversation." },
-    },
-    ["member", "question", "query"],
-  ),
-  tool(
-    "read_conversation",
-    "Read one conversation a teammate opened to you, in order, a page at a time: page 1 is its start, or with newest_first its latest messages.",
-    {
-      member: MEMBER,
-      question: QUESTION,
-      conversation_id: { ...STRING, minLength: 1, description: "The id list_conversations or search_messages gave." },
-      page: { type: "integer", minimum: 1, default: 1 },
-      size: { type: "integer", minimum: 1, maximum: 50, default: 20 },
-      newest_first: { type: "boolean", default: false },
-    },
-    ["member", "question", "conversation_id"],
-  ),
-  tool(
-    "search_conclusions",
-    "Search the facts the teammate's memory drew about them from the conversations opened to you, by meaning: one sentence each, with the conversation it came from. Check what matters in the conversation itself.",
-    {
-      member: MEMBER,
-      question: QUESTION,
-      query: { ...STRING, minLength: 1 },
-      limit: { type: "integer", minimum: 1, maximum: 30, default: 10 },
-    },
-    ["member", "question", "query"],
-  ),
+  tool("member", "List the teammates whose memory you can read: each one's name, email, peer and server, what they opened to you (folders, ChatGPT records) and which of their tools you may call, or why you cannot read it yet. Call it first when you do not know the name to use."),
+  tool("search", "Search one teammate's messages by words and meaning both: a message that holds the words, and one that says something like them. Only the conversations they opened to you.", {
+    query: { ...STRING, minLength: 1, description: "What to look for: words likely to be in the messages, or what they would say." },
+    peer_id: PEER("Only messages this peer said"),
+    session_id: { ...SESSION, description: "Only this conversation." },
+    limit: INTEGER(1, 100, { default: 10 }),
+  }, ["query"]),
+  tool("list_sessions", "List the conversations (sessions) one teammate opened to you, a page at a time.", { page: PAGE, size: INTEGER(1, 100, { default: 50 }) }),
+  tool("get_session_messages", "Read one conversation of a teammate's, a page at a time, oldest first or with reverse the newest.", {
+    session_id: SESSION, page: PAGE, size: INTEGER(1, 50, { default: 50 }), reverse: { ...BOOLEAN, default: false },
+  }, ["session_id"]),
+  tool("get_session_message", "Read one message of a teammate's conversation.", { session_id: SESSION, message_id: { ...STRING, minLength: 1 } }, ["session_id", "message_id"]),
+  tool("get_session_context", "A teammate's conversation ready to read: its summary and latest messages within a token budget. peer_target and peer_perspective add what their memory drew about a peer, when they opened get_representation too.", {
+    session_id: SESSION, tokens: INTEGER(1), summary: { ...BOOLEAN, default: true },
+    peer_target: PEER("Add what was drawn about this peer"), peer_perspective: PEER("As this peer sees it"),
+    limit_to_session: BOOLEAN, ...READ_REPRESENTATION,
+  }, ["session_id"]),
+  tool("inspect_session", "One conversation of a teammate's: its metadata, such as its folder and app.", { session_id: SESSION }, ["session_id"]),
+  tool("get_session_peers", "Who took part in one conversation of a teammate's.", { session_id: SESSION }, ["session_id"]),
+  tool("query_conclusions", "Search the conclusions a teammate's memory drew, by meaning: one sentence each, each from one conversation they opened to you.", {
+    query: { ...STRING, minLength: 1 }, observer_id: PEER("Whose view"), observed_id: PEER("About whom"), top_k: INTEGER(1, 30, { default: 10 }), distance: NUMBER,
+  }, ["query", "observer_id", "observed_id"]),
+  tool("list_conclusions", "List the conclusions a teammate's memory drew from the conversations they opened to you, newest first or with reverse oldest.", { reverse: { ...BOOLEAN, default: false } }),
+  tool("chat", "Ask a teammate's memory a question in plain words; their server's model answers from their whole memory. Only when they opened chat to you.", {
+    query: { ...STRING, minLength: 1, description: "The question for their memory." },
+    peer_id: PEER("Whose view answers"), target_peer_id: PEER("About whom"), session_id: { ...SESSION, description: "Only this conversation." },
+    reasoning_level: { type: "string", enum: ["minimal", "low", "medium", "high", "max"], default: "low" },
+  }, ["query"]),
+  tool("get_representation", "What a teammate's memory drew about a peer, as text, from their whole memory.", { peer_id: PEER("About whom"), observer_id: PEER("Whose view"), session_id: { ...SESSION, description: "Only this conversation." }, ...READ_REPRESENTATION }, ["peer_id"]),
+  tool("get_peer_context", "What a teammate's memory drew about a peer, with its card.", { peer_id: PEER("About whom"), observer_id: PEER("Whose view"), ...READ_REPRESENTATION }, ["peer_id"]),
+  tool("get_peer_card", "The card a teammate's memory keeps about a peer: short facts.", { peer_id: PEER("About whom"), observer_id: PEER("Whose view") }, ["peer_id"]),
+  tool("server_info", "A teammate's server: its version and setup."),
+  tool("list_peers", "The people and agents in a teammate's memory, by peer."),
+  tool("get_metadata", "The metadata of a teammate's workspace, a peer, or a conversation they opened to you.", {
+    scope: { type: "string", enum: ["workspace", "peer", "session"], default: "workspace" }, peer_id: PEER("The peer, with scope peer"), session_id: { ...SESSION, description: "The conversation, with scope session." },
+  }),
+  tool("inspect_workspace", "A teammate's workspace: its id and metadata."),
+  tool("list_workspaces", "A teammate's workspace, as a list."),
+  tool("get_queue_status", "How much a teammate's memory still has to work through.", { observer_id: PEER("Whose view"), sender_id: PEER("Whose messages"), session_id: SESSION }),
 ]);
 
 /** The instructions an agent gets with the tools. */
-export function teamInstructions(timeZone = localTimeZone()) {
-  return `Your teammates' memories: their conversations with their AI agents, each opened to you by that teammate. Call member to see who you can read and what each opened. Then, one teammate at a time, search their messages (search_messages), list their conversations (list_conversations) and read the ones that matter (read_conversation) before you answer; say which teammate and conversation an answer comes from. Every call takes question, your user's question in their own words: the teammate sees it in their log. Times are in ${timeZone}. For your user's own memory, use the honcho tools instead.`;
-}
-
-export function localTimeZone() {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-}
-
-// ------------------------------------------------------------------ times
-
-/** How far `timeZone`'s wall clock is ahead of UTC at `at`, in milliseconds. */
-function zoneOffset(at, timeZone) {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
-    timeZone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
-  }).formatToParts(new Date(at)).map((part) => [part.type, part.value]));
-  const wall = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));
-  return wall - Math.floor(at / 1000) * 1000;
-}
-
-/** When a day starts in `timeZone`: y, m, d as on its calendar. */
-function dayStart(year, month, day, timeZone) {
-  const guess = Date.UTC(year, month - 1, day);
-  // Twice, so a day that starts on the other side of a clock change lands right.
-  const first = guess - zoneOffset(guess, timeZone);
-  return guess - zoneOffset(first, timeZone);
-}
-
-/**
- * A time as the bridge takes it: an ISO time as given, a bare date as the start of
- * that day here (or with `end`, its last millisecond). Nothing for nothing.
- */
-export function timeBound(value, name, { end = false, timeZone = localTimeZone() } = {}) {
-  if (value === undefined || value === null || !String(value).trim()) return undefined;
-  const text = String(value).trim();
-  const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
-  if (date) {
-    const [year, month, day] = date.slice(1).map(Number);
-    const check = new Date(Date.UTC(year, month - 1, day));
-    if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) {
-      throw new Error(`${name} is not a date: ${text}`);
-    }
-    const at = end ? dayStart(year, month, day + 1, timeZone) - 1 : dayStart(year, month, day, timeZone);
-    return new Date(at).toISOString();
-  }
-  const at = new Date(text);
-  if (Number.isNaN(at.getTime())) throw new Error(`${name} takes a date (YYYY-MM-DD) or an ISO time: ${text}`);
-  return at.toISOString();
-}
-
-/** An ISO time as a person here reads it: 2026-10-12 09:14. */
-export function localTime(iso, timeZone = localTimeZone()) {
-  const date = new Date(iso);
-  if (!iso || Number.isNaN(date.getTime())) return "?";
-  return date.toLocaleString("sv-SE", { timeZone, hour12: false }).slice(0, 16);
+export function teamInstructions() {
+  return "Your teammates' memories: their conversations with their AI agents, each opened to you by that teammate. Call member to see who you can read, what each opened and which tools you may use with each. The tools are your user's own honcho tools, by the same names, on one teammate's server, held to what that teammate opened: search their messages (search), list their conversations (list_sessions) and read the ones that matter (get_session_messages) before you answer, and say which teammate and conversation an answer comes from. Every call takes member and question, your user's question in their own words: the teammate sees it in their log. Times in answers are UTC. For your user's own memory, use the honcho tools instead.";
 }
 
 // ---------------------------------------------------------------- members
@@ -244,7 +200,8 @@ function standing(member, whoami) {
   const chat = whoami?.chat;
   if (!chat) return { state: "closed" };
   if (chat.off) return { state: "off" };
-  return { state: "open", folders: list(chat.folders), sources: list(chat.sources) };
+  // A gate from before tools were chosen names none: its bridge opens the folder tools.
+  return { state: "open", folders: list(chat.folders), sources: list(chat.sources), tools: Array.isArray(chat.tools) ? chat.tools : [...OPENABLE_TOOLS.folder] };
 }
 
 const APPS = { chatgpt: "ChatGPT records", unknown: "conversations of other apps" };
@@ -259,7 +216,8 @@ function standingText(view) {
     case "open": {
       const folders = view.folders.map((folder) => `${shortFolder(folder.path)}${folder.subfolders ? "" : " (that folder only)"}`);
       const apps = view.sources.map((source) => APPS[source] || `${source} records`);
-      return `open to you: ${[folders.length ? `folders ${folders.join(", ")}` : null, ...apps].filter(Boolean).join("; ")}`;
+      const opened = [folders.length ? `folders ${folders.join(", ")}` : null, ...apps].filter(Boolean).join("; ");
+      return `open to you: ${opened}. Tools you may use: ${view.tools.join(", ") || "none"}`;
     }
     case "off": return "opened to you, but turned off by them for now";
     case "closed": return "not open to you; your user can ask them in the Team Memory app (팀 → 요청)";
@@ -316,43 +274,10 @@ function resultText(result) {
 
 // -------------------------------------------------------------- the texts
 
-function speakerOf(speaker, member) {
-  if (!speaker) return "?";
-  if (member.peer && speaker === member.peer) return `${speaker} (${member.name})`;
-  if (/^assistant/.test(speaker)) return `${speaker} (their agent)`;
-  return speaker;
-}
-
-function conversationsText(member, value, timeZone) {
-  const rows = list(value?.conversations);
-  const head = `${member.name}: ${value?.total ?? rows.length} conversations match; showing ${rows.length}, the most recently active first. Times are ${timeZone}.`;
-  const lines = rows.map((item) => {
-    const where = [shortFolder(item.folder) || "no folder", item.app, item.project ? `project ${item.project}` : null, item.branch ? `branch ${item.branch}` : null].filter(Boolean).join(" · ");
-    return `${item.id} | ${localTime(item.started_at, timeZone)} → ${localTime(item.last_at, timeZone)} | ${item.messages ?? "?"} messages | ${where}\n  opens with: ${item.opening || "(nothing)"}`;
-  });
-  return [head, ...lines].join("\n");
-}
-
-function messagesText(member, value, query, timeZone) {
-  const rows = list(value?.messages);
-  if (!rows.length) return `${member.name}: no message matched "${query}". Try other words, or list_conversations.`;
-  const lines = rows.map((item, index) => `[${index + 1}] conversation ${item.conversation_id} · ${localTime(item.at, timeZone)} · ${speakerOf(item.speaker, member)}\n${item.content ?? ""}`);
-  return [`${member.name}: ${rows.length} messages matched "${query}". Times are ${timeZone}.`, ...lines].join("\n\n");
-}
-
-function conversationText(member, value, timeZone) {
-  const rows = list(value?.messages);
-  const where = [shortFolder(value?.folder), value?.app].filter(Boolean).join(" · ");
-  const head = `${member.name} · conversation ${value?.id}${where ? ` · ${where}` : ""} · page ${value?.page ?? "?"} of ${value?.pages ?? "?"} (${value?.total ?? "?"} messages, ${value?.newest_first ? "newest" : "oldest"} first). Times are ${timeZone}.`;
-  const lines = rows.map((item) => `${localTime(item.at, timeZone)} · ${speakerOf(item.speaker, member)}\n${item.content ?? ""}`);
-  return [head, ...lines].join("\n\n");
-}
-
-function conclusionsText(member, value, query, timeZone) {
-  const rows = list(value?.conclusions);
-  if (!rows.length) return `${member.name}: no fact matched "${query}".`;
-  const lines = rows.map((item) => `- ${item.content} (conversation ${item.conversation_id}, last active ${localTime(item.conversation_last_at, timeZone)})`);
-  return [`${member.name}: ${rows.length} facts matched "${query}", each drawn from one conversation. Times are ${timeZone}.`, ...lines].join("\n");
+/** A bridge's answer as the agent reads it: whose it is, then the answer itself. */
+function answerText(member, name, value) {
+  const body = typeof value === "string" ? value : JSON.stringify(value, null, 1);
+  return `${member.name}${member.peer ? ` (peer ${member.peer})` : ""} · ${name}:\n${body}`;
 }
 
 // ----------------------------------------------------------------- the tools
@@ -361,7 +286,7 @@ function conclusionsText(member, value, query, timeZone) {
  * The team-memory tools on this computer. `paths` (team-auth.mjs) and `fetchImpl`
  * are for tests; by default the configured install's login is used.
  */
-export function teamMemory({ paths = null, fetchImpl = globalThis.fetch, now = () => Date.now(), timeZone = localTimeZone() } = {}) {
+export function teamMemory({ paths = null, fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
   let directoryCache = null;
   const sessions = new Map();
   let nextId = 1;
@@ -445,56 +370,36 @@ export function teamMemory({ paths = null, fetchImpl = globalThis.fetch, now = (
     ].join("\n");
   }
 
-  const handlers = {
-    list_conversations: async (member, args) => conversationsText(member, await remote(member, "list_conversations", {
-      question: args.question,
-      ...(args.since ? { since: timeBound(args.since, "since", { timeZone }) } : {}),
-      ...(args.until ? { until: timeBound(args.until, "until", { end: true, timeZone }) } : {}),
-      ...(args.contains ? { contains: String(args.contains) } : {}),
-      ...(args.limit !== undefined ? { limit: args.limit } : {}),
-    }), timeZone),
-    search_messages: async (member, args) => {
-      if (!String(args.query || "").trim()) throw new Error("query is required: what to look for.");
-      return messagesText(member, await remote(member, "search_messages", {
-        question: args.question,
-        query: String(args.query),
-        ...(args.limit !== undefined ? { limit: args.limit } : {}),
-        ...(args.since ? { since: timeBound(args.since, "since", { timeZone }) } : {}),
-        ...(args.until ? { until: timeBound(args.until, "until", { end: true, timeZone }) } : {}),
-        ...(args.conversation_id ? { conversation_id: String(args.conversation_id) } : {}),
-      }), args.query, timeZone);
-    },
-    read_conversation: async (member, args) => {
-      if (!String(args.conversation_id || "").trim()) throw new Error("conversation_id is required: the id list_conversations or search_messages gave.");
-      return conversationText(member, await remote(member, "read_conversation", {
-        question: args.question,
-        conversation_id: String(args.conversation_id),
-        ...(args.page !== undefined ? { page: args.page } : {}),
-        ...(args.size !== undefined ? { size: args.size } : {}),
-        ...(args.newest_first !== undefined ? { newest_first: Boolean(args.newest_first) } : {}),
-      }), timeZone);
-    },
-    search_conclusions: async (member, args) => {
-      if (!String(args.query || "").trim()) throw new Error("query is required: what to look for.");
-      return conclusionsText(member, await remote(member, "search_conclusions", {
-        question: args.question,
-        query: String(args.query),
-        ...(args.limit !== undefined ? { limit: args.limit } : {}),
-      }), args.query, timeZone);
-    },
-  };
+  /** The properties each tool takes, so nothing else is sent on. */
+  const accepted = new Map(TOOL_DEFINITIONS.map((item) => [item.name, Object.keys(item.inputSchema.properties).filter((key) => key !== "member")]));
+
+  /** One of the owner's tools on a member's server: the arguments it takes, as given. */
+  async function handle(member, name, args) {
+    for (const key of TOOL_DEFINITIONS.find((item) => item.name === name).inputSchema.required) {
+      if (key !== "member" && key !== "question" && (args[key] === undefined || args[key] === "")) throw new Error(`${key} is required.`);
+    }
+    const sent = Object.fromEntries(accepted.get(name).filter((key) => args[key] !== undefined).map((key) => [key, args[key]]));
+    try {
+      return answerText(member, name, await remote(member, name, sent));
+    } catch (error) {
+      // A bridge from before the owner's tools could be opened knows only its four.
+      if (/unknown tool/i.test(String(error?.message))) {
+        throw new Error(`${member.name}'s server runs an older Team Memory without ${name}. Ask them to update (/team-memory doctor).`);
+      }
+      throw error;
+    }
+  }
 
   /** One tool call: its text, or an error the agent reads. */
   async function call(name, args = {}) {
     try {
       if (name === "member") return await memberList();
-      const handler = handlers[name];
-      if (!handler) throw new Error(`Unknown tool: ${name}`);
+      if (!accepted.has(name)) throw new Error(`Unknown tool: ${name}`);
       if (!String(args.question || "").trim()) throw new Error("question is required: your user's question in their own words.");
       const { me, members } = await directory();
       const member = findMember(members, args.member, me);
       if (!member.host) throw new Error(`${member.name} has no memory server.`);
-      return await handler(member, args);
+      return await handle(member, name, args);
     } catch (error) {
       if (error instanceof TeamLoginError && error.code === "login_needed") throw new Error(LOGIN_NEEDED);
       throw error;
@@ -506,5 +411,5 @@ export function teamMemory({ paths = null, fetchImpl = globalThis.fetch, now = (
     return Boolean((await readTeamAuth(await authPaths())).hub);
   }
 
-  return { call, joined, tools: TOOL_DEFINITIONS, instructions: () => teamInstructions(timeZone) };
+  return { call, joined, tools: TOOL_DEFINITIONS, instructions: () => teamInstructions() };
 }

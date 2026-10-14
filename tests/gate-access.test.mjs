@@ -12,17 +12,22 @@ import test from "node:test";
 
 import {
   changeGateAccess,
+  DEFAULT_TOOLS,
   gateDevices,
   gateGrants,
   gateStatePaths,
+  gateTeamTools,
   grantChat,
   grantCollect,
   normalizeGateAccess,
+  OPENABLE_TOOLS,
   readGateAccess,
   revokeDevice,
   revokePerson,
   setChatOff,
   setGateOwners,
+  setTeamTools,
+  toolList,
 } from "../scripts/gate-access.mjs";
 
 async function tempPaths(t) {
@@ -77,17 +82,17 @@ test("owners, chat with folders and collecting are written as the gate reads the
   // folders change. A teammate never opened to cannot be turned on.
   await setChatOff(paths, { email: "Alice@Example.com", off: true });
   let chat = (await readGateAccess(paths)).people["alice@example.com"].chat;
-  assert.deepEqual(chat, { folders: [WEB], sources: ["chatgpt"], off: true, since });
+  assert.deepEqual(chat, { folders: [WEB], sources: ["chatgpt"], tools: [...DEFAULT_TOOLS], off: true, since });
   await grantChat(paths, { email: "alice@example.com", folders: [HONCHO], sources: ["chatgpt"] });
   chat = (await readGateAccess(paths)).people["alice@example.com"].chat;
-  assert.deepEqual(chat, { folders: [HONCHO], sources: ["chatgpt"], off: true, since });
-  assert.deepEqual((await gateGrants(paths)).find((grant) => grant.email === "alice@example.com").chat, { folders: [HONCHO], sources: ["chatgpt"], off: true, since });
+  assert.deepEqual(chat, { folders: [HONCHO], sources: ["chatgpt"], tools: [...DEFAULT_TOOLS], off: true, since });
+  assert.deepEqual((await gateGrants(paths)).find((grant) => grant.email === "alice@example.com").chat, { folders: [HONCHO], sources: ["chatgpt"], tools: [...DEFAULT_TOOLS], off: true, since });
   const unchanged = await fs.readFile(paths.accessFile, "utf8");
   await setChatOff(paths, { email: "alice@example.com", off: true });
   assert.equal(await fs.readFile(paths.accessFile, "utf8"), unchanged, "already off: nothing written");
   await setChatOff(paths, { email: "alice@example.com", off: false });
   chat = (await readGateAccess(paths)).people["alice@example.com"].chat;
-  assert.deepEqual(chat, { folders: [HONCHO], sources: ["chatgpt"], since });
+  assert.deepEqual(chat, { folders: [HONCHO], sources: ["chatgpt"], tools: [...DEFAULT_TOOLS], since });
   await assert.rejects(setChatOff(paths, { email: "bob@example.com", off: false }), /not opened/);
   await assert.rejects(setChatOff(paths, { email: "nobody@example.com", off: true }), /not opened/);
 
@@ -97,6 +102,31 @@ test("owners, chat with folders and collecting are written as the gate reads the
   assert.equal((await readGateAccess(paths)).people["alice@example.com"].chat, undefined);
   await revokePerson(paths, { email: "alice@example.com", kind: "collect" });
   assert.equal((await readGateAccess(paths)).people["alice@example.com"], undefined);
+});
+
+test("each teammate's MCP tools, and the same for all: only the owner's tools that read, kept through other changes", async (t) => {
+  const paths = await tempPaths(t);
+  await grantChat(paths, { email: "alice@example.com", peer: "alice", folders: [WEB] });
+  assert.deepEqual((await readGateAccess(paths)).people["alice@example.com"].chat.tools, [...DEFAULT_TOOLS], "a teammate starts with the folder tools");
+  await grantChat(paths, { email: "alice@example.com", folders: [WEB], tools: ["chat", "delete_session", "search", "chat", 7] });
+  assert.deepEqual((await readGateAccess(paths)).people["alice@example.com"].chat.tools, ["search", "chat"], "never a tool that writes, in the list's order");
+  await grantChat(paths, { email: "alice@example.com", folders: [HONCHO] });
+  await setChatOff(paths, { email: "alice@example.com", off: true });
+  assert.deepEqual((await gateGrants(paths))[0].chat.tools, ["search", "chat"], "kept when only the folders or the switch change");
+
+  // For every teammate: those opened to now, and the next one approved.
+  await grantChat(paths, { email: "bob@example.com", peer: "bob", folders: [WEB] });
+  await setTeamTools(paths, { tools: ["list_sessions", "get_peer_card"] });
+  await grantChat(paths, { email: "carol@example.com", peer: "carol", folders: [WEB] });
+  const access = await readGateAccess(paths);
+  assert.deepEqual(access.tools, ["list_sessions", "get_peer_card"]);
+  for (const email of ["alice@example.com", "bob@example.com", "carol@example.com"]) {
+    assert.deepEqual(access.people[email].chat.tools, ["list_sessions", "get_peer_card"], email);
+  }
+  assert.deepEqual(await gateTeamTools(paths), ["list_sessions", "get_peer_card"]);
+  await assert.rejects(setTeamTools(paths, { tools: "search" }), /A list of tools/);
+  assert.deepEqual(toolList(["get_queue_status", "search"]), ["search", "get_queue_status"]);
+  assert.deepEqual(Object.values(OPENABLE_TOOLS).flat().length, 19);
 });
 
 test("two changes at once both land", async (t) => {

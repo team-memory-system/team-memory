@@ -1434,3 +1434,19 @@ table.sync .addr { margin: 2px 0 0 16px; color: var(--ink-3); font-size: 12.5px;
   .stepper .st:not(.on) .lbl { display: none; }
   table.sync th:nth-child(4), table.sync td:nth-child(4) { display: none; }
 }
+
+/* The 수정 window's two tabs, and its MCP 도구 tab: one switch per tool, in kinds. */
+.tabs.m-tabs { padding: 0; margin: 10px 0 14px; }
+.tool-kinds { display: flex; flex-direction: column; gap: 16px; }
+.tool-kind-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-bottom: 8px; }
+.tool-kind-h h4 { margin: 0; font-size: 13.5px; font-weight: 700; }
+.tool-kind-h .sub { color: var(--ink-3); font-size: 12.5px; }
+.tool-rows { overflow: hidden; border: 1px solid var(--line); border-radius: 10px; }
+.tool-row { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-bottom: 1px solid var(--line-soft); }
+.tool-row:last-child { border-bottom: 0; }
+.tool-row .v { flex: 1; min-width: 0; }
+.tool-row code { font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
+.tool-row .d { color: var(--ink-3); font-size: 12.5px; }
+.tool-warn { margin: 8px 0 0; padding: 8px 12px; border-radius: 8px; background: var(--warn-soft); color: color-mix(in srgb, var(--warn) 75%, var(--ink)); font-size: 13px; }
+.all-tools { display: inline-flex; align-items: center; gap: 7px; color: var(--ink-2); font-size: 13px; cursor: pointer; }
+.tab-pane { min-height: min(560px, 58vh); }

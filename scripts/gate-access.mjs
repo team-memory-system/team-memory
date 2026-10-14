@@ -4,8 +4,10 @@
 //   access.json   written here, read by the gate whenever it changes: the owners
 //                 (every computer of theirs may register and write), the workspace
 //                 teammates write into, and per teammate email what is opened to
-//                 them: chat with a list of folders and apps (whether the owner
-//                 turned it off for now too), or collecting into this server.
+//                 them: chat with a list of folders and apps, the owner's MCP
+//                 tools they may call (whether the owner turned it off for now
+//                 too), or collecting into this server. `tools` at the top is
+//                 what a teammate approved later starts with.
 //                 Devices cut off are listed under revokedDevices.
 //   devices.json  written by the gate only: every computer that registered (an
 //                 email, its name, a hash of its key, when it was last seen). Read
@@ -21,7 +23,10 @@ import path from "node:path";
 
 import { normalizeEmail } from "./cloudflare-api.mjs";
 import { acquireFileLock, releaseFileLock } from "./file-lock.mjs";
+import { DEFAULT_TOOLS, toolList } from "./openable-tools.mjs";
 import { installedServerDir } from "./server-manager.mjs";
+
+export { DEFAULT_TOOLS, OPENABLE_TOOLS, toolList } from "./openable-tools.mjs";
 
 const DEVICE_ID = /^d-[0-9a-f]{16}$/;
 const PEER = /^[A-Za-z0-9_.:@-]{1,64}$/;
@@ -84,10 +89,11 @@ export function sourceList(value) {
   return [...new Set((Array.isArray(value) ? value : []).filter((source) => typeof source === "string" && SOURCE.test(source)))].slice(0, MAX_SOURCES);
 }
 
-/** A chat grant as access.json keeps it: apps only when some are open, off only while it is. */
-function chatEntry({ folders, sources, off, since }) {
+/** A chat grant as access.json keeps it: apps only when some are open, tools once chosen, off only while it is. */
+function chatEntry({ folders, sources, tools, off, since }) {
   const list = sourceList(sources);
-  return { folders: folderList(folders), ...(list.length ? { sources: list } : {}), ...(off === true ? { off: true } : {}), ...(since ? { since } : {}) };
+  const opened = toolList(tools);
+  return { folders: folderList(folders), ...(list.length ? { sources: list } : {}), ...(opened ? { tools: opened } : {}), ...(off === true ? { off: true } : {}), ...(since ? { since } : {}) };
 }
 
 /** access.json with every part present and nothing the gate would not read. */
@@ -103,10 +109,12 @@ export function normalizeGateAccess(value) {
     }
     if (person.chat || person.collect) people[email] = person;
   }
+  const tools = toolList(value?.tools);
   return {
     version: 1,
     owners: [...new Set((Array.isArray(value?.owners) ? value.owners : []).map(normalizeEmail).filter(Boolean))],
     workspace: WORKSPACE.test(String(value?.workspace || "")) ? value.workspace : "memory",
+    ...(tools ? { tools } : {}),
     people,
     revokedDevices: [...new Set((Array.isArray(value?.revokedDevices) ? value.revokedDevices : []).filter((id) => DEVICE_ID.test(String(id))))],
   };
@@ -155,11 +163,18 @@ export async function setGateOwners(paths, { owners, workspace }) {
   return changeGateAccess(paths, (access) => ({ ...access, owners: [...new Set([...owners])], ...(workspace ? { workspace } : {}) }));
 }
 
+/** The tools a teammate is opened: theirs, else what every teammate starts with. */
+function toolsOf(access, chat) {
+  return toolList(chat?.tools) ?? access.tools ?? [...DEFAULT_TOOLS];
+}
+
 /**
  * Opens chat with `folders` and `sources` (apps) to a teammate, or changes what is
- * open. A teammate turned off stays off until they are turned on.
+ * open; `tools`, the owner's MCP tools they may call, as given, else as they were,
+ * else what every teammate starts with. A teammate turned off stays off until they
+ * are turned on.
  */
-export async function grantChat(paths, { email, peer, folders, sources }) {
+export async function grantChat(paths, { email, peer, folders, sources, tools }) {
   const who = normalizeEmail(email);
   if (!who) throw new Error("A teammate's email is needed");
   return changeGateAccess(paths, (access) => {
@@ -167,8 +182,24 @@ export async function grantChat(paths, { email, peer, folders, sources }) {
     access.people[who] = {
       ...person,
       peer: peer || person.peer,
-      chat: chatEntry({ folders, sources, off: person.chat?.off, since: person.chat?.since || now() }),
+      chat: chatEntry({ folders, sources, tools: toolList(tools) ?? toolsOf(access, person.chat), off: person.chat?.off, since: person.chat?.since || now() }),
     };
+    return access;
+  });
+}
+
+/**
+ * The same tools for every teammate: those opened to now, and those approved later,
+ * who start with them.
+ */
+export async function setTeamTools(paths, { tools }) {
+  const opened = toolList(tools);
+  if (!opened) throw new Error("A list of tools is needed");
+  return changeGateAccess(paths, (access) => {
+    access.tools = opened;
+    for (const person of Object.values(access.people)) {
+      if (person.chat) person.chat = chatEntry({ ...person.chat, tools: opened });
+    }
     return access;
   });
 }
@@ -243,6 +274,11 @@ export async function gateDevices(paths) {
     .sort((left, right) => String(right.lastSeenAt || right.createdAt || "").localeCompare(String(left.lastSeenAt || left.createdAt || "")));
 }
 
+/** What every teammate starts with: the tools the owner chose for all, else the folder tools. */
+export async function gateTeamTools(paths) {
+  return (await readGateAccess(paths)).tools ?? [...DEFAULT_TOOLS];
+}
+
 /** The teammates something is opened to, for 내 기억을 여는 팀원. */
 export async function gateGrants(paths) {
   const access = await readGateAccess(paths);
@@ -250,7 +286,7 @@ export async function gateGrants(paths) {
     email,
     peer: person.peer,
     chat: person.chat
-      ? { folders: person.chat.folders, sources: person.chat.sources || [], off: person.chat.off === true, since: person.chat.since || null }
+      ? { folders: person.chat.folders, sources: person.chat.sources || [], tools: toolsOf(access, person.chat), off: person.chat.off === true, since: person.chat.since || null }
       : null,
     collect: person.collect ? { workspace: person.collect.workspace || access.workspace, since: person.collect.since || null } : null,
   }));

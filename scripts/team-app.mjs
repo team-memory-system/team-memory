@@ -11,7 +11,7 @@
 // No route ever returns a token, a device key or the team's Jev key. A route that
 // changes something is a JSON POST, as every other route of the app.
 import { loadConfig } from "./config.mjs";
-import { folderList, gateDevices, gateGrants, gateStatePaths, grantChat, grantCollect, revokeDevice, revokePerson, setChatOff, sourceList } from "./gate-access.mjs";
+import { folderList, gateDevices, gateGrants, gateStatePaths, gateTeamTools, grantChat, grantCollect, revokeDevice, revokePerson, setChatOff, setTeamTools, sourceList, toolList } from "./gate-access.mjs";
 import { serverFolders } from "./server-folders.mjs";
 import { CALLBACK_PATH, finishLogin, registerDevice, serverWhoami, setTeam, signOut, startLogin, teamAuthPaths, teamHost, teamJson, teamLoginStatus } from "./team-auth.mjs";
 import { computerName, hubCall, madeTeam, teamWhoami } from "./team-hub.mjs";
@@ -78,11 +78,13 @@ async function keepAdmin(directory, paths) {
   await setTeam({ hub: status.hub, admin: me.admin }, { paths });
 }
 
-/** Owner side: what is opened to whom, and the computers that write here. */
+/** Owner side: what is opened to whom, the tools every teammate starts with, and the computers that write here. */
 async function ownerView(gate) {
-  const [grants, devices] = await Promise.all([gateGrants(gate), gateDevices(gate)]);
-  return { grants, devices };
+  const [grants, teamTools, devices] = await Promise.all([gateGrants(gate), gateTeamTools(gate), gateDevices(gate)]);
+  return { grants, teamTools, devices };
 }
+
+const NO_TOOL = "MCP 도구를 하나 이상 켜세요. 잠깐 막으려면 목록의 스위치를 끄세요.";
 
 const ROUTES = {
   /**
@@ -158,8 +160,11 @@ const ROUTES = {
       } else {
         const folders = folderList(body.folders);
         const sources = sourceList(body.sources);
+        const tools = toolList(body.tools);
         if (!folders.length && !sources.length) return { ok: false, error: NOTHING_CHOSEN };
-        await grantChat(gate, { email, peer, folders, sources });
+        if (tools && !tools.length) return { ok: false, error: NO_TOOL };
+        await grantChat(gate, { email, peer, folders, sources, tools });
+        if (tools && body.allTools === true) await setTeamTools(gate, { tools });
       }
     }
     const projects = body.approve && body.kind !== "collect" ? hubNames(folderList(body.folders), sourceList(body.sources)) : null;
@@ -193,8 +198,9 @@ const ROUTES = {
   },
 
   /**
-   * The owner changes what is open to a teammate (`folders`, `sources`), turns their
-   * chat off for now or on again (`off`), or closes it (`close: true`).
+   * The owner changes what is open to a teammate (`folders`, `sources`, and `tools`,
+   * the owner's MCP tools; with `allTools` the same tools for every teammate), turns
+   * their chat off for now or on again (`off`), or closes it (`close: true`).
    */
   "/api/team/grant": async (body) => {
     const { paths, gate } = await context();
@@ -216,12 +222,28 @@ const ROUTES = {
     }
     const folders = folderList(body.folders);
     const sources = sourceList(body.sources);
+    const tools = toolList(body.tools);
     if (!folders.length && !sources.length) return { ok: false, error: `${NOTHING_CHOSEN} 모두 닫으려면 끊기를 누르세요.` };
-    await grantChat(gate, { email, peer: String(body.peer || ""), folders, sources });
+    if (tools && !tools.length) return { ok: false, error: NO_TOOL };
+    await grantChat(gate, { email, peer: String(body.peer || ""), folders, sources, tools });
+    if (tools && body.allTools === true) await setTeamTools(gate, { tools });
     if (/^r-[0-9a-f]{16}$/.test(request)) {
       await hubCall("POST", `/api/requests/${request}/projects`, { projects: hubNames(folders, sources) }, { paths }).catch(() => null);
     }
     return { ok: true, folders, sources };
+  },
+
+  /**
+   * 모든 팀원 도구: the owner's MCP tools every teammate may call, those opened to now
+   * and those approved later. Without `tools`, what they are.
+   */
+  "/api/team/tools": async (body) => {
+    const { gate } = await context();
+    if (body.tools === undefined) return { ok: true, tools: await gateTeamTools(gate) };
+    const tools = toolList(body.tools);
+    if (!tools?.length) return { ok: false, error: NO_TOOL };
+    const access = await setTeamTools(gate, { tools });
+    return { ok: true, tools: access.tools };
   },
 
   /** The owner stops a teammate's computers collecting into this server. */
