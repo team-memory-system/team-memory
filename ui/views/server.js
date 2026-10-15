@@ -9,6 +9,7 @@ import { explainWarning } from "../lib/collect.js";
 import { h, clear } from "../lib/dom.js";
 import { number } from "../lib/format.js";
 import { kv } from "../lib/kit.js";
+import { hereOnlyButton, hereOnlyNote, shownElsewhere } from "../lib/machines.js";
 import { etaText } from "../lib/past.js";
 import { bytesText, callsText, keepLine, keptName, keptWhat, lastDetail, lastLine, lastTag, moment, rebuildLine, rebuildNote, stopCause } from "../lib/rederive.js";
 import { screenTabs } from "../lib/tabs.js";
@@ -166,10 +167,14 @@ export default {
     function serverSection(server) {
       const services = server.services || [];
       const running = server.running;
+      // Stopped from another computer, the server would cut the way this page came.
+      const elsewhere = shownElsewhere();
       return section({
         title: "기억 서버",
         actions: [
-          running
+          running && elsewhere
+            ? hereOnlyButton("멈추기", "이 컴퓨터 앞에서만 멈출 수 있습니다")
+            : running
             ? button("멈추기", { kind: "small", iconName: "stop", onClick: async (event) => {
               const ok = await confirmSheet({ title: "기억 서버를 멈출까요?", text: "멈춘 동안에는 대화가 모이지 않고, 끝난 대화는 다시 켤 때 이어서 쌓입니다. 에이전트의 기억 검색도 멈춥니다.", confirm: "멈추기", danger: true });
               if (!ok) return;
@@ -193,6 +198,7 @@ export default {
           } }),
         ],
       },
+      running && elsewhere ? hereOnlyNote("멈추기는 이 컴퓨터 앞에서 하세요. 다른 컴퓨터에서 멈추면 그 화면으로 오는 길도 같이 끊깁니다.") : null,
       h("div", { class: "rows" },
         h("div", { class: "row" },
           h("div", {}, h("div", { class: "title" }, statusTag(running && server.health?.ok, ["답하는 중", running ? "답하지 않음" : "멈춤"]), "API"), h("div", { class: "sub mono" }, server.apiUrl || "")),

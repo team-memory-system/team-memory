@@ -10,7 +10,9 @@ import { cli, get, post } from "../lib/api.js";
 import { h, clear, copyText } from "../lib/dom.js";
 import { screenTabs } from "../lib/tabs.js";
 import { block, confirmWindow, kv, list, listItem } from "../lib/kit.js";
+import { hereOnlyButton, hereOnlyNote, shownElsewhere } from "../lib/machines.js";
 import { ago, loginEndedText, teamCall } from "../lib/team.js";
+import { app } from "../lib/state.js";
 import { button, busy, errorNotice, notice, pageHead, spinner, statusTag, tag, toast } from "../lib/ui.js";
 
 /** 서버 → 공유: the switch, and with it on, the address and the server token. */
@@ -52,11 +54,13 @@ async function teamShareOn(share, redraw) {
   const rows = [listItem({ title: "이 컴퓨터", tags: [" ", tag("서버")], sub: lastHere ? `${ago(lastHere)} 쌓음` : "아직 쌓지 않음" })];
   for (const device of (devices.devices || []).filter((item) => !item.revoked)) {
     const mine = device.owner;
+    // The computer this page is shown on: cut off, it could not show the page any more.
+    const showing = device.id && device.id === app.context?.viewerDevice;
     rows.push(listItem({
       title: device.name || "컴퓨터",
-      tags: [" ", tag(mine ? "내 컴퓨터" : device.peer || device.email)],
+      tags: [" ", tag(mine ? "내 컴퓨터" : device.peer || device.email), showing ? tag("지금 보는 중", "accent") : null],
       sub: device.lastSeenAt ? `${ago(device.lastSeenAt)} 쌓음` : "아직 쌓지 않음",
-      end: button("끊기", { kind: "small danger", onClick: async (event) => {
+      end: showing ? hereOnlyButton("끊기", "이 화면을 보고 있는 컴퓨터는 여기서 끊을 수 없습니다") : button("끊기", { kind: "small danger", onClick: async (event) => {
         const target = event.currentTarget;
         const name = device.name || "이 컴퓨터";
         const ok = await confirmWindow({
@@ -75,13 +79,15 @@ async function teamShareOn(share, redraw) {
     block({
       title: "공유",
       tag: statusTag(share.tunnel?.running, ["켜짐", "멈춤"]),
-      actions: [button("공유 끄기", { kind: "small", onClick: async (event) => {
+      // Turned off from another computer, sharing would cut the way this page came.
+      actions: [shownElsewhere() ? hereOnlyButton("공유 끄기", "이 컴퓨터 앞에서만 끌 수 있습니다") : button("공유 끄기", { kind: "small", onClick: async (event) => {
         const target = event.currentTarget;
         const ok = await confirmWindow({ title: "공유를 끌까요?", text: "Tunnel과 gate를 이 컴퓨터에서 멈춥니다. 내 다른 컴퓨터의 대화는 다시 켤 때까지 그 컴퓨터에 쌓였다가 이어서 옵니다. 팀원은 그동안 묻지 못합니다.", confirm: "끄기", danger: true });
         if (!ok) return;
         await busy(target, async () => { await cli("/api/server/share/disable", {}); await redraw(false); }, { done: "공유를 껐습니다" });
       } })],
     },
+    shownElsewhere() ? hereOnlyNote("공유 끄기는 이 컴퓨터 앞에서 하세요. 다른 컴퓨터에서 끄면 그 화면으로 오는 길도 같이 끊깁니다.") : null,
     kv("이 서버의 주소", h("span", { class: "mono" }, share.publicUrl || ""),
       button("", { kind: "small icon-only", iconName: "copy", title: "주소 복사", onClick: async () => { await copyText(share.publicUrl); toast("주소를 복사했습니다"); } }))),
     list({ title: "이 서버에 쌓는 컴퓨터" }, rows));
@@ -115,6 +121,8 @@ function mcpLine(share) {
   return [statusTag(mcp.running, ["준비됨", "멈춤"]), " ", h("span", { class: "mono muted" }, share.publicUrl ? `${share.publicUrl}/mcp` : "")];
 }
 
+const HERE_ONLY_NOTE = "공유 끄기와 token 바꾸기는 이 컴퓨터 앞에서 하세요. 다른 컴퓨터에서 하면 그 화면으로 오는 길도 같이 끊깁니다.";
+
 function shareOn(share, redraw) {
   const check = share.publicCheck;
   const state = check ? PUBLIC_STATES[check.state] || PUBLIC_STATES.error : null;
@@ -125,13 +133,14 @@ function shareOn(share, redraw) {
       tag: statusTag(share.tunnel?.running, ["켜짐", "멈춤"]),
       actions: [
         button("밖에서 확인", { kind: "small", onClick: (event) => busy(event.currentTarget, () => redraw(true)) }),
-        button("공유 끄기", { kind: "small danger", onClick: async (event) => {
+        shownElsewhere() ? hereOnlyButton("공유 끄기", "이 컴퓨터 앞에서만 끌 수 있습니다") : button("공유 끄기", { kind: "small danger", onClick: async (event) => {
           const ok = await confirmWindow({ title: "공유를 끌까요?", text: "Tunnel, gate, 팀원 MCP를 이 컴퓨터에서 멈춥니다. 내 다른 컴퓨터의 대화는 다시 켤 때까지 그 컴퓨터에 쌓였다가 이어서 옵니다. 주소와 token은 그대로 두니, 다시 켜면 팀원도 그대로 들어옵니다.", confirm: "끄기", danger: true });
           if (!ok) return;
           await busy(event.currentTarget, async () => { await cli("/api/server/share/disable", {}); await redraw(false); }, { done: "공유를 껐습니다" });
         } }),
       ],
     },
+    shownElsewhere() ? hereOnlyNote(HERE_ONLY_NOTE) : null,
     kv("이 서버의 주소", h("span", { class: "mono" }, share.publicUrl || ""),
       button("", { kind: "small icon-only", iconName: "copy", title: "주소 복사", onClick: async () => { await copyText(share.publicUrl); toast("주소를 복사했습니다"); } })),
     kv("서버 token", [statusTag(share.gate?.running, ["gate 켜짐", "gate 멈춤"]), h("div", { class: "s" }, "내 다른 컴퓨터가 이 서버에 쌓을 때 넣는 token입니다.")],
@@ -141,7 +150,7 @@ function shareOn(share, redraw) {
           await copyText(result.token);
           toast("서버 token을 복사했습니다. 다른 컴퓨터의 대화 수집 설정에 붙여 넣으세요.");
         }) }),
-        button("바꾸기", { kind: "small quiet", onClick: async (event) => {
+        shownElsewhere() ? hereOnlyButton("바꾸기", "이 컴퓨터 앞에서만 바꿀 수 있습니다") : button("바꾸기", { kind: "small quiet", onClick: async (event) => {
           const ok = await confirmWindow({ title: "서버 token을 바꿀까요?", text: "지금 token을 쓰는 내 다른 컴퓨터는 모두 끊깁니다. 각 컴퓨터의 대화 수집 설정에 새 token을 넣어야 다시 모입니다. 끊긴 동안의 대화는 다시 연결하면 이어서 쌓입니다. 팀원의 Google 로그인은 그대로입니다.", confirm: "바꾸기", danger: true });
           if (!ok) return;
           await busy(event.currentTarget, async () => { await cli("/api/server/share/rotate", {}); await redraw(false); }, { done: "새 서버 token을 만들었습니다" });

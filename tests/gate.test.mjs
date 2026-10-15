@@ -59,6 +59,9 @@ let mcpUpstream;
 let mcpPort;
 const mcpSeen = [];
 let releaseMcpStream = () => {};
+let appUpstream;
+let appPort;
+const appSeen = [];
 let certs;
 const gates = [];
 const stateDirs = [];
@@ -151,6 +154,7 @@ function mcpEnv(overrides = {}) {
     HONCHO_GATE_ACCESS_AUD: `aud-another-app, ${ACCESS_AUD}`,
     HONCHO_GATE_ACCESS_CERTS_URL: certs.url,
     HONCHO_TEAM_MCP_TOKEN: TEAM_MCP_TOKEN,
+    HONCHO_GATE_APP_UPSTREAM: `http://127.0.0.1:${appPort}`,
     ...overrides,
   };
 }
@@ -258,6 +262,15 @@ before(async () => {
     res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }));
   });
   mcpPort = await listen(mcpUpstream);
+  // The owner's app on the host: it answers with what it was asked.
+  appUpstream = http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    appSeen.push({ method: req.method, url: req.url, headers: req.headers, body: Buffer.concat(chunks).toString("utf8") });
+    res.writeHead(200, { "content-type": req.url.startsWith("/api/") ? "application/json" : "text/html" });
+    res.end(req.url.startsWith("/api/") ? JSON.stringify({ ok: true }) : "<!doctype html><title>팀 메모리</title>");
+  });
+  appPort = await listen(appUpstream);
   certs = await startAccessCerts([signingKey]);
   ({ child: gate, port: gatePort, stateDir: gateState } = await launchGate(mcpEnv()));
 });
@@ -267,7 +280,7 @@ after(async () => {
   await Promise.all(gates.map((child) => (child.exitCode !== null || child.signalCode !== null
     ? null
     : new Promise((resolve) => { child.once("exit", resolve); child.kill(); }))));
-  for (const server of [upstream, mcpUpstream]) {
+  for (const server of [upstream, mcpUpstream, appUpstream]) {
     server?.closeAllConnections?.();
     if (server) await new Promise((resolve) => server.close(() => resolve()));
   }
@@ -376,9 +389,9 @@ test("the gate token opens no other door", async () => {
 // ------------------------------------------------------------ who is calling
 
 test("whoami tells a person what this server lets them do, whatever the case of their email", async () => {
-  const nothing = { owner: false, chat: null, collect: false, device: null };
+  const nothing = { owner: false, chat: null, collect: false, device: null, app: false };
   const cases = [
-    [OWNER_EMAIL, { email: OWNER_EMAIL, ...nothing, owner: true }],
+    [OWNER_EMAIL, { email: OWNER_EMAIL, ...nothing, owner: true, app: true }],
     [CHAT_EMAIL, { email: CHAT_EMAIL, ...nothing, chat: { folders: FOLDERS, sources: SOURCES, off: false } }],
     ["TeamMate@Example.COM", { email: CHAT_EMAIL, ...nothing, chat: { folders: FOLDERS, sources: SOURCES, off: false } }],
     [COLLECT_EMAIL, { email: COLLECT_EMAIL, ...nothing, collect: true }],
@@ -632,12 +645,91 @@ test("an owner's streamed answer arrives chunk by chunk", async () => {
   assert.equal(chunks.join(""), "data: first\n\ndata: second\n\n");
 });
 
+// -------------------------------------------------------------- the owner's app
+
+test("an owner's registered computer sees the owner's app, at its own loopback name and without the caller's credentials", async () => {
+  const owner = await register(OWNER_EMAIL, { name: "회사 맥북" });
+  const page = await request("/team-memory/app/", { headers: withDevice(OWNER_EMAIL, owner.key) });
+  assert.equal(page.status, 200);
+  assert.match(page.text, /팀 메모리/);
+  assert.equal(appSeen.at(-1).url, "/");
+
+  const body = JSON.stringify({ name: "안녕하세요" });
+  const answer = await request("/team-memory/app/api/server/status?x=a%20b", {
+    method: "POST",
+    headers: {
+      ...withDevice(OWNER_EMAIL, owner.key),
+      ...json,
+      origin: "https://memory.example.com",
+      referer: "https://memory.example.com/team-memory/app/",
+      cookie: "CF_Authorization=from-the-browser",
+      authorization: "Bearer oauth:access-token",
+      "x-forwarded-for": "203.0.113.9",
+      "x-team-memory-viewer": "spoofed",
+      "x-custom": "kept",
+    },
+    body,
+  });
+  assert.equal(answer.status, 200);
+  const received = appSeen.at(-1);
+  assert.equal(received.method, "POST");
+  assert.equal(received.url, "/api/server/status?x=a%20b");
+  assert.equal(received.body, body);
+  assert.equal(received.headers.host, `127.0.0.1:${appPort}`, "the app takes only its own loopback name");
+  for (const name of ["origin", "referer", "cookie", "authorization", "cf-access-jwt-assertion", "x-team-memory-device", "x-forwarded-for"]) {
+    assert.equal(received.headers[name], undefined, `${name} is dropped`);
+  }
+  assert.equal(decodeURIComponent(received.headers["x-team-memory-viewer"]), "회사 맥북", "the gate names the computer, not the caller");
+  assert.equal(received.headers["x-team-memory-viewer-device"], owner.id);
+  assert.equal(received.headers["x-custom"], "kept");
+
+  // The address with nothing after it is the app's first page too.
+  assert.equal((await request("/team-memory/app", { headers: withDevice(OWNER_EMAIL, owner.key) })).status, 200);
+  assert.equal(appSeen.at(-1).url, "/");
+});
+
+test("the owner's app opens to no one but an owner on a computer they registered", async () => {
+  const before = appSeen.length;
+  const owner = await register(OWNER_EMAIL);
+  const collector = await register(COLLECT_EMAIL);
+  for (const [headers, status, what] of [
+    [{}, 401, "nobody"],
+    [auth, 401, "the gate token"],
+    [loginAs(OWNER_EMAIL), 403, "an owner without a device key"],
+    [withDevice(OWNER_EMAIL, `${owner.key}x`), 403, "an owner with a wrong key"],
+    [withDevice(OWNER_EMAIL, collector.key), 403, "an owner with someone else's key"],
+    [withDevice(COLLECT_EMAIL, collector.key), 403, "a collector"],
+    [loginAs(CHAT_EMAIL), 403, "a teammate with chat"],
+    [loginAs(STRANGER_EMAIL), 403, "a stranger"],
+  ]) {
+    const answer = await request("/team-memory/app/api/app/context", { headers });
+    assert.equal(answer.status, status, what);
+  }
+  for (const target of ["/team-memory/app/../health", "/team-memory/app/%2e%2e/v3/x", "/team-memory/application"]) {
+    assert.equal((await request(target, { headers: withDevice(OWNER_EMAIL, owner.key) })).status, 404, target);
+  }
+  assert.equal(appSeen.length, before, "nothing refused reached the app");
+});
+
+test("the owner's app is not found until its upstream is set", async () => {
+  const { port } = await launchGate(mcpEnv({ HONCHO_GATE_APP_UPSTREAM: "" }), { access: accessFile() });
+  const registered = await register(OWNER_EMAIL, { port });
+  assert.equal((await request("/team-memory/app/", { port, headers: withDevice(OWNER_EMAIL, registered.key) })).status, 404);
+  assert.equal((await request("/team-memory/whoami", { port, headers: loginAs(OWNER_EMAIL) })).json.app, false);
+});
+
+test("Compose sends the gate's /team-memory/app to the owner's app on the host", async () => {
+  const gateService = composeService(await fsp.readFile(COMPOSE, "utf8"), "gate");
+  assert.match(gateService, /^ {6}HONCHO_GATE_APP_UPSTREAM: http:\/\/host\.docker\.internal:\$\{HONCHO_AGENT_BRIDGE_UI_PORT:-4180\}$/m);
+  assert.match(gateService, /^ {6}- host\.docker\.internal:host-gateway$/m);
+});
+
 // -------------------------------------------------------------- access.json
 
 test("without a readable access.json nobody but the gate token gets in, until one appears", async () => {
   const { port, stateDir } = await launchGate(mcpEnv(), { access: null });
   const whoami = async () => (await request("/team-memory/whoami", { port, headers: loginAs(OWNER_EMAIL) })).json;
-  assert.deepEqual(await whoami(), { email: OWNER_EMAIL, owner: false, chat: null, collect: false, device: null });
+  assert.deepEqual(await whoami(), { email: OWNER_EMAIL, owner: false, chat: null, collect: false, device: null, app: false });
   const registration = await request("/team-memory/devices", { port, method: "POST", headers: { ...loginAs(OWNER_EMAIL), ...json }, body: JSON.stringify({ name: "laptop" }) });
   assert.equal(registration.status, 403);
   assert.equal((await request("/mcp", { port, method: "POST", headers: { ...loginAs(OWNER_EMAIL), ...json }, body: "{}" })).status, 403);

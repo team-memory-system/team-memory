@@ -30,6 +30,7 @@ import { TARGET_ID, TARGET_SECRET_ENV } from "./targets.mjs";
 import { API_TOKEN_ENV, dropTeamEntries, INVITE_ENV, teammateAdd, teamName } from "./team-access.mjs";
 import { handleLoginCallback, runTeamRoute, TEAM_READ_ROUTES, teamRoute } from "./team-app.mjs";
 import { CALLBACK_PATH, TEAM_AUTH_ENV, teamAuthPaths } from "./team-auth.mjs";
+import { createViewServer, displayName, hereOnly, serverOrigin, viewerDeviceOf, viewerInfo, viewerOf } from "./viewer.mjs";
 
 const execFileAsync = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -41,6 +42,10 @@ const PUBLIC = INSTALLED ? path.join(HERE, "ui") : path.resolve(HERE, "..", "ui"
 
 const host = process.env.HONCHO_AGENT_BRIDGE_UI_HOST || "127.0.0.1";
 const port = Number(process.env.HONCHO_AGENT_BRIDGE_UI_PORT || 4180);
+// One port above, the owner's server computer's app, when this computer shows it (viewer.mjs).
+const viewPort = port + 1;
+const homeUrl = `http://${host}:${port}/`;
+let viewUrl = null;
 
 // A ChatGPT export of a few years of conversations runs to tens of megabytes, and to
 // gigabytes with the images in it; it goes to disk as it arrives and is read from there.
@@ -694,7 +699,13 @@ export function createUiServer() {
     }
     const rejection = rejectUnsafeRequest(req);
     if (rejection) return json(res, rejection.status, { error: rejection.error });
+    const refused = hereOnly(req, url.pathname);
+    if (refused) return json(res, refused.status, refused.body);
 
+    if (url.pathname === "/api/viewer" && req.method === "GET") {
+      // A computer with its own server shows only itself.
+      return json(res, 200, await viewerInfo({ homeUrl, viewUrl, origin: await serverOrigin(), fresh: url.searchParams.has("fresh") }));
+    }
     if (url.pathname === "/api/past/chatgpt" && req.method === "POST") {
       return addChatGptUpload(req, res, url);
     }
@@ -702,7 +713,9 @@ export function createUiServer() {
     if (url.pathname.startsWith("/api/dashboard/")) return relayDashboard(req, res, url);
     if (url.pathname.startsWith("/api/gw/")) return relayGateway(req, res, url);
     if (url.pathname === "/api/app/context" && req.method === "GET") {
-      return json(res, 200, await appContext().catch((error) => ({ ok: false, error: String(error?.message || error) })));
+      const context = await appContext().catch((error) => ({ ok: false, error: String(error?.message || error) }));
+      // What its owner calls this computer, and the computer showing this page, when another one does.
+      return json(res, 200, { ...context, computer: await displayName(), viewer: viewerOf(req), viewerDevice: viewerDeviceOf(req) });
     }
     if (url.pathname === "/api/app/mcp-tools") {
       try {
@@ -807,6 +820,10 @@ if (isMainModule()) {
   if (!process.env[TEAM_AUTH_ENV]) process.env[TEAM_AUTH_ENV] = teamAuthPaths(await loadConfig().catch(() => null)).authFile;
   createUiServer().listen(port, host, () => {
     process.stdout.write(`Team Memory: http://${host}:${port}\n`);
+    // Where the owner's server computer's app shows, when this computer sends to one.
+    const viewer = createViewServer({ reject: rejectUnsafeRequest, homeUrl, viewUrl: `http://${host}:${viewPort}/` });
+    viewer.on("error", (error) => process.stderr.write(`Team Memory: no other computer's app on ${viewPort} (${error.code || error.message})\n`));
+    viewer.listen(viewPort, host, () => { viewUrl = `http://${host}:${viewPort}/`; });
     // The team-<name> entries an older version put into Claude Code and Codex for
     // each teammate go: the plugin's team-memory server asks every teammate now.
     dropTeamEntries({ authPaths: teamAuthPaths(null) }).catch(() => {});

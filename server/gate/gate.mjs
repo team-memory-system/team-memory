@@ -31,6 +31,15 @@
 //   /v3/*                             a person's registered device: an owner's
 //                                     requests as sent; a collector's only when they
 //                                     write or read back their own conversations
+//   /team-memory/app, /team-memory/app/*
+//                                     an owner's registered device: the owner's app
+//                                     on this computer (HONCHO_GATE_APP_UPSTREAM),
+//                                     so another of their computers shows it whole.
+//                                     It gets the path without /team-memory/app, a
+//                                     loopback Host, no Origin, and the device's
+//                                     name and id in X-Team-Memory-Viewer and
+//                                     X-Team-Memory-Viewer-Device. Until upstream
+//                                     and Access are both set, it is not found.
 //   /mcp, /mcp/*                      an owner (all of it) or a person with chat
 //                                     (the folders and apps opened to them, or
 //                                     nothing while the owner turned them off), to
@@ -136,6 +145,13 @@ function mcpMissing() {
 }
 const MCP_MISSING = mcpMissing();
 const MCP_UPSTREAM = MCP_MISSING.length ? null : new URL(MCP_UPSTREAM_SETTING);
+// The owner's app on the host, for /team-memory/app. Only an http address with a port.
+const APP_UPSTREAM = (() => {
+  let upstream = null;
+  try { upstream = new URL(String(process.env.HONCHO_GATE_APP_UPSTREAM || "").trim()); } catch {}
+  return ACCESS_ON && upstream?.protocol === "http:" && upstream.port ? upstream : null;
+})();
+const APP_PREFIX = "/team-memory/app";
 
 // RFC 9110 section 7.6.1, plus the proxy credentials that are for this hop only.
 const HOP_BY_HOP = new Set([
@@ -201,6 +217,7 @@ function routeFor(method, target) {
   if (pathname === "/mcp" || pathname.startsWith("/mcp/")) return "mcp";
   if (pathname === "/health") return method === "GET" || method === "HEAD" ? "health" : null;
   if (pathname.startsWith("/v3/")) return "api";
+  if (pathname === APP_PREFIX || pathname.startsWith(`${APP_PREFIX}/`)) return "app";
   if (pathname === "/team-memory/whoami") return method === "GET" ? "whoami" : null;
   if (pathname === "/team-memory/devices") return method === "POST" ? "register" : null;
   if (DEVICE_PATH.test(pathname)) return method === "DELETE" ? "unregister" : null;
@@ -229,6 +246,11 @@ function personCredential(key) {
 }
 /** On /mcp also anything that could pick another workspace, peer or scope. */
 const mcpCredential = (key) => personCredential(key) || headerName(key).startsWith("x-honcho-");
+/**
+ * To the owner's app also where the page came from: the app takes only requests
+ * that name its own loopback address, which the gate does for them.
+ */
+const appCredential = (key) => personCredential(key) || ["origin", "referer", "forwarded"].includes(headerName(key)) || headerName(key).startsWith("x-forwarded-");
 // A collector's body is sent as the gate wrote it, with headers to match.
 const BODY_HEADERS = new Set(["content-length", "content-type", "content-encoding", "expect"]);
 
@@ -771,6 +793,7 @@ async function handle(req, res) {
     return forward(req, res, UPSTREAM, forwardHeaders(req.headers, { host: UPSTREAM.host }, deviceKeyHeader));
   }
   if (route === "mcp" && !MCP_UPSTREAM) return reply(res, 404, NOT_FOUND);
+  if (route === "app" && !APP_UPSTREAM) return reply(res, 404, NOT_FOUND);
   if (!ACCESS_ON) {
     // Nobody can be told apart: the gate token is the only key, and the doors for
     // people are not there.
@@ -800,6 +823,8 @@ async function handle(req, res) {
         chat: roles.chat ? { folders: roles.chat.folders, sources: roles.chat.sources, off: roles.chat.off, ...(roles.chat.tools ? { tools: roles.chat.tools } : {}) } : null,
         collect: Boolean(roles.collect),
         device: device.id ? { id: device.id, name: device.device.name } : null,
+        // Whether this server shows its owner's app to their other computers.
+        app: Boolean(APP_UPSTREAM) && roles.owner,
       });
     case "register":
       return registerDevice(req, res, email, roles, policy);
@@ -824,6 +849,24 @@ async function handle(req, res) {
         error: "forbidden",
         detail: "Only this server's owners and the teammates who collect into it use its API.",
       }, "not_allowed");
+    case "app": {
+      // The whole app can stop this server and change who reads it, so only an owner
+      // on a computer they registered here.
+      if (!roles.owner) return refuse(res, route, 403, { error: "forbidden", detail: "Only this server's owners see its app." }, "not_allowed");
+      if (!device.id) {
+        return refuse(res, route, 403, {
+          error: "forbidden",
+          detail: "This computer has no valid device key for this server: none was sent, or it is unknown or revoked.",
+        }, device.reason);
+      }
+      deviceSeen(device.id);
+      const path = req.url.slice(APP_PREFIX.length) || "/";
+      return forward(req, res, APP_UPSTREAM, forwardHeaders(req.headers, {
+        host: `127.0.0.1:${APP_UPSTREAM.port}`,
+        "x-team-memory-viewer": encodeURIComponent(device.device.name),
+        "x-team-memory-viewer-device": device.id,
+      }, appCredential), { path: path.startsWith("/") ? path : `/${path}` });
+    }
     case "mcp": {
       let scope;
       if (roles.owner) scope = { "x-honcho-scope-mode": "all" };
@@ -859,10 +902,11 @@ async function handle(req, res) {
 
 /**
  * Sends the request on and streams the answer back. `rewritten` ({ path, body }) is
- * a collector's request the gate read whole: it goes as the gate wrote it.
+ * a collector's request the gate read whole: it goes as the gate wrote it. With a
+ * path alone, the body streams as sent to that path.
  */
 function forward(req, res, target, headers, rewritten = null) {
-  if (!rewritten) {
+  if (rewritten?.body === undefined) {
     const declared = Number(req.headers["content-length"]);
     if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
       return reply(res, 413, { error: "payload_too_large", limitBytes: MAX_BODY_BYTES });
@@ -894,7 +938,7 @@ function forward(req, res, target, headers, rewritten = null) {
   // A caller that goes away mid-stream ends the upstream request too.
   res.on("close", () => { if (!res.writableFinished) upstream.destroy(); });
 
-  if (rewritten) {
+  if (rewritten?.body !== undefined) {
     upstream.end(rewritten.body);
     return;
   }
@@ -934,6 +978,7 @@ server.listen(LISTEN_PORT, LISTEN_HOST, () => {
     port: server.address().port,
     upstream: UPSTREAM.origin,
     mcp: MCP_UPSTREAM?.origin || null,
+    app: APP_UPSTREAM?.origin || null,
     access: ACCESS_ON,
   })}\n`);
   // Said once, so a door that answers 404 can be traced to what it lacks.

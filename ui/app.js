@@ -7,6 +7,7 @@ import { h, clear, svg, $ } from "./lib/dom.js";
 import { mountBell, refreshBell } from "./lib/bell.js";
 import { requestsLoginRefused, watchRequests } from "./lib/requests.js";
 import { joinedTeam, watchTeamLogin } from "./lib/team.js";
+import { renderMachines } from "./lib/machines.js";
 import { TABS } from "./lib/tabs.js";
 import { icon } from "./lib/icons.js";
 import { app, go, loadContext, me, onChange, refreshStatus, workspace } from "./lib/state.js";
@@ -405,6 +406,8 @@ async function boot() {
     return;
   }
   mountBell($(".main"));
+  // Which of the owner's computers this window shows; not waited for.
+  renderMachines();
   // The team's requests, and a team login that ended, go to the bell once this
   // computer is in a team.
   const watchTeam = () => {

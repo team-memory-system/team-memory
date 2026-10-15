@@ -834,6 +834,114 @@ dialog.sheet::backdrop { background: rgb(18 18 16 / 35%); }
 .palette li button[aria-selected="true"], .palette li button:hover { background: var(--sunk); }
 .palette li small { margin-left: auto; color: var(--ink-3); }
 
+/* 컴퓨터 고르기 (lib/machines.js): under the mark, which of the owner's computers
+   the window shows. While it shows another one, the box and a strip over the page
+   take the seal's colour, and what only that computer's own screen does is locked. */
+.machine { position: relative; margin-top: -6px; }
+.machine-btn {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.machine-btn:hover { border-color: color-mix(in srgb, var(--ink) 28%, var(--line-2)); }
+.machine-btn:focus-visible { outline: none; box-shadow: var(--focus); }
+.machine-btn .glyph, .machine-row .glyph {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  background: var(--sunk);
+  color: var(--ink-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.machine-btn b { display: block; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.machine-btn small { display: block; margin-top: 1px; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.machine-btn > .icon:last-child { color: var(--ink-3); }
+.machine.open .machine-btn { box-shadow: var(--focus); }
+.machine.away .machine-btn { border-color: color-mix(in srgb, var(--accent) 45%, var(--line-2)); background: var(--accent-soft); }
+.machine.away .machine-btn .glyph { background: var(--accent); color: #fff; box-shadow: none; }
+.machine.away .machine-btn small { color: var(--accent-ink); }
+/* The list floats over the page beside the menu. */
+.rail:has(.machine.open) { overflow: visible; position: relative; z-index: 30; }
+.machine-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 288px;
+  max-width: calc(100vw - 24px);
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--raised);
+  box-shadow: var(--shadow-pop);
+}
+.machine-pop h4 { margin: 4px 8px 6px; font-size: 11.5px; font-weight: 600; color: var(--ink-3); letter-spacing: 0.02em; }
+.machine-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.machine-row .glyph { width: 26px; height: 26px; }
+.machine-row:hover:not(:disabled), .machine-row:focus-visible { outline: none; background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.machine-row:disabled { cursor: default; }
+.machine-row:disabled b, .machine-row:disabled .glyph { opacity: 0.55; }
+.machine-row b { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13.5px; font-weight: 600; }
+.machine-row small { display: block; margin-top: 1px; font-size: 12px; color: var(--ink-3); }
+.machine-row:disabled small { color: var(--warn); }
+.machine-row > .icon:last-child { color: var(--accent); }
+.machine-pop footer { margin: 4px 8px 2px; padding-top: 8px; border-top: 1px solid var(--line-soft); font-size: 11.5px; color: var(--ink-4); }
+
+.away-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 12px 6px 32px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 13px;
+}
+.away-strip b { font-weight: 650; white-space: nowrap; }
+.away-strip span { min-width: 0; color: color-mix(in srgb, var(--accent-ink) 75%, var(--ink-2)); }
+.away-strip span b { color: var(--accent-ink); }
+.away-strip .btn { margin-left: auto; flex: none; border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: transparent; color: var(--accent-ink); text-decoration: none; }
+.away-strip .btn:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.main.away .bell { top: 60px; }
+
+.btn.here-only, .btn.here-only:disabled { opacity: 1; border-style: dashed; color: var(--ink-4); cursor: not-allowed; }
+.here-only-note { display: flex; align-items: center; gap: 6px; margin: -4px 0 10px; font-size: 12.5px; color: var(--ink-3); }
+.here-only-note .icon { width: 13px; height: 13px; flex: none; color: var(--ink-4); }
+.blk .here-only-note { margin: 10px 0 2px; }
+
+/* In place of the other computer's page when it cannot be reached (scripts/viewer.mjs). */
+.away-gate { width: 100%; max-width: 480px; margin: 72px auto 0; padding: 0 16px; }
+.away-gate .away-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.away-gate .btn { text-decoration: none; }
+
 /* ── Small screens ─────────────────────────────────────── */
 
 .mobile-bar { display: none; }
@@ -845,6 +953,8 @@ dialog.sheet::backdrop { background: rgb(18 18 16 / 35%); }
   .rail { display: none; }
   .rail.open { display: flex; position: fixed; inset: 0 30% 0 0; z-index: 40; background: var(--canvas); box-shadow: var(--shadow-pop); }
   .mobile-bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--canvas); }
+  .away-strip { padding-left: 16px; flex-wrap: wrap; }
+  .main.away .bell { top: 22px; }
   .page-head { padding: 16px; flex-wrap: wrap; }
   .pad { padding: 16px 16px 40px; }
   .memory { grid-template-columns: minmax(0, 1fr); }

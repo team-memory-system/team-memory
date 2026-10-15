@@ -171,7 +171,8 @@ services:
   # from a collecting teammate's only their own conversations. /mcp goes to the mcp
   # service for an owner or a teammate the memory is opened to, with the folders
   # they may read in the scope headers; until the Access team domain, audience and
-  # team MCP token are set, /mcp is not found.
+  # team MCP token are set, /mcp is not found. /team-memory/app goes to the owner's
+  # app on the host, for an owner's registered computer only.
   gate:
     image: honcho-agent-bridge-dashboard:${HONCHO_IMAGE_TAG:-local}
     command: ["node", "/gate/gate.mjs"]
@@ -179,10 +180,14 @@ services:
     environment:
       HONCHO_GATE_TOKEN: ${HONCHO_GATE_TOKEN:-}
       HONCHO_GATE_MCP_UPSTREAM: http://mcp:8765
+      HONCHO_GATE_APP_UPSTREAM: http://host.docker.internal:${HONCHO_AGENT_BRIDGE_UI_PORT:-4180}
       HONCHO_GATE_ACCESS_TEAM_DOMAIN: ${HONCHO_ACCESS_TEAM_DOMAIN:-}
       HONCHO_GATE_ACCESS_AUD: ${HONCHO_ACCESS_AUD:-}
       HONCHO_TEAM_MCP_TOKEN: ${HONCHO_TEAM_MCP_TOKEN:-}
       HONCHO_GATE_STATE_DIR: /gate-state
+    # The owner's app runs on the host, for /team-memory/app.
+    extra_hosts:
+      - host.docker.internal:host-gateway
     ports:
       - "127.0.0.1:${HONCHO_GATE_PORT:-8010}:8010"
     volumes:
