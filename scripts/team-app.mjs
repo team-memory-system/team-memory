@@ -13,7 +13,7 @@
 import { loadConfig } from "./config.mjs";
 import { folderList, gateDevices, gateGrants, gateStatePaths, gateTeamTools, grantChat, grantCollect, revokeDevice, revokePerson, setChatOff, setTeamTools, sourceList, toolList } from "./gate-access.mjs";
 import { serverFolders } from "./server-folders.mjs";
-import { CALLBACK_PATH, finishLogin, registerDevice, serverWhoami, setTeam, signOut, startLogin, teamAuthPaths, teamHost, teamJson, teamLoginStatus } from "./team-auth.mjs";
+import { CALLBACK_PATH, finishLogin, readTeamAuth, registerDevice, serverWhoami, setTeam, signOut, startLogin, teamAuthPaths, teamHost, teamJson, teamLoginStatus } from "./team-auth.mjs";
 import { computerName, hubCall, madeTeam, teamWhoami } from "./team-hub.mjs";
 
 /** The routes that only read, so a GET may ask them. */
@@ -71,11 +71,15 @@ function redirectUri(req) {
  * login: another admin made them one or took it away, and the 관리자 menu follows
  * without logging in again.
  */
-async function keepAdmin(directory, paths) {
-  const status = await teamLoginStatus({ paths });
-  const me = list(directory?.people).find((person) => person?.email === status.email);
-  if (!status.hub || typeof me?.admin !== "boolean" || me.admin === status.admin) return;
-  await setTeam({ hub: status.hub, admin: me.admin }, { paths });
+/** Keeps what the hub's list says about this person: admin, and the name the team calls them by. */
+async function keepMe(directory, paths) {
+  const auth = await readTeamAuth(paths);
+  const me = list(directory?.people).find((person) => String(person?.email || "").toLowerCase() === auth.email);
+  if (!auth.hub || !auth.email || !me) return;
+  const change = {};
+  if (typeof me.admin === "boolean" && me.admin !== Boolean(auth.me.admin)) change.admin = me.admin;
+  if ((me.nickname || null) !== (auth.me.nickname || null)) change.nickname = me.nickname || null;
+  if (Object.keys(change).length) await setTeam({ hub: auth.hub, ...change }, { paths });
 }
 
 /** Owner side: what is opened to whom, the tools every teammate starts with, and the computers that write here. */
@@ -120,7 +124,7 @@ const ROUTES = {
   "/api/team/directory": async () => {
     const { paths } = await context();
     const directory = await hubCall("GET", "/api/team", undefined, { paths });
-    await keepAdmin(directory, paths).catch(() => {});
+    await keepMe(directory, paths).catch(() => {});
     return { ok: true, ...directory };
   },
 

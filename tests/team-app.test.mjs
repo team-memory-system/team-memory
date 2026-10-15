@@ -31,6 +31,7 @@ const JEV_KEY = "ts-jev-key-for-tests-0123456789";
 let jev = null;
 // Whether the stand-in hub's directory says this person is an admin.
 let meAdmin = true;
+let meNickname = undefined;
 // The servers the stand-in hub's directory lists, and who Access lets in to each app.
 let teamServers = [];
 const appPeople = { hub: null, servers: null };
@@ -83,7 +84,7 @@ before(async () => {
             if (email !== "me@example.com") return Response.json({ error: "not_member", detail: `${email} is not on the team's roster` }, { status: 403 });
             return Response.json({
               team: { name: "예시 팀", host: HUB, zone: "example.com" },
-              people: [{ email: "me@example.com", peer: "me", admin: meAdmin, joined: true, servers: [] }],
+              people: [{ email: "me@example.com", peer: "me", admin: meAdmin, nickname: meNickname, joined: true, servers: [] }],
               servers: teamServers,
             });
           }
@@ -278,6 +279,15 @@ test("an admin makes a teammate an admin or takes it away through the hub, and t
   meAdmin = true;
   await send("/api/team/directory", { method: "POST", body: {} });
   assert.equal((await send("/api/team/status")).json.admin, true);
+
+  // The name the admin gave this person is kept for the honcho MCP, which reads it offline.
+  const kept = async () => JSON.parse(await fs.readFile(process.env.HONCHO_AGENT_TEAM_AUTH, "utf8")).me.nickname;
+  meNickname = "김아람";
+  await send("/api/team/directory", { method: "POST", body: {} });
+  assert.equal(await kept(), "김아람");
+  meNickname = undefined;
+  await send("/api/team/directory", { method: "POST", body: {} });
+  assert.equal(await kept(), null);
 });
 
 test("the owner opens folders, ChatGPT 기록 and MCP tools to a teammate, turns them off and on, and the hub names what is open", async () => {

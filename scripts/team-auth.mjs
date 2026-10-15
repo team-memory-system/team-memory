@@ -523,9 +523,10 @@ export async function teamHeaders(baseUrl, { paths, fetchImpl = globalThis.fetch
 
 /**
  * Remembers the team this computer belongs to and what the hub said about this
- * person (email, peer, admin, the team's name), for the screens to show offline.
+ * person (email, peer, admin, the team's name, their nickname), for the screens to
+ * show offline.
  */
-export async function setTeam({ hub, email, peer, admin, name }, { paths }) {
+export async function setTeam({ hub, email, peer, admin, name, nickname }, { paths }) {
   const host = teamHost(hub);
   if (!host) throw new Error("The team address is not a host name");
   return updateTeamAuth(paths, (auth) => {
@@ -540,6 +541,9 @@ export async function setTeam({ hub, email, peer, admin, name }, { paths }) {
         peer: peer !== undefined ? peer : known.peer || null,
         admin: admin !== undefined ? Boolean(admin) : Boolean(known.admin),
         team: name !== undefined ? name : known.team || null,
+        // The name the team calls this person by (the admin's nickname), for programs
+        // that start without asking the hub, such as the honcho MCP.
+        nickname: nickname !== undefined ? nickname || null : known.nickname || null,
       },
       logins: same ? auth.logins : {},
       ended: same ? auth.ended : {},

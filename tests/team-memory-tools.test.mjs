@@ -264,10 +264,12 @@ test("the stdio server offers no tools before this computer joins a team", async
 });
 
 test("the honcho tools say whose memory it is, by the name the team calls them", async (t) => {
-  const { paths, fake } = await setup(t, { servers: false });
-  assert.equal(await ownTeamName({ paths, fetchImpl: fake.fetch }), "나");
-  const silent = () => new Promise(() => {});
-  assert.equal(await ownTeamName({ paths, fetchImpl: silent, timeoutMs: 50 }), null, "a hub that does not answer leaves the name out");
+  const { paths, team, fake } = await setup(t);
+  assert.equal(await ownTeamName({ paths }), null, "nothing is asked of the hub to find it");
+  const asked = fake.state.requests.length;
+  await team.call("member", {});
+  assert.ok(fake.state.requests.length > asked);
+  assert.equal(await ownTeamName({ paths }), "나", "the name the hub's list gave is kept in the login file");
 
   const text = ownMemoryInstructions({ peer: "user_chen", name: "김아람" });
   assert.match(text, /The user is 김아람 \(peer user_chen\): a question about 김아람 is about this memory and peer user_chen/);

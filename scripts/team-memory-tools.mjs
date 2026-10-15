@@ -21,7 +21,7 @@
 // JSON; its times are UTC.
 import { loadConfig } from "./config.mjs";
 import { OPENABLE_TOOLS } from "./openable-tools.mjs";
-import { readTeamAuth, serverWhoami, TeamLoginError, teamAuthPaths, teamFetch, teamJson } from "./team-auth.mjs";
+import { readTeamAuth, serverWhoami, setTeam, TeamLoginError, teamAuthPaths, teamFetch, teamJson } from "./team-auth.mjs";
 import { VERSION } from "./version.mjs";
 
 export const REMOTE_TOOLS = Object.freeze(Object.values(OPENABLE_TOOLS).flat());
@@ -281,21 +281,15 @@ function answerText(member, name, value) {
 }
 
 /**
- * The name the team calls this computer's person by (the admin's nickname), from the
- * hub; null without a team, or when the hub does not answer within `timeoutMs`.
+ * The name the team calls this computer's person by (the admin's nickname), as the
+ * app last kept it from the hub; null without one. Read from the login file only:
+ * a program that asked the hub here would refresh the login under its lock, and one
+ * closed meanwhile (an agent window) would leave the lock behind.
  */
-export async function ownTeamName({ paths = null, fetchImpl = globalThis.fetch, timeoutMs = 3_000 } = {}) {
-  const lookup = (async () => {
-    const files = paths || teamAuthPaths(await loadConfig().catch(() => null));
-    const auth = await readTeamAuth(files);
-    if (!auth.hub || !auth.email) return null;
-    const team = await teamJson(`https://${auth.hub}/api/team`, { paths: files, fetchImpl, device: false });
-    const self = list(team.people).find((person) => String(person.email || "").toLowerCase() === String(auth.email).toLowerCase());
-    return self?.nickname || null;
-  })().catch(() => null);
-  let timer;
-  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeoutMs); });
-  try { return await Promise.race([lookup, late]); } finally { clearTimeout(timer); }
+export async function ownTeamName({ paths = null } = {}) {
+  const files = paths || teamAuthPaths(await loadConfig().catch(() => null));
+  const auth = await readTeamAuth(files).catch(() => null);
+  return auth?.me?.nickname || null;
 }
 
 /**
@@ -337,6 +331,10 @@ export function teamMemory({ paths = null, fetchImpl = globalThis.fetch, now = (
       members: membersOf(team, auth.email),
     };
     directoryCache = { at: now(), value };
+    // The honcho MCP names this person by it; it reads the login file, not the hub.
+    if ((self?.nickname || null) !== (auth.me.nickname || null)) {
+      await setTeam({ hub: auth.hub, nickname: self?.nickname || null }, { paths: files }).catch(() => {});
+    }
     return value;
   }
 
