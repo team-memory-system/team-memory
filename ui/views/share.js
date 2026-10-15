@@ -87,7 +87,7 @@ async function teamShareOn(share, redraw) {
         await busy(target, async () => { await cli("/api/server/share/disable", {}); await redraw(false); }, { done: "공유를 껐습니다" });
       } })],
     },
-    shownElsewhere() ? hereOnlyNote("공유 끄기는 이 컴퓨터 앞에서 하세요. 다른 컴퓨터에서 끄면 그 화면으로 오는 길도 같이 끊깁니다.") : null,
+    shownElsewhere() ? hereOnlyNote(HERE_ONLY_NOTE) : null,
     kv("이 서버의 주소", h("span", { class: "mono" }, share.publicUrl || ""),
       button("", { kind: "small icon-only", iconName: "copy", title: "주소 복사", onClick: async () => { await copyText(share.publicUrl); toast("주소를 복사했습니다"); } }))),
     list({ title: "이 서버에 쌓는 컴퓨터" }, rows));
@@ -121,7 +121,7 @@ function mcpLine(share) {
   return [statusTag(mcp.running, ["준비됨", "멈춤"]), " ", h("span", { class: "mono muted" }, share.publicUrl ? `${share.publicUrl}/mcp` : "")];
 }
 
-const HERE_ONLY_NOTE = "공유 끄기와 token 바꾸기는 이 컴퓨터 앞에서 하세요. 다른 컴퓨터에서 하면 그 화면으로 오는 길도 같이 끊깁니다.";
+const HERE_ONLY_NOTE = "공유 끄기는 이 컴퓨터 앞에서 하세요. 다른 컴퓨터에서 끄면 그 화면으로 오는 길이 끊기고, 다시 켤 길도 없습니다.";
 
 function shareOn(share, redraw) {
   const check = share.publicCheck;
@@ -150,7 +150,7 @@ function shareOn(share, redraw) {
           await copyText(result.token);
           toast("서버 token을 복사했습니다. 다른 컴퓨터의 대화 수집 설정에 붙여 넣으세요.");
         }) }),
-        shownElsewhere() ? hereOnlyButton("바꾸기", "이 컴퓨터 앞에서만 바꿀 수 있습니다") : button("바꾸기", { kind: "small quiet", onClick: async (event) => {
+        button("바꾸기", { kind: "small quiet", onClick: async (event) => {
           const ok = await confirmWindow({ title: "서버 token을 바꿀까요?", text: "지금 token을 쓰는 내 다른 컴퓨터는 모두 끊깁니다. 각 컴퓨터의 대화 수집 설정에 새 token을 넣어야 다시 모입니다. 끊긴 동안의 대화는 다시 연결하면 이어서 쌓입니다. 팀원의 Google 로그인은 그대로입니다.", confirm: "바꾸기", danger: true });
           if (!ok) return;
           await busy(event.currentTarget, async () => { await cli("/api/server/share/rotate", {}); await redraw(false); }, { done: "새 서버 token을 만들었습니다" });

@@ -9,7 +9,7 @@ import { explainWarning } from "../lib/collect.js";
 import { h, clear } from "../lib/dom.js";
 import { number } from "../lib/format.js";
 import { kv } from "../lib/kit.js";
-import { hereOnlyButton, hereOnlyNote, shownElsewhere } from "../lib/machines.js";
+import { shownElsewhere } from "../lib/machines.js";
 import { etaText } from "../lib/past.js";
 import { bytesText, callsText, keepLine, keptName, keptWhat, lastDetail, lastLine, lastTag, moment, rebuildLine, rebuildNote, stopCause } from "../lib/rederive.js";
 import { screenTabs } from "../lib/tabs.js";
@@ -164,16 +164,39 @@ export default {
       clear(body, nodes);
     }
 
+    /** Asks for a restart, then waits through the minute the way here is down for it to end. */
+    async function restartFromAfar() {
+      await cli("/api/server/restart", { profile: "personal" });
+      clear(outcome, notice("", spinner(), " 다시 시작하는 중입니다. 이 화면이 잠시 끊겼다가 저절로 이어집니다."));
+      const deadline = Date.now() + 8 * 60_000;
+      let last = null;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 4_000));
+        const state = await post("/api/server/restart", { check: true }).catch(() => null);
+        if (state && !state.restarting) { last = state.last; break; }
+      }
+      clear(outcome, last && !last.ok ? notice("bad", h("b", {}, "다시 시작하지 못했습니다."), last.error ? ` ${last.error}` : "") : null);
+      await draw();
+      refreshStatus();
+      if (!last) throw new Error("다시 시작이 끝났는지 알 수 없습니다. 잠시 뒤 새로 고침을 누르세요.");
+      if (!last.ok) throw new Error("다시 시작하지 못했습니다.");
+    }
+
     function serverSection(server) {
       const services = server.services || [];
       const running = server.running;
-      // Stopped from another computer, the server would cut the way this page came.
+      // Stopped from another computer, the server would cut the way this page came, and
+      // nothing there could start it again: there it is stopped and started in one go.
       const elsewhere = shownElsewhere();
       return section({
         title: "기억 서버",
         actions: [
           running && elsewhere
-            ? hereOnlyButton("멈추기", "이 컴퓨터 앞에서만 멈출 수 있습니다")
+            ? button("다시 시작", { kind: "small", iconName: "refresh", onClick: async (event) => {
+              const ok = await confirmSheet({ title: "기억 서버를 다시 시작할까요?", text: "멈췄다가 곧바로 다시 켭니다. 1~2분 동안 이 화면이 끊겼다가 저절로 이어집니다. 그동안의 대화는 다시 켜진 뒤 이어서 쌓입니다.", confirm: "다시 시작" });
+              if (!ok) return;
+              await busy(event.currentTarget, () => restartFromAfar(), { done: "기억 서버를 다시 시작했습니다" });
+            } })
             : running
             ? button("멈추기", { kind: "small", iconName: "stop", onClick: async (event) => {
               const ok = await confirmSheet({ title: "기억 서버를 멈출까요?", text: "멈춘 동안에는 대화가 모이지 않고, 끝난 대화는 다시 켤 때 이어서 쌓입니다. 에이전트의 기억 검색도 멈춥니다.", confirm: "멈추기", danger: true });
@@ -198,7 +221,6 @@ export default {
           } }),
         ],
       },
-      running && elsewhere ? hereOnlyNote("멈추기는 이 컴퓨터 앞에서 하세요. 다른 컴퓨터에서 멈추면 그 화면으로 오는 길도 같이 끊깁니다.") : null,
       h("div", { class: "rows" },
         h("div", { class: "row" },
           h("div", {}, h("div", { class: "title" }, statusTag(running && server.health?.ok, ["답하는 중", running ? "답하지 않음" : "멈춤"]), "API"), h("div", { class: "sub mono" }, server.apiUrl || "")),

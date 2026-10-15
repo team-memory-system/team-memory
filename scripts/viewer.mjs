@@ -11,7 +11,7 @@
 //
 // A page shown on another computer cannot do everything there. The gate names the
 // computer it came from (X-Team-Memory-Viewer), and the app refuses what would cut
-// the way the page came, log the server computer in or out through a browser that
+// the way the page came for good, log the server computer in or out through a browser that
 // comes back to this one, open a window on its screen, or send an upload past the
 // gate's limit (HERE_ONLY).
 import { execFile } from "node:child_process";
@@ -37,14 +37,13 @@ const PROBE_TIMEOUT_MS = 6_000;
 
 /**
  * What an app does only for a page on its own computer, by path (all POST). Each
- * would cut the way a page on another computer came (stopping the server, turning
- * sharing off, a new tunnel token), send a login's browser back to the wrong
+ * would cut the way a page on another computer came for good (stopping the server,
+ * turning sharing off: neither comes back from afar; 다시 시작 does), send a login's browser back to the wrong
  * computer, open a window on this computer's screen, or upload past the gate.
  */
 export const HERE_ONLY = new Map([
   ["/api/server/stop", "기억 서버를 멈추면 이 화면으로 오는 길도 같이 끊깁니다."],
   ["/api/server/share/disable", "공유를 끄면 이 화면으로 오는 길도 같이 끊깁니다."],
-  ["/api/server/share/rotate", "공유를 다시 열면 이 화면으로 오는 길이 잠시 끊깁니다."],
   ["/api/team/login", "로그인 창이 이 컴퓨터로 돌아오지 않습니다."],
   ["/api/team/logout", "그 컴퓨터의 팀 로그인을 끊으면 이 화면도 쓸 수 없습니다."],
   ["/api/gateway/open", "그 창은 그 컴퓨터의 화면에 뜹니다."],

@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { rejectUnsafeRequest } from "../scripts/ui.mjs";
+import { rejectUnsafeRequest, restartServer } from "../scripts/ui.mjs";
 import { DEVICE_HEADER, finishLogin, registerDevice, startLogin, teamAuthPaths } from "../scripts/team-auth.mjs";
 import { createViewServer, forgetProbes, hereOnly, serverOrigin, unreachablePage, viewerInfo, viewerOf } from "../scripts/viewer.mjs";
 import { fakeTeam } from "./fake-team.mjs";
@@ -178,14 +178,16 @@ test("a page shown on another computer cannot stop the server, turn sharing off 
   assert.equal(viewerOf(from("GET", elsewhere)), "chenjing의 MacBook Pro");
   assert.equal(viewerOf(from("GET")), null);
   assert.equal(viewerOf(from("GET", { "x-team-memory-viewer": "%E0%A4%A" })), null);
-  for (const pathname of ["/api/server/stop", "/api/server/share/disable", "/api/server/share/rotate", "/api/team/login", "/api/team/logout", "/api/gateway/open", "/api/past/chatgpt"]) {
+  for (const pathname of ["/api/server/stop", "/api/server/share/disable", "/api/team/login", "/api/team/logout", "/api/gateway/open", "/api/past/chatgpt"]) {
     const refused = hereOnly(from("POST", elsewhere), pathname);
     assert.equal(refused?.status, 403, pathname);
     assert.equal(refused.body.hereOnly, true);
     assert.match(refused.body.error, /그 컴퓨터 앞에서/);
     assert.equal(hereOnly(from("POST"), pathname), null, `${pathname} on its own computer`);
   }
-  assert.equal(hereOnly(from("POST", elsewhere), "/api/server/start"), null, "starting it again is fine");
+  for (const pathname of ["/api/server/start", "/api/server/restart", "/api/server/share/rotate"]) {
+    assert.equal(hereOnly(from("POST", elsewhere), pathname), null, `${pathname}: the way comes back by itself`);
+  }
   assert.equal(hereOnly(from("GET", elsewhere), "/api/server/stop"), null);
 });
 
@@ -202,4 +204,26 @@ test("the page in place of an unreachable one escapes what it is given", () => {
   assert.ok(!page.includes("<b>x</b>"));
   assert.match(page, /&#60;b&#62;x/);
   assert.match(page, /잠자거나 꺼져 있거나/);
+});
+
+test("다시 시작 stops the server and starts it again, once at a time, and says how it went", async () => {
+  const calls = [];
+  let release;
+  const run = async (args) => {
+    calls.push(args.join(" "));
+    if (args[1] === "stop") await new Promise((resolve) => { release = resolve; });
+    return { ok: true };
+  };
+  const first = restartServer(["--profile", "personal"], run);
+  const second = restartServer(["--profile", "personal"], run);
+  assert.equal(first, second, "a second press waits for the same one");
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  assert.deepEqual(await first, { ok: true });
+  assert.deepEqual(calls, ["server stop --profile personal", "server start --profile personal"]);
+
+  // A stop that fails starts nothing.
+  const failed = await restartServer([], async (args) => (calls.push(args.join(" ")), args[1] === "stop" ? { ok: false, error: "docker is not running" } : { ok: true }));
+  assert.deepEqual(failed, { ok: false, error: "docker is not running" });
+  assert.equal(calls.at(-1), "server stop");
 });

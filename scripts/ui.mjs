@@ -538,6 +538,13 @@ const ROUTES = {
   "/api/server/prepare": async (body) => runCli(["server", "prepare", ...profileOption(body), ...modelOption(body)]),
   "/api/server/start": async (body) => runCli(["server", "start", ...profileOption(body), ...modelOption(body)]),
   "/api/server/stop": async (body) => runCli(["server", "stop", ...profileOption(body)]),
+  // Answered at once, then stopped and started here: from another computer, the way
+  // the answer goes back stops with the server. { check: true } says how it went.
+  "/api/server/restart": async (body) => {
+    if (body?.check === true) return { ok: true, restarting: Boolean(restart.running), last: restart.last };
+    restartServer(profileOption(body));
+    return { ok: true, restarting: true };
+  },
   "/api/server/status": async (body) => runCli(["server", "status", ...profileOption(body)]),
   "/api/server/verify": async (body) => runCli(["server", "verify", ...profileOption(body, "personal")]),
   ...SHARE_ROUTES,
@@ -547,6 +554,26 @@ const ROUTES = {
   ...PAST_ROUTES,
   ...REDERIVE_ROUTES,
 };
+
+const restart = { running: null, last: null };
+
+/** Stops the memory server and starts it again, once at a time, whoever is waiting for it. */
+export function restartServer(profile, run = runCli) {
+  if (!restart.running) {
+    restart.running = (async () => {
+      const stopped = await run(["server", "stop", ...profile]);
+      if (stopped?.ok === false) return stopped;
+      return run(["server", "start", ...profile]);
+    })()
+      .catch((error) => ({ ok: false, error: String(error?.message || error) }))
+      .then((result) => {
+        restart.last = { ok: result?.ok !== false, error: result?.ok === false ? String(result.error || "") || null : null, at: new Date().toISOString() };
+        restart.running = null;
+        return result;
+      });
+  }
+  return restart.running;
+}
 
 /**
  * The host services have their own lifecycle, separate from the Docker stack.
