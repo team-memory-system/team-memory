@@ -3,7 +3,8 @@
 // with this computer's team login and device key, as the browser sent it, and only
 // after the checks this computer's own app makes; /api/viewer is answered here; a
 // server computer that cannot be shown gets a page that says why instead of a blank
-// window; and the server computer's app refuses what would cut the way the page came.
+// window; the server computer's app refuses what would cut the way the page came;
+// and a long answer to the other computer begins before Cloudflare gives up on it.
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import http from "node:http";
@@ -11,9 +12,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { rejectUnsafeRequest, restartServer } from "../scripts/ui.mjs";
+import { ApiError, request } from "../ui/lib/api.js";
+import { answerLate, json, rejectUnsafeRequest, restartServer } from "../scripts/ui.mjs";
 import { DEVICE_HEADER, finishLogin, registerDevice, startLogin, teamAuthPaths } from "../scripts/team-auth.mjs";
-import { createViewServer, forgetProbes, hereOnly, serverOrigin, shortName, unreachablePage, viewerInfo, viewerOf } from "../scripts/viewer.mjs";
+import { createViewServer, forgetProbes, hereOnly, serverOrigin, shortName, unreachablePage, VIEWER_HEADER, viewerInfo, viewerOf } from "../scripts/viewer.mjs";
 import { fakeTeam } from "./fake-team.mjs";
 
 const SERVER = "memory-me.example.com";
@@ -253,4 +255,55 @@ test("a computer goes by its name without whose it is", () => {
   assert.equal(shortName("gim-alam-ui-MacStudio"), "gim-alam-ui-MacStudio");
   assert.equal(shortName("회의실 의자 옆 PC"), "회의실 의자 옆 PC", "의 inside a word is not whose");
   assert.equal(shortName("의 "), "의");
+});
+
+/** What a request to `port` gets, and how long its headers and its end took. */
+function timedGet(port, pathname, { viewer = true } = {}) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const asked = http.get({ hostname: "127.0.0.1", port, path: pathname, headers: viewer ? { [VIEWER_HEADER]: encodeURIComponent("MacBook") } : {} }, (response) => {
+      const headersAt = Date.now() - started;
+      let text = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => { text += chunk; });
+      response.on("end", () => resolve({ status: response.statusCode, headersAt, endAt: Date.now() - started, text }));
+    });
+    asked.on("error", reject);
+  });
+}
+
+test("a slow answer to another computer begins at once and keeps going, so Cloudflare does not end it at 100 s", async (t) => {
+  // The app's own routes, with the minutes a 다시 준비 takes shrunk to 300 ms.
+  const app = http.createServer((req, res) => {
+    answerLate(req, res, { firstMs: 30, everyMs: 30 });
+    const quick = req.url === "/api/quick";
+    setTimeout(() => json(res, quick ? 403 : 500, { ok: false, error: "서버를 준비하지 못했습니다" }), quick ? 0 : 300);
+  });
+  await new Promise((resolve) => app.listen(0, "127.0.0.1", resolve));
+  t.after(() => app.close());
+  const port = app.address().port;
+
+  const slow = await timedGet(port, "/api/slow");
+  assert.equal(slow.status, 200, "the status went out before the answer was known");
+  assert.ok(slow.headersAt < slow.endAt - 100, `headers after ${slow.headersAt} ms, the answer after ${slow.endAt} ms`);
+  assert.match(slow.text, /^ {2,}\{/, "spaces until the answer");
+  assert.deepEqual(JSON.parse(slow.text), { ok: false, error: "서버를 준비하지 못했습니다", lateStatus: 500 });
+
+  const here = await timedGet(port, "/api/slow", { viewer: false });
+  assert.equal(here.status, 500, "a page on this computer waits for the real status");
+  assert.equal(here.text, JSON.stringify({ ok: false, error: "서버를 준비하지 못했습니다" }));
+
+  const quick = await timedGet(port, "/api/quick");
+  assert.equal(quick.status, 403, "an answer in time keeps its status");
+  assert.equal(quick.text, JSON.stringify({ ok: false, error: "서버를 준비하지 못했습니다" }));
+});
+
+test("the page reads a late answer past its spaces, and a late failure as the failure it is", async (t) => {
+  const realFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = realFetch; });
+  const answers = ['   {"ok":true,"ready":true}', '    {"ok":false,"error":"서버를 준비하지 못했습니다","lateStatus":500}'];
+  globalThis.fetch = async () => new Response(answers.shift(), { status: 200, headers: { "content-type": "application/json; charset=utf-8" } });
+  assert.deepEqual(await request("/api/server/prepare", { method: "POST", body: {} }), { ok: true, ready: true });
+  await assert.rejects(request("/api/server/prepare", { method: "POST", body: {} }),
+    (error) => error instanceof ApiError && error.status === 500 && error.message === "서버를 준비하지 못했습니다");
 });

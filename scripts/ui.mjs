@@ -59,9 +59,38 @@ const CONTENT_TYPES = {
   ".json": "application/json; charset=utf-8",
 };
 
-function json(res, status, body) {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
+
+/** The answer, or its end when answerLate already sent the status and some spaces. */
+export function json(res, status, body) {
+  if (res.headersSent) {
+    const late = status >= 400 && body && typeof body === "object" && !Array.isArray(body);
+    res.end(JSON.stringify(late ? { ...body, lateStatus: status } : body));
+    return;
+  }
+  res.writeHead(status, JSON_HEADERS);
   res.end(JSON.stringify(body));
+}
+
+/**
+ * A page on another computer reaches this app through Cloudflare, which gives up on
+ * an answer that has not begun in about 100 s and shows a failure there while the
+ * work goes on here (다시 준비, say). So when such a request has no answer after
+ * `firstMs`, the headers go out at once with status 200, then a space every
+ * `everyMs`, and json() ends it with the answer, which JSON reads past the spaces. A
+ * failure that comes that late says its status in `lateStatus` (ui/lib/api.js).
+ */
+export function answerLate(req, res, { firstMs = 20_000, everyMs = 20_000 } = {}) {
+  if (!viewerOf(req)) return;
+  let timer = setTimeout(function keepGoing() {
+    if (res.writableEnded || res.destroyed) return;
+    if (!res.headersSent) res.writeHead(200, JSON_HEADERS);
+    res.write(" ");
+    timer = setTimeout(keepGoing, everyMs);
+  }, firstMs);
+  const stop = () => clearTimeout(timer);
+  res.once("finish", stop);
+  res.once("close", stop);
 }
 
 function isLoopbackHostname(hostname = "") {
@@ -739,6 +768,8 @@ export function createUiServer() {
     if (url.pathname.startsWith("/api/honcho/")) return relayHoncho(req, res, url);
     if (url.pathname.startsWith("/api/dashboard/")) return relayDashboard(req, res, url);
     if (url.pathname.startsWith("/api/gw/")) return relayGateway(req, res, url);
+    // Everything below answers through json().
+    answerLate(req, res);
     if (url.pathname === "/api/app/context" && req.method === "GET") {
       const context = await appContext().catch((error) => ({ ok: false, error: String(error?.message || error) }));
       // What its owner calls this computer, and the computer showing this page, when another one does.

@@ -36,9 +36,12 @@ export async function request(path, { method = "GET", body, signal } = {}) {
   }
   const type = response.headers.get("content-type") || "";
   const payload = type.includes("json") ? await response.json().catch(() => null) : await response.text();
-  if (!response.ok) {
-    throw new ApiError(messageFrom(payload, response.status), {
-      status: response.status,
+  // An answer to a page on another computer that took long went out as 200 before it
+  // was known; a failure says its own status in lateStatus (scripts/ui.mjs answerLate).
+  const status = response.ok && payload?.lateStatus >= 400 ? payload.lateStatus : response.status;
+  if (!response.ok || status >= 400) {
+    throw new ApiError(messageFrom(payload, status), {
+      status,
       unreachable: Boolean(payload?.unreachable),
       payload,
     });
