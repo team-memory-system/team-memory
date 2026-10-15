@@ -19,10 +19,13 @@ const MASKED = {
   driver: "운전면허번호",
   card: "카드번호",
   account: "계좌번호",
+  phone: "휴대폰 번호",
+  email: "이메일",
   coordinate: "좌표",
   api_key: "API 키",
   private_key: "비밀 키",
   password: "비밀번호",
+  encoded: "인코딩된 값",
 };
 
 /** What was hidden in an answer, as {kind: count} came from the bridge: "카드번호 1개 가림". */
