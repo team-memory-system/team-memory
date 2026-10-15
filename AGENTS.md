@@ -519,7 +519,7 @@ takes, and the app's 프로젝트 step does: the folders that held this computer
 Claude Code and Codex conversations (`GET /api/app/projects`), ticked or not,
 새로 생기는 프로젝트 폴더도 수집 for every folder they do not name, and 자동 실행 대화도
 수집 for conversations no person took part in. A first setup ticks every folder, the
-backup store's folders included (tagged 백업 저장소에만), and every ticked folder's
+backup store's folders included (tagged 백업에만), and every ticked folder's
 past conversations go in at 적용 (see [Past conversations](#past-conversations--지난-대화)).
 
 ```bash
@@ -560,7 +560,7 @@ The hooks send what is said from now on. What was said before goes in once, at
 started, so the memory forms the way it happened:
 
 - **이 컴퓨터**: the Claude Code and Codex transcripts on this disk, always read.
-- **백업 저장소**: what the conversation backup (see [Backing up the conversation
+- **백업에서 가져오기** (where old conversations come from; where a backup goes is set on the 백업 page): what the conversation backup (see [Backing up the conversation
   originals](#backing-up-the-conversation-originals--대화-원본-백업)) copied there from
   each of the person's computers. A folder is read in place; an rclone remote is
   copied down first into `<dataDir>/past/store/`, only what changed since the last

@@ -262,7 +262,7 @@ const dash = (value) => (value ? number(value) : "–");
 /** A place past conversations came from, as the table names it. */
 function sourceName(row) {
   if (row.kind === "here") return "이 컴퓨터";
-  if (row.kind === "store") return ["백업 저장소 ", h("span", { class: "mono muted" }, row.label || "")];
+  if (row.kind === "store") return ["백업에서 가져옴 ", h("span", { class: "mono muted" }, row.label || "")];
   return ["ChatGPT ", h("span", { class: "mono muted" }, row.account || row.name || "")];
 }
 

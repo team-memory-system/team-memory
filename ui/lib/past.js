@@ -13,7 +13,7 @@ import { number, sourceLabel } from "./format.js";
 import { opt, opts } from "./kit.js";
 import { button, notice, segmented, spinner, tag } from "./ui.js";
 
-const STORE_SUB = "내 컴퓨터들의 대화를 백업해 둔 폴더나 클라우드(rclone remote)";
+const STORE_SUB = "예전에 백업해 둔 대화를 폴더나 클라우드(rclone remote)에서 가져옵니다. 백업할 곳은 여기가 아니라 백업 화면에서 정합니다.";
 const CHATGPT_SUB = "ChatGPT의 설정 → 데이터 제어 → 데이터 내보내기로 받은 zip 파일";
 export const READ_HINT = "다 읽으면 다음을 누를 수 있습니다.";
 /** Under each agent's plugin row while past conversations go in first. */
@@ -220,14 +220,14 @@ export function readState(past) {
   if (past.asking || !scan || past.asked !== JSON.stringify(storeOf(past))) return { state: "reading" };
   if (scan.ok === false) return { state: "wrong", text: scan.error || "읽지 못했습니다." };
   if (past.storeOn && !storeOf(past)) {
-    return { state: "wrong", text: past.store.kind === "folder" ? "백업 저장소의 폴더를 고르세요." : "백업 저장소의 rclone remote를 고르세요." };
+    return { state: "wrong", text: past.store.kind === "folder" ? "가져올 백업 폴더를 고르세요." : "가져올 백업의 rclone remote를 고르세요." };
   }
   if (scan.here?.state === "error") return { state: "wrong", text: "이 컴퓨터의 대화를 읽지 못했습니다. 다시 시도를 누르세요." };
   const store = storeOf(past) ? storeScan(past) : null;
   if (store?.state === "error") return { state: "wrong", text: scanError(store, storeOf(past)) };
   if (scan.running) return { state: "reading" };
   if (scan.here?.state !== "done") return { state: "wrong", text: "이 컴퓨터의 대화를 다 읽지 못했습니다. 다시 시도를 누르세요." };
-  if (storeOf(past) && store?.state !== "done") return { state: "wrong", text: "백업 저장소를 다 읽지 못했습니다. 다시 시도를 누르세요." };
+  if (storeOf(past) && store?.state !== "done") return { state: "wrong", text: "백업을 다 읽지 못했습니다. 다시 시도를 누르세요." };
   return { state: "read" };
 }
 
@@ -239,7 +239,7 @@ function scanError(part, spec) {
       ? `${storeName(spec)}에 대화가 없습니다. 내 컴퓨터들이 백업하는 remote와 폴더가 맞는지 확인하세요.`
       : `${storeName(spec)} 폴더가 없습니다. 내 컴퓨터들이 백업하는 폴더(그 안에 ${ROOT} 폴더가 있는 곳)를 고르세요.`;
   }
-  return "백업 저장소를 읽지 못했습니다. 다시 시도를 누르세요.";
+  return "백업을 읽지 못했습니다. 다시 시도를 누르세요.";
 }
 
 /** How many conversations a place holds of the chosen agents, by its summary's counts. */
@@ -267,7 +267,7 @@ export function pastStep(draft, context, { edit = false, newServer = false } = {
   hereRow.classList.add("locked");
   const hereSub = hereRow.querySelector(".os");
 
-  // ── 백업 저장소 ──
+  // ── 백업에서 가져오기 ──
   const fields = h("div", { class: "store-where" });
   const readline = h("div", { class: "readline" });
   const storeExtra = h("div", { class: "subfields", hidden: true }, fields, h("div", { class: "hint" }, `내 컴퓨터들이 백업하는 폴더를 고르세요. 그 안의 ${ROOT} 폴더를 읽습니다.`), readline);
@@ -277,7 +277,7 @@ export function pastStep(draft, context, { edit = false, newServer = false } = {
     name: "past-store",
     value: "store",
     checked: past.storeOn,
-    title: "백업 저장소",
+    title: "백업에서 가져오기",
     sub: h("span", {}, STORE_SUB),
     end: h("span", {}),
     extra: storeExtra,
@@ -340,10 +340,10 @@ export function pastStep(draft, context, { edit = false, newServer = false } = {
       scan.ask();
     });
     if (store.kind === "folder") {
-      const input = h("input", { class: "input mono", value: store.path, placeholder: "/Volumes/백업드라이브", spellcheck: "false", "aria-label": "백업 저장소 폴더" });
+      const input = h("input", { class: "input mono", value: store.path, placeholder: "/Volumes/백업드라이브", spellcheck: "false", "aria-label": "가져올 백업 폴더" });
       input.addEventListener("input", () => { store.path = input.value; past.filled = true; scan.ask({ later: true }); });
       clear(fields, kinds, input, button("폴더 고르기", { kind: "small", iconName: "folder", onClick: async () => {
-        const folder = await pickFolder({ title: "백업 저장소 고르기", start: storeFolder(store.path) });
+        const folder = await pickFolder({ title: "가져올 백업 고르기", start: storeFolder(store.path) });
         if (!folder) return;
         store.path = folder;
         input.value = folder;
@@ -392,7 +392,7 @@ export function pastStep(draft, context, { edit = false, newServer = false } = {
       return;
     }
     if (!past.scan?.running && part?.state === "waiting") {
-      clear(readline, notice("bad", "백업 저장소를 읽다가 멈췄습니다. ", button("다시 시도", { kind: "small", onClick: () => scan.ask() })));
+      clear(readline, notice("bad", "백업을 읽다가 멈췄습니다. ", button("다시 시도", { kind: "small", onClick: () => scan.ask() })));
       return;
     }
     // Reading: rclone first copies a cloud down (phase copy), then every file is read.

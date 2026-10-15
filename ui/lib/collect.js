@@ -319,7 +319,7 @@ function overviewProjects(projects) {
     count: project.count,
     display: project.display || shortPath(project.path),
     temp: Boolean(project.temp),
-    tag: project.storeOnly ? "백업 저장소에만" : null,
+    tag: project.storeOnly ? "백업에만" : null,
   }));
 }
 
