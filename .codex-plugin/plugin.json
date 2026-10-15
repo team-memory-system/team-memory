@@ -1,6 +1,6 @@
 {
   "name": "team-memory",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "description": "Install and operate a self-hosted personal memory for Codex and Claude Code.",
   "author": {
     "name": "chenjing"
