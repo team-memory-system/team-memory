@@ -95,20 +95,26 @@ const JEV_RETRY_MS = 300;
 // At this score or above, the question is taken as reaching for the owner's private
 // life, or the answer as giving it away.
 const JEV_THRESHOLD = 0.7;
+// What private life is, named for Jev: without the list it let through answers with
+// a current location, biometric data, union membership, a party mixed into work or
+// a side job at 0.37 to 0.67; with it they scored 0.81 to 0.96, while 31 work answers
+// stayed at or below 0.05 (2026-10-15, 336 questions to Jev). A work answer that
+// names a hospital visit is held back as well (0.76).
+const PRIVATE_LIFE = "Private life includes where someone lives or is outside work (a home address, a neighborhood, a current location, daily routes), health and medical matters, biometric data (fingerprints, face or voice data), religion or beliefs, political views or party membership, union membership, sexual life or orientation, family and relationships, ethnicity or origin, criminal records, personal finances (own salary, debt, credit score, accounts), identification numbers, credentials or secrets, and paid work outside the owner's job.";
 const OUT_OF_SCOPE = {
   type: "noul",
-  instructions: "Is this query asking for private personal life, credentials, financial or health details about the memory owner, rather than shared work context (projects, code, decisions, schedules, documents)?",
+  instructions: "Is this query asking about the private life of the memory owner or another person, or for credentials or secrets, rather than shared work context (projects, code, decisions, work schedules, documents)? " + PRIVATE_LIFE,
   criteria: {
-    true: "The query targets private personal matters, secrets, or credentials.",
+    true: "The query reaches for a person's private life as listed, or for a secret or credential.",
     false: "The query is about work the team shares, or is general and harmless.",
   },
 };
 const SENSITIVE_ANSWER = {
   type: "noul",
-  instructions: "A teammate asked the memory owner's work memory a question and will read this answer. Does the answer disclose private personal life, credentials or secrets, financial or health details about the owner or any person, rather than shared work context (projects, code, decisions, schedules, documents)?",
+  instructions: "A teammate asked the memory owner's work memory a question and will read this answer. Does the answer disclose anything about the private life of the owner or any other person, rather than shared work context (projects, code, decisions, work schedules, documents)? " + PRIVATE_LIFE,
   criteria: {
-    true: "The answer discloses private personal matters, secrets, credentials, financial or health details.",
-    false: "The answer only covers shared work context, or is general and harmless.",
+    true: "The answer discloses something about a person's private life as listed, or a secret or credential.",
+    false: "The answer only covers shared work context, such as work done, who did it, work schedules, business trips, or is general and harmless.",
   },
 };
 // What /guard judges, each with its own question to Jev: a teammate's question

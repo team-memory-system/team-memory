@@ -1120,12 +1120,13 @@ test("an admin renames the team; bodies, routes and settings that are wrong get 
 
 const JEV_KEY = "ts-jev-key-0123456789abcdef";
 const NEXT_JEV_KEY = "ts-jev-key-fedcba9876543210";
-const GUARD_QUESTION = "Is this query asking for private personal life, credentials, financial or health details about the memory owner, rather than shared work context (projects, code, decisions, schedules, documents)?";
-const GUARD_TRUE = "The query targets private personal matters, secrets, or credentials.";
+const PRIVATE_LIFE = "Private life includes where someone lives or is outside work (a home address, a neighborhood, a current location, daily routes), health and medical matters, biometric data (fingerprints, face or voice data), religion or beliefs, political views or party membership, union membership, sexual life or orientation, family and relationships, ethnicity or origin, criminal records, personal finances (own salary, debt, credit score, accounts), identification numbers, credentials or secrets, and paid work outside the owner's job.";
+const GUARD_QUESTION = "Is this query asking about the private life of the memory owner or another person, or for credentials or secrets, rather than shared work context (projects, code, decisions, work schedules, documents)? " + PRIVATE_LIFE;
+const GUARD_TRUE = "The query reaches for a person's private life as listed, or for a secret or credential.";
 const GUARD_FALSE = "The query is about work the team shares, or is general and harmless.";
-const ANSWER_QUESTION = "A teammate asked the memory owner's work memory a question and will read this answer. Does the answer disclose private personal life, credentials or secrets, financial or health details about the owner or any person, rather than shared work context (projects, code, decisions, schedules, documents)?";
-const ANSWER_TRUE = "The answer discloses private personal matters, secrets, credentials, financial or health details.";
-const ANSWER_FALSE = "The answer only covers shared work context, or is general and harmless.";
+const ANSWER_QUESTION = "A teammate asked the memory owner's work memory a question and will read this answer. Does the answer disclose anything about the private life of the owner or any other person, rather than shared work context (projects, code, decisions, work schedules, documents)? " + PRIVATE_LIFE;
+const ANSWER_TRUE = "The answer discloses something about a person's private life as listed, or a secret or credential.";
+const ANSWER_FALSE = "The answer only covers shared work context, such as work done, who did it, work schedules, business trips, or is general and harmless.";
 
 const sha256 = (text) => crypto.createHash("sha256").update(text).digest("hex");
 const jevAnswer = (noul, name = "out_of_scope") => ({ model: "jev-1.13.0", answers: { [name]: { type: "noul", noul } }, usage: { input_tokens: 335, output_tokens: 22 } });
