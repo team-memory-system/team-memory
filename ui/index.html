@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>팀 메모리</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23b5412a'/%3E%3Ctext x='16' y='22' font-size='17' font-family='sans-serif' font-weight='700' text-anchor='middle' fill='white'%3E기%3C/text%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
   <link rel="stylesheet" href="/styles.css">
   <script>
     try { const theme = localStorage.getItem("tm.theme"); if (theme) document.documentElement.dataset.theme = theme; } catch {}
@@ -14,7 +14,7 @@
 <body>
   <div class="shell" id="team-memory-app">
     <aside class="rail" id="rail">
-      <div class="mark"><span class="seal">기</span><strong>팀 메모리</strong></div>
+      <div class="mark"><img class="logo" src="/logo.svg" alt=""><strong>팀 메모리</strong></div>
       <nav class="nav" id="nav" aria-label="메뉴"></nav>
       <div class="rail-foot">
         <div class="who" id="who"><b id="who-name">—</b><small id="who-space">—</small></div>
@@ -25,7 +25,7 @@
     <div class="main">
       <div class="mobile-bar">
         <button class="btn icon-only small" id="menu" type="button" aria-label="메뉴">☰</button>
-        <span class="seal">기</span><strong>팀 메모리</strong>
+        <img class="logo" src="/logo.svg" alt=""><strong>팀 메모리</strong>
       </div>
       <main id="page" class="view" tabindex="-1"></main>
     </div>

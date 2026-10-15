@@ -21,6 +21,9 @@
       "Diagnose my local agent memory installation.",
       "Recall relevant context from Honcho memory."
     ],
+    "brandColor": "#B5412A",
+    "composerIcon": "./ui/logo.svg",
+    "logo": "./ui/logo.svg",
     "screenshots": []
   }
 }

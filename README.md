@@ -1,3 +1,5 @@
+<img src="ui/logo.svg" width="64" height="64" alt="">
+
 # Team Memory
 
 Claude Code와 Codex에서 나눈 대화를 내 기억 서버에 모아, 에이전트가 지난 일을 기억하고 일하게

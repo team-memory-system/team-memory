@@ -205,7 +205,7 @@ export function unreachablePage({ name, reason, homeUrl, here }) {
   const back = `${homeUrl}#/dashboard`;
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark"><title>팀 메모리</title><link rel="stylesheet" href="${escapeHtml(homeUrl)}styles.css"></head>
-<body><div class="shell"><aside class="rail"><div class="mark"><span class="seal">기</span><strong>팀 메모리</strong></div>
+<body><div class="shell"><aside class="rail"><div class="mark"><img class="logo" src="${escapeHtml(homeUrl)}logo.svg" alt=""><strong>팀 메모리</strong></div>
 <div class="rail-foot"><div class="machine away"><a class="machine-btn" href="${escapeHtml(back)}"><span class="glyph">${GLYPH}</span><span><b>${escapeHtml(name)}</b><small>닿지 않음</small></span></a></div></div></aside>
 <div class="main away"><div class="away-strip"><span><b>${escapeHtml(name)}</b>에 닿지 않습니다.</span><a class="btn small" href="${escapeHtml(back)}">돌아가기</a></div>
 <main class="view"><div class="away-gate"><div class="gate-card"><span class="gate-mark">${GLYPH}</span><div>
