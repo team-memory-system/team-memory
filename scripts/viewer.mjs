@@ -111,6 +111,11 @@ export async function serverOrigin({ config, paths } = {}) {
   return auth && deviceHeaderValue(auth, target.hostname) ? target.origin : null;
 }
 
+/** Where this computer's team login is kept: the paths given, else the configured ones. */
+async function authPaths(paths) {
+  return paths || teamAuthPaths(await loadConfig().catch(() => null));
+}
+
 const probes = new Map();
 
 /**
@@ -125,6 +130,7 @@ export async function probeServer(origin, { fetchImpl, paths, now = Date.now() }
   if (kept && now - kept.at < PROBE_TTL_MS) return kept.value;
   let value;
   try {
+    paths = await authPaths(paths);
     const response = await teamFetch(`${origin}${APP_PREFIX}/api/app/context`, {
       headers: { accept: "application/json" },
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
@@ -233,15 +239,16 @@ export function createViewServer({ reject, homeUrl, viewUrl, fetchImpl, paths, o
     }
     const rejection = reject?.(req);
     if (rejection) return sendJson(res, rejection.status, { error: rejection.error });
-    const origin = fixedOrigin === undefined ? await serverOrigin({ paths }) : fixedOrigin;
+    const login = await authPaths(paths);
+    const origin = fixedOrigin === undefined ? await serverOrigin({ paths: login }) : fixedOrigin;
     if (url.pathname === "/api/viewer" && req.method === "GET") {
-      return sendJson(res, 200, await viewerInfo({ viewing: "server", homeUrl, viewUrl, origin, fetchImpl, paths, fresh: url.searchParams.has("fresh") }));
+      return sendJson(res, 200, await viewerInfo({ viewing: "server", homeUrl, viewUrl, origin, fetchImpl, paths: login, fresh: url.searchParams.has("fresh") }));
     }
     const page = !url.pathname.startsWith("/api/");
     const here = await displayName();
     const fail = async (reason) => {
       if (page && req.method === "GET") {
-        const probe = origin ? await probeServer(origin, { fetchImpl, paths }).catch(() => ({})) : {};
+        const probe = origin ? await probeServer(origin, { fetchImpl, paths: login }).catch(() => ({})) : {};
         res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
         return res.end(unreachablePage({ name: probe.name || (origin ? new URL(origin).hostname : "서버 컴퓨터"), reason, homeUrl, here }));
       }
@@ -266,7 +273,7 @@ export function createViewServer({ reject, homeUrl, viewUrl, fetchImpl, paths, o
         headers,
         body,
         signal: AbortSignal.any([stop.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
-      }, { paths, ...(fetchImpl ? { fetchImpl } : {}) });
+      }, { paths: login, ...(fetchImpl ? { fetchImpl } : {}) });
     } catch (error) {
       forgetProbes();
       return fail(error?.code === "login_needed" || error?.code === "login_failed" ? "login" : "unreachable");

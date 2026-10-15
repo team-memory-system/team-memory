@@ -107,6 +107,24 @@ test("the server computer's page and its API come through its gate, with this co
   assert.equal(server.seen.at(-1).type, "application/json");
 });
 
+test("started as the app starts it, with no login file given, the viewer uses this computer's own", async (t) => {
+  const server = await ownersServer(t);
+  const kept = process.env.HONCHO_AGENT_TEAM_AUTH;
+  process.env.HONCHO_AGENT_TEAM_AUTH = server.paths.authFile;
+  t.after(() => { if (kept === undefined) delete process.env.HONCHO_AGENT_TEAM_AUTH; else process.env.HONCHO_AGENT_TEAM_AUTH = kept; });
+  const listener = createViewServer({ reject: rejectUnsafeRequest, homeUrl: HOME, viewUrl: "http://127.0.0.1:4181/", fetchImpl: server.fake.fetch, origin: ORIGIN });
+  await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => listener.close(resolve)));
+  const port = listener.address().port;
+
+  const info = await call(port, "/api/viewer");
+  assert.equal(info.json.computers[1].ok, true);
+  assert.equal(info.json.computers[1].name, "Mac Studio");
+  const page = await call(port, "/");
+  assert.equal(page.status, 200);
+  assert.equal(server.seen.at(-1).path, "/team-memory/app/");
+});
+
 test("the viewer makes the same checks as this computer's own app before anything goes out", async (t) => {
   const server = await ownersServer(t);
   const port = await viewer(t, server);
