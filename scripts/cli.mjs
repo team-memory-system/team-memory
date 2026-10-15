@@ -41,6 +41,7 @@ import {
   serverStop,
   serverVerify,
   sourceServerDir,
+  staleServerFiles,
 } from "./server-manager.mjs";
 import { hostPlan, hostPrepare, hostStart, hostStatus, hostStop } from "./host-manager.mjs";
 import {
@@ -952,9 +953,10 @@ async function probeMcpServer(serverPath, timeoutMs = 2500, env = process.env) {
 }
 
 /**
- * A memory server on this computer against this version's pins: the Honcho source it
- * was prepared from, and the subscription gateway beside it. Updating the plugin moves
- * neither; `doctor --fix` does. Null when this computer has no server.
+ * A memory server on this computer against this version: the Honcho source it was
+ * prepared from, the subscription gateway beside it, and the bundle's own files the
+ * containers run (staleServerFiles). Updating the plugin moves none of them; `doctor
+ * --fix` does. Null when this computer has no server.
  */
 async function serverSourceCheck(config) {
   const serverDir = installedServerDir(config);
@@ -963,12 +965,14 @@ async function serverSourceCheck(config) {
   const honchoCurrent = !wanted.ok || (installed.ok && installed.commit === wanted.commit);
   const gateway = await gatewaySourceProbe({ pinDirectory: sourceServerDir(), directory: gatewayDirectory(serverDir) }).catch(() => null);
   const gatewayCurrent = !gateway?.present || gateway.state !== "stale";
-  const ok = honchoCurrent && gatewayCurrent;
+  const files = await staleServerFiles(sourceServerDir(), serverDir);
+  const ok = honchoCurrent && gatewayCurrent && !files.length;
   return {
     name: "server-version",
     ok,
     honcho: { installed: installed.commit || null, expected: wanted.commit || null },
     gateway: gateway?.present ? { installed: gateway.commit || null, expected: gateway.pin?.commit || null } : null,
+    ...(files.length ? { staleFiles: files } : {}),
     ...(ok ? {} : { fix: "/team-memory doctor" }),
   };
 }

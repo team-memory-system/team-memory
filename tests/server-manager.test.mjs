@@ -18,6 +18,7 @@ import {
   serverVerify,
   settleShareProfile,
   SHARE_REQUIRED_SETTINGS,
+  staleServerFiles,
 } from "../scripts/server-manager.mjs";
 import { LAUNCHD_LABEL } from "../scripts/share-manager.mjs";
 import { GUARD_URL, guardHub, HUB_HOST, SERVER_HOST } from "./fake-guard-hub.mjs";
@@ -2145,3 +2146,21 @@ for (const failPreparation of [false, true]) {
     }
   });
 }
+
+test("a server whose compose.yaml or gate code is not this version's is behind, though no pin moved", async (t) => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "stale-server-"));
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  const source = path.join(root, "source");
+  const installed = path.join(root, "installed");
+  for (const dir of [source, installed]) {
+    await fsp.mkdir(path.join(dir, "gate"), { recursive: true });
+    await fsp.writeFile(path.join(dir, "compose.yaml"), "services: {}\n");
+    await fsp.writeFile(path.join(dir, "gate", "gate.mjs"), "// gate\n");
+  }
+  assert.deepEqual(await staleServerFiles(source, installed), []);
+
+  await fsp.writeFile(path.join(source, "compose.yaml"), "services: { gate: {} }\n");
+  assert.deepEqual(await staleServerFiles(source, installed), ["compose.yaml"]);
+  await fsp.rm(path.join(installed, "gate", "gate.mjs"));
+  assert.deepEqual(await staleServerFiles(source, installed), ["compose.yaml", path.join("gate", "gate.mjs")]);
+});

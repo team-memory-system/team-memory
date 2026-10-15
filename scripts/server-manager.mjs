@@ -140,6 +140,24 @@ export function sourceServerDir() {
   return path.resolve(process.env.HONCHO_AGENT_BRIDGE_SERVER_SOURCE || path.join(PLUGIN_ROOT, "server"));
 }
 
+// The files of the bundle that the running containers take as they are: Compose's
+// settings and the gate's code. A new version that changes only these moves neither
+// pin, yet its server is behind until it is prepared and started again.
+const RUNNING_BUNDLE_FILES = ["compose.yaml", path.join("gate", "gate.mjs")];
+
+/** Those of RUNNING_BUNDLE_FILES that differ between this version's bundle and the installed server. */
+export async function staleServerFiles(source = sourceServerDir(), installed = installedServerDir()) {
+  const stale = [];
+  for (const file of RUNNING_BUNDLE_FILES) {
+    const [wanted, have] = await Promise.all([
+      fsp.readFile(path.join(source, file)).catch(() => null),
+      fsp.readFile(path.join(installed, file)).catch(() => null),
+    ]);
+    if (wanted && !(have && wanted.equals(have))) stale.push(file);
+  }
+  return stale;
+}
+
 export function installedServerDir(config = null) {
   return path.resolve(process.env.HONCHO_AGENT_BRIDGE_SERVER_DIR || config?.paths?.serverDir || path.join(installPaths(config).appHome, "server"));
 }

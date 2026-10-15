@@ -5,7 +5,8 @@
 //
 //   runtime          setup apply with the saved settings: the collector and hooks
 //   server-version   the memory server's Honcho source or its subscription gateway is
-//                    behind this version's pins: `server start`, which prepares again,
+//                    behind this version's pins, or the files its containers run
+//                    (compose.yaml, the gate's code) are not this version's: `server start`, which prepares again,
 //                    rebuilds and starts it with the models it had. A server the person
 //                    stopped is only prepared and stays off.
 //   app              the app (port 4180) runs from an older copy of the plugin, whose

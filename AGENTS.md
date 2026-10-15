@@ -463,8 +463,9 @@ does. Plain `doctor` only looks; it marks each check `--fix` repairs with `fix`,
 only those checks are repaired, so a current server is never restarted:
 
 1. `runtime`: `setup apply`, the collector and the hooks of this version.
-2. `server-version`, the Honcho source or the gateway behind this version's pins:
-   `server start`, which prepares again. The Honcho
+2. `server-version`, the Honcho source or the gateway behind this version's pins, or
+   the files the containers run (`compose.yaml`, `gate/gate.mjs`) not this version's:
+   `server start`, which prepares again and recreates the gate. The Honcho
    source and the subscription gateway move to this version's pins, the images are
    rebuilt, and the server comes back with the models it had. `setup apply` alone does
    none of this; the gateway moves only through prepare. A server that was stopped is
