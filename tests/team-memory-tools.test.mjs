@@ -16,7 +16,7 @@ import test from "node:test";
 
 import { finishLogin, setTeam, startLogin, teamAuthPaths } from "../scripts/team-auth.mjs";
 import { OPENABLE_TOOLS } from "../scripts/openable-tools.mjs";
-import { answerIn, findMember, membersOf, TEAM_TOOLS, teamMemory } from "../scripts/team-memory-tools.mjs";
+import { answerIn, findMember, membersOf, ownMemoryInstructions, ownTeamName, TEAM_TOOLS, teamMemory } from "../scripts/team-memory-tools.mjs";
 import { fakeTeam } from "./fake-team.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -124,7 +124,8 @@ test("member lists who can be asked, what each opened, and leaves this person ou
   assert.match(text, /- 밥 \(bob@example\.com · memory-bob\.example\.com\): open to you: folders ~\/dev\/app; ChatGPT records\. Tools you may use: search, list_sessions, get_session_messages, query_conclusions/);
   assert.match(text, /- carol \(carol@example\.com · memory-carol\.example\.com\): not open to you/);
   assert.match(text, /- dave \(dave@example\.com\): has no memory server/);
-  assert.doesNotMatch(text, /me@example\.com/);
+  assert.match(text, /^Your user is 나 \(me@example\.com\); their own memory is in the honcho tools, not here\.$/m);
+  assert.doesNotMatch(text, /^- .*me@example\.com/m);
   // This person's own server is never asked.
   assert.equal(fake.state.requests.some((request) => new URL(request.url).hostname === MINE), false);
 });
@@ -260,4 +261,16 @@ test("the stdio server offers no tools before this computer joins a team", async
   assert.deepEqual(TEAM_TOOLS, ["member", ...Object.values(OPENABLE_TOOLS).flat()], "the owner's tools that read, and no other");
   assert.ok(tools.slice(1).every((item) => item.inputSchema.required.includes("question") && item.annotations.readOnlyHint));
   assert.ok(tools.every((item) => !("workspace_id" in item.inputSchema.properties) && !("filters" in item.inputSchema.properties)), "the team's bridge takes neither");
+});
+
+test("the honcho tools say whose memory it is, by the name the team calls them", async (t) => {
+  const { paths, fake } = await setup(t, { servers: false });
+  assert.equal(await ownTeamName({ paths, fetchImpl: fake.fetch }), "나");
+  const silent = () => new Promise(() => {});
+  assert.equal(await ownTeamName({ paths, fetchImpl: silent, timeoutMs: 50 }), null, "a hub that does not answer leaves the name out");
+
+  const text = ownMemoryInstructions({ peer: "user_chen", name: "김아람" });
+  assert.match(text, /The user is 김아람 \(peer user_chen\): a question about 김아람 is about this memory and peer user_chen/);
+  assert.match(ownMemoryInstructions({ peer: "user_chen" }), /The user is peer user_chen\.$/);
+  assert.doesNotMatch(ownMemoryInstructions({}), /The user is/);
 });

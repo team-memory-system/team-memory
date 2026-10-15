@@ -106,6 +106,7 @@ test("bundled MCP starts read-only, exposes all 31 tools when enabled, forwards 
 
   const initialized = await rpc("initialize", { protocolVersion: "2025-11-25", capabilities: {} });
   assert.equal(initialized.serverInfo.name, "Team Memory");
+  assert.match(initialized.instructions, /The user is peer user_test\.$/, "without a team the user goes by their peer");
   const negotiated = await rpc("initialize", { protocolVersion: "2099-01-01", capabilities: {} });
   assert.equal(negotiated.protocolVersion, "2025-11-25");
   await assert.rejects(rpc("initialize", { capabilities: {} }), /protocolVersion/);

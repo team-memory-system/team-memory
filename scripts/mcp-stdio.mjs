@@ -34,7 +34,7 @@ export function serveStdio({ name, version, instructions, listTools, callTool, i
         protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.has(requested) ? requested : DEFAULT_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name, version },
-        instructions: typeof instructions === "function" ? instructions() : instructions,
+        instructions: typeof instructions === "function" ? await instructions() : instructions,
       });
       return;
     }

@@ -280,6 +280,36 @@ function answerText(member, name, value) {
   return `${member.name}${member.peer ? ` (peer ${member.peer})` : ""} · ${name}:\n${body}`;
 }
 
+/**
+ * The name the team calls this computer's person by (the admin's nickname), from the
+ * hub; null without a team, or when the hub does not answer within `timeoutMs`.
+ */
+export async function ownTeamName({ paths = null, fetchImpl = globalThis.fetch, timeoutMs = 3_000 } = {}) {
+  const lookup = (async () => {
+    const files = paths || teamAuthPaths(await loadConfig().catch(() => null));
+    const auth = await readTeamAuth(files);
+    if (!auth.hub || !auth.email) return null;
+    const team = await teamJson(`https://${auth.hub}/api/team`, { paths: files, fetchImpl, device: false });
+    const self = list(team.people).find((person) => String(person.email || "").toLowerCase() === String(auth.email).toLowerCase());
+    return self?.nickname || null;
+  })().catch(() => null);
+  let timer;
+  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeoutMs); });
+  try { return await Promise.race([lookup, late]); } finally { clearTimeout(timer); }
+}
+
+/**
+ * The honcho MCP's instructions: whose memory it is, by peer and by the name the
+ * team calls them. An agent asked about that name otherwise searches the messages
+ * for it, where a person's own name rarely appears, and finds nothing.
+ */
+export function ownMemoryInstructions({ peer = "", name = "" } = {}) {
+  const base = "Self-hosted Honcho personal memory. For broad recall, read the configured user's representation from the user's own observer perspective and also run workspace-wide search.";
+  if (!peer) return base;
+  if (!name) return `${base} The user is peer ${peer}.`;
+  return `${base} The user is ${name} (peer ${peer}): a question about ${name} is about this memory and peer ${peer}; their name rarely appears in the messages, so do not search for it.`;
+}
+
 // ----------------------------------------------------------------- the tools
 
 /**
@@ -300,7 +330,12 @@ export function teamMemory({ paths = null, fetchImpl = globalThis.fetch, now = (
     if (!auth.hub) throw new Error(NO_TEAM);
     const team = await teamJson(`https://${auth.hub}/api/team`, { paths: files, fetchImpl, device: false });
     const self = list(team.people).find((person) => String(person.email || "").toLowerCase() === String(auth.email || "").toLowerCase());
-    const value = { me: [auth.email, self?.peer, self?.nickname], team: team.team || {}, members: membersOf(team, auth.email) };
+    const value = {
+      me: [auth.email, self?.peer, self?.nickname],
+      self: { name: personName(self || { email: auth.email }), email: auth.email },
+      team: team.team || {},
+      members: membersOf(team, auth.email),
+    };
     directoryCache = { at: now(), value };
     return value;
   }
@@ -350,7 +385,7 @@ export function teamMemory({ paths = null, fetchImpl = globalThis.fetch, now = (
   }
 
   async function memberList() {
-    const { team, members } = await directory();
+    const { team, members, self } = await directory();
     const files = await authPaths();
     const views = await Promise.all(members.map(async (member) => {
       if (!member.host) return { member, view: standing(member, null) };
@@ -366,6 +401,7 @@ export function teamMemory({ paths = null, fetchImpl = globalThis.fetch, now = (
     const lines = views.map(({ member, view }) => `- ${member.name} (${[member.email, member.host].filter(Boolean).join(" · ")}${member.company ? " · the company server" : ""}): ${standingText(view)}`);
     return [
       `${team.name ? `Team "${team.name}". ` : ""}Pass a name (or an email) as member to the other tools.`,
+      `Your user is ${self.name} (${self.email}); their own memory is in the honcho tools, not here.`,
       ...lines,
     ].join("\n");
   }

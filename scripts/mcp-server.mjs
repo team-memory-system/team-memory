@@ -10,6 +10,7 @@ import {
   isCloudflareAccessBlock,
 } from "./honcho-access.mjs";
 import { serveStdio } from "./mcp-stdio.mjs";
+import { ownMemoryInstructions, ownTeamName } from "./team-memory-tools.mjs";
 import { WRITE_TOOLS } from "./mcp-tool-defaults.mjs";
 import { VERSION } from "./version.mjs";
 
@@ -443,7 +444,11 @@ async function callTool(name, args) {
 serveStdio({
   name: SERVER_NAME,
   version: SERVER_VERSION,
-  instructions: "Self-hosted Honcho personal memory. For broad recall, read the configured user's representation from the user's own observer perspective and also run workspace-wide search.",
+  instructions: async () => {
+    const config = await loadConfig().catch(() => null);
+    const peer = String(config?.user?.peerId || "").trim();
+    return ownMemoryInstructions({ peer, name: peer ? await ownTeamName() : null });
+  },
   listTools: async () => (await availableTools()).map(({ run, ...definition }) => definition),
   callTool: async (name, args) => {
     const result = await callTool(name, args);

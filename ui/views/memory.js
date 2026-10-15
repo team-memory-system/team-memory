@@ -4,6 +4,7 @@
 import { get } from "../lib/api.js";
 import { h, clear, copyText, debounce } from "../lib/dom.js";
 import { screenTabs } from "../lib/tabs.js";
+import { teamDirectory } from "../lib/team.js";
 import { icon } from "../lib/icons.js";
 import { markdown } from "../lib/markdown.js";
 import { SOURCE_FILTERS, cardLine, fullDate, isAssistant, number, peerKind, relativeDay, sourceLabel, speakerLabel, time } from "../lib/format.js";
@@ -46,6 +47,8 @@ export default {
       hits: [],
       notes: [], notesPage: 0, notesPages: 1, notesTotal: null, notesAbout: "",
       peers: [],
+      // The name the team calls this person by, so the people list finds 나 by it too.
+      myName: "",
       selected: null,
       loading: false,
       titles: new Map(),
@@ -102,7 +105,7 @@ export default {
       } else if (state.tab === "notes") {
         const choice = h("select", { class: "select", "aria-label": "누구에 관한 기억", style: { height: "28px", width: "auto" } },
           h("option", { value: "" }, "모든 사람·에이전트"),
-          state.peers.map((peer) => h("option", { value: peer.id, selected: peer.id === state.notesAbout ? true : null }, speakerLabel(peer.id, me()) === "나" ? `나 (${peer.id})` : speakerLabel(peer.id, me()))),
+          state.peers.map((peer) => h("option", { value: peer.id, selected: peer.id === state.notesAbout ? true : null }, peer.id === me() ? `${peerLabel(peer.id)} (${peer.id})` : peerLabel(peer.id))),
         );
         choice.addEventListener("change", () => { state.notesAbout = choice.value; reload(); });
         clear(filters, h("label", { class: "field", style: { flexDirection: "row", alignItems: "center", gap: "8px" } }, h("span", {}, "대상"), choice));
@@ -135,7 +138,28 @@ export default {
       drawSubtitle();
     }
 
+    async function loadMyName() {
+      const team = app.context?.team;
+      if (!team?.signedIn || !team.email) return;
+      try {
+        const directory = await teamDirectory();
+        const self = (directory.people || []).find((person) => String(person.email || "").toLowerCase() === team.email.toLowerCase());
+        state.myName = String(self?.nickname || "");
+      } catch {}
+    }
+
+    /** What the people list shows for a peer, and what its filter matches. */
+    function peerLabel(id) {
+      const label = speakerLabel(id, me());
+      return label === "나" && state.myName ? `나 · ${state.myName}` : label;
+    }
+
     async function loadPeers() {
+      loadMyName().then(() => {
+        if (!state.myName) return;
+        if (state.tab === "notes") drawFilters();
+        if (state.tab === "people" && state.peers.length) drawList();
+      });
       try {
         const result = await api().post("/peers/list?page=1&size=100", {});
         const order = { me: 0, person: 1, agent: 2, automation: 3 };
@@ -261,7 +285,7 @@ export default {
 
     function peerItem(peer) {
       return h("button", { class: "item", type: "button", "aria-current": isCurrent("peer", peer.id), onclick: () => openPeer(peer.id) },
-        h("div", { class: "top" }, h("div", { class: "t" }, speakerLabel(peer.id, me()) === "나" ? "나" : speakerLabel(peer.id, me())), peer.id === me() ? tag("나", "accent") : null),
+        h("div", { class: "top" }, h("div", { class: "t" }, peerLabel(peer.id)), peer.id === me() ? tag("나", "accent") : null),
         h("div", { class: "m mono" }, peer.id),
       );
     }
@@ -285,7 +309,7 @@ export default {
         foot.textContent = state.query ? `“${state.query.trim()}”와 가까운 기억 ${number(state.notes.length)}개` : state.notesTotal === null ? "" : `${number(state.notesTotal)}개 중 ${number(state.notes.length)}개 · 최근 순`;
       } else {
         const query = state.query.trim().toLowerCase();
-        const people = state.peers.filter((peer) => !query || peer.id.toLowerCase().includes(query) || speakerLabel(peer.id, me()).toLowerCase().includes(query));
+        const people = state.peers.filter((peer) => !query || peer.id.toLowerCase().includes(query) || peerLabel(peer.id).toLowerCase().includes(query));
         const groups = [["me", null], ["person", "사람"], ["agent", "에이전트"], ["automation", "자동 작업"]];
         for (const [kind, label] of groups) {
           const members = people.filter((peer) => peerKind(peer.id, me()) === kind);
