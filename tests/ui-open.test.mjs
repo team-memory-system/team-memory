@@ -72,6 +72,7 @@ test("ui open starts one detached setup screen and reuses it", async (t) => {
   assert.equal(first.body.ok, true, first.stdout);
   assert.equal(first.body.started, true);
   assert.equal(first.body.url, `http://127.0.0.1:${port}`);
+  assert.deepEqual(first.body.autostart, { registered: false, skipped: "this run has its own app home" }, "a test's app is not this user's login item");
 
   const page = await fetch(`http://127.0.0.1:${port}/`);
   assert.match(await page.text(), /id="team-memory-app"/, "it outlived the command that started it");
@@ -85,6 +86,31 @@ test("ui open starts one detached setup screen and reuses it", async (t) => {
   assert.match(onScreen.body.url, /#\/models$/, "--screen opens the app on that screen");
   const bad = await cli(["ui", "open", "--screen", "x?y=1", "--no-browser"], uiEnv);
   assert.equal(bad.body.ok, false);
+});
+
+test("ui open writes the login autostart for the app it started, with a PATH that works outside this terminal", { skip: process.platform !== "darwin" }, async (t) => {
+  const { env } = await workspace(t);
+  const home = env.HOME;
+  const probe = http.createServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const port = probe.address().port;
+  await new Promise((resolve) => probe.close(() => resolve()));
+  // This user's own install: no app home of its own, so the app's is under the (test's) home.
+  const userEnv = { ...env, HONCHO_AGENT_BRIDGE_HOME: "", HONCHO_AGENT_BRIDGE_UI_PORT: String(port), PATH: `/Applications/cmux.app/Contents/Resources/bin:${process.env.PATH}` };
+
+  const opened = await cli(["ui", "open", "--no-browser"], userEnv);
+  t.after(() => { try { process.kill(opened.body.pid); } catch {} });
+  assert.equal(opened.body.ok, true, opened.stdout);
+  const plistPath = path.join(home, "Library", "LaunchAgents", "team-memory-system.app.plist");
+  assert.deepEqual(opened.body.autostart, { registered: true, kind: "launchd", path: plistPath, changed: true });
+  const plist = await fsp.readFile(plistPath, "utf8");
+  assert.ok(plist.includes(`<string>${path.join(ROOT, "scripts", "ui.mjs")}</string>`), plist);
+  assert.ok(plist.includes(`<key>HONCHO_AGENT_BRIDGE_UI_PORT</key>\n\t\t<string>${port}</string>`), plist);
+  assert.doesNotMatch(plist, /cmux/);
+
+  const again = await cli(["ui", "open", "--no-browser"], userEnv);
+  assert.equal(again.body.started, false);
+  assert.equal(again.body.autostart, undefined, "only an app this started is written down");
 });
 
 test("ui open does not mistake another program on its port for the setup screen", async (t) => {

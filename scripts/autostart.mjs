@@ -7,9 +7,10 @@
 //
 // None needs admin rights. The callers are share-manager.mjs, which now only finds
 // and removes the old host tunnel autostart of 0.3.28 and before (the tunnel runs in
-// Compose), and host-manager.mjs (the host supervisor); each builds its own spec with the
-// functions here and keeps what only it knows (how to find its processes).
-// backup-schedule.mjs uses the launchd half for a job that runs on a clock.
+// Compose), host-manager.mjs (the host supervisor) and app-autostart.mjs (the app);
+// each builds its own spec with the functions here and keeps what only it knows (how
+// to find its processes). backup-schedule.mjs uses the launchd half for a job that
+// runs on a clock.
 //
 // Every OS call goes through `ctx.run(command, args)`, which resolves to
 // {code, stdout, stderr}, and `ctx.sleep(ms)`, so tests hand in fakes. The default
@@ -102,14 +103,16 @@ function plistValue(value, depth) {
  * A LaunchAgent that starts at login (RunAtLoad). `keepAlive` is `true` (always
  * restart) or a KeepAlive dictionary such as {SuccessfulExit: false}. A job that
  * runs on a clock instead passes `runAtLoad: false`, `keepAlive: null` and a
- * `startCalendarInterval` such as {Hour: 3, Minute: 17}.
+ * `startCalendarInterval` such as {Hour: 3, Minute: 17}. `abandonProcessGroup`
+ * leaves what the job started running when the job exits, as a detached start does.
  */
-export function launchAgent({ label, homeDir, uid, programArguments, workingDirectory, stdoutPath, stderrPath, keepAlive = true, runAtLoad = true, startCalendarInterval, environment }) {
+export function launchAgent({ label, homeDir, uid, programArguments, workingDirectory, stdoutPath, stderrPath, keepAlive = true, runAtLoad = true, startCalendarInterval, environment, abandonProcessGroup = false }) {
   const data = {
     Label: label,
     ProgramArguments: programArguments,
     RunAtLoad: runAtLoad,
     ...(keepAlive === null ? {} : { KeepAlive: keepAlive }),
+    ...(abandonProcessGroup ? { AbandonProcessGroup: true } : {}),
     ...(startCalendarInterval ? { StartCalendarInterval: startCalendarInterval } : {}),
     ...(workingDirectory ? { WorkingDirectory: workingDirectory } : {}),
     ...(stdoutPath ? { StandardOutPath: stdoutPath } : {}),
@@ -194,9 +197,10 @@ export function windowsCommandLine(parts) {
 
 /**
  * A Run value that starts a hidden wscript at logon, and the .vbs it runs.
- * `comments` are the .vbs's first lines, without the leading "' ".
+ * `comments` are the .vbs's first lines, without the leading "' ". `environment`
+ * is set for what it starts, on top of the logon's own.
  */
-export function windowsRun({ env = {}, subject, valueName, vbsPath, workingDirectory, commandLine, comments = [] }) {
+export function windowsRun({ env = {}, subject, valueName, vbsPath, workingDirectory, commandLine, comments = [], environment = {} }) {
   const system32 = path.win32.join(env.SystemRoot || env.SYSTEMROOT || "C:\\Windows", "System32");
   const wscript = path.win32.join(system32, "wscript.exe");
   const vbs = [
@@ -204,6 +208,7 @@ export function windowsRun({ env = {}, subject, valueName, vbsPath, workingDirec
     "Option Explicit",
     "Dim shell",
     'Set shell = CreateObject("WScript.Shell")',
+    ...Object.entries(environment).map(([key, value]) => `shell.Environment("PROCESS")(${vbsString(key)}) = ${vbsString(value)}`),
     `shell.CurrentDirectory = ${vbsString(workingDirectory)}`,
     `shell.Run ${vbsString(windowsCommandLine(commandLine))}, 0, False`,
     "",
@@ -256,7 +261,10 @@ function systemdPath(value) {
   return String(value).replace(/%/g, "%%");
 }
 
-/** A systemd --user service enabled for default.target, so it starts at login. */
+/**
+ * A systemd --user service enabled for default.target, so it starts at login.
+ * `killMode: "process"` leaves what the service started running when it exits.
+ */
 export function systemdUnit({
   env = {},
   homeDir,
@@ -272,6 +280,7 @@ export function systemdUnit({
   stderrPath,
   restart = "always",
   restartSec = 5,
+  killMode,
 }) {
   const configHome = env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : path.join(homeDir, ".config");
   const text = [
@@ -289,6 +298,7 @@ export function systemdUnit({
     ...(stderrPath ? [`StandardError=append:${systemdPath(stderrPath)}`] : []),
     `Restart=${restart}`,
     `RestartSec=${restartSec}`,
+    ...(killMode ? [`KillMode=${killMode}`] : []),
     "",
     "[Install]",
     "WantedBy=default.target",

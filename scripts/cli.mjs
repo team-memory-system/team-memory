@@ -15,6 +15,7 @@ import {
   readJson,
   userHome,
 } from "./config.mjs";
+import { registerAppAutostart } from "./app-autostart.mjs";
 import { acquireFileLock, releaseFileLock } from "./file-lock.mjs";
 import { writePrivateFileAtomic } from "./private-file-permissions.mjs";
 import { formatJson, formatRevealedToken, publicUrl, sanitizeUrlsInText } from "./redact.mjs";
@@ -1741,7 +1742,8 @@ function openBrowser(url) {
  *
  * Detached, so the screen outlives the agent's shell command that asked for it.
  * It is bound to loopback whatever the environment says: it can install hooks
- * and write credentials.
+ * and write credentials. What is started here is also what the next login starts
+ * (app-autostart.mjs).
  */
 async function uiOpen(options = {}) {
   const port = uiPort();
@@ -1773,13 +1775,14 @@ async function uiOpen(options = {}) {
       replaced = running || "unknown";
     }
   }
+  const appEnv = { ...process.env, HONCHO_AGENT_BRIDGE_UI_HOST: UI_HOST, HONCHO_AGENT_BRIDGE_UI_PORT: String(port) };
   if (state === "down") {
     const child = spawn(process.execPath, [path.join(SCRIPT_DIR, "ui.mjs")], {
       cwd: SCRIPT_DIR,
       detached: true,
       stdio: "ignore",
       windowsHide: true,
-      env: { ...process.env, HONCHO_AGENT_BRIDGE_UI_HOST: UI_HOST, HONCHO_AGENT_BRIDGE_UI_PORT: String(port) },
+      env: appEnv,
     });
     child.unref();
     pid = child.pid;
@@ -1791,8 +1794,9 @@ async function uiOpen(options = {}) {
     if (!ready) return { ok: false, url, pid, error: "The setup screen did not start." };
   }
   const started = pid !== null;
+  const autostart = started ? await registerAppAutostart({ scriptDir: SCRIPT_DIR, env: appEnv }) : null;
   const browserRequested = options.noBrowser === true ? false : openBrowser(pageUrl);
-  return { ok: true, url: pageUrl, started, pid, ...(replaced ? { replaced } : {}), browserRequested };
+  return { ok: true, url: pageUrl, started, pid, ...(replaced ? { replaced } : {}), ...(autostart ? { autostart } : {}), browserRequested };
 }
 
 async function runHook(provider) {
