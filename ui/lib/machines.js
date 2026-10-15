@@ -1,4 +1,4 @@
-// 컴퓨터 고르기: the box at the top of the menu that says which of the owner's
+// 컴퓨터 고르기: the box at the foot of the menu that says which of the owner's
 // computers this window shows, and opens the other. This computer's app answers
 // /api/viewer on its own port and on the one where it shows the server computer's
 // app (scripts/viewer.mjs), so the box is the same on both. While the window shows
@@ -8,7 +8,7 @@ import { get } from "./api.js";
 import { h, clear, svg, $ } from "./dom.js";
 import { icon } from "./icons.js";
 import { josa } from "./format.js";
-import { app } from "./state.js";
+import { app, me, workspace } from "./state.js";
 import { button } from "./ui.js";
 
 const glyph = (body) => svg(`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`);
@@ -55,12 +55,16 @@ export async function renderMachines() {
   const here = computers.find((computer) => computer.here);
   const away = Boolean(current && !current.here);
   drawStrip(away ? current : null, here);
+  // In the menu's foot, in place of who is using it, which the box says under the name.
+  const who = $("#who");
   if (computers.length < 2) {
     box.hidden = true;
+    if (who) who.hidden = false;
     clear(box);
     return;
   }
   box.hidden = false;
+  if (who) who.hidden = true;
   box.className = `machine${away ? " away" : ""}`;
   const toggle = h("button", {
     class: "machine-btn",
@@ -71,7 +75,7 @@ export async function renderMachines() {
     onclick: (event) => { event.stopPropagation(); box.classList.contains("open") ? close() : openList(); },
   },
   h("span", { class: "glyph" }, machineGlyph(current)),
-  h("span", {}, h("b", {}, current.name), h("small", {}, away ? `${here?.name || "이 컴퓨터"}에서 보는 중` : "이 컴퓨터")),
+  h("span", {}, h("b", {}, current.name), h("small", {}, away ? "멀리서 보는 중" : [me(), workspace()].filter(Boolean).join(" · "))),
   icon("chevron"));
   clear(box, toggle);
   box.onkeydown = (event) => { if (event.key === "Escape") close(); };
@@ -109,7 +113,7 @@ export async function renderMachines() {
     box.append(h("div", { class: "machine-pop", role: "listbox", "aria-label": "내 컴퓨터" },
       h("h4", {}, "내 컴퓨터"),
       list,
-      h("footer", {}, "같은 계정으로 기억 서버의 주인인 컴퓨터만 나옵니다.")));
+      h("footer", {}, `${me() ? `${me()} · ` : ""}같은 계정으로 기억 서버의 주인인 컴퓨터만 나옵니다.`)));
     closer = (event) => { if (!box.contains(event.target)) close(); };
     document.addEventListener("click", closer);
     // Asked again, so a computer that came back or went away shows as it is now.

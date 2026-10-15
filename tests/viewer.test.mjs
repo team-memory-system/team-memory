@@ -13,7 +13,7 @@ import test from "node:test";
 
 import { rejectUnsafeRequest, restartServer } from "../scripts/ui.mjs";
 import { DEVICE_HEADER, finishLogin, registerDevice, startLogin, teamAuthPaths } from "../scripts/team-auth.mjs";
-import { createViewServer, forgetProbes, hereOnly, serverOrigin, unreachablePage, viewerInfo, viewerOf } from "../scripts/viewer.mjs";
+import { createViewServer, forgetProbes, hereOnly, serverOrigin, shortName, unreachablePage, viewerInfo, viewerOf } from "../scripts/viewer.mjs";
 import { fakeTeam } from "./fake-team.mjs";
 
 const SERVER = "memory-me.example.com";
@@ -130,7 +130,7 @@ test("/api/viewer is answered here: this computer and the server computer, and w
   assert.equal(answer.json.current, "server");
   const [here, shown] = answer.json.computers;
   assert.deepEqual([here.id, here.here, here.url], ["here", true, HOME]);
-  assert.deepEqual([shown.id, shown.name, shown.host, shown.url, shown.ok, shown.version], ["server", "김아람의 Mac Studio", SERVER, "http://127.0.0.1:4181/", true, "0.8.2"]);
+  assert.deepEqual([shown.id, shown.name, shown.host, shown.url, shown.ok, shown.version], ["server", "Mac Studio", SERVER, "http://127.0.0.1:4181/", true, "0.8.2"]);
   assert.ok(!server.seen.some((seen) => seen.path.includes("/api/viewer")), "the server computer is asked only for its context");
 
   // On this computer's own port the same list, showing this computer.
@@ -226,4 +226,13 @@ test("다시 시작 stops the server and starts it again, once at a time, and sa
   const failed = await restartServer([], async (args) => (calls.push(args.join(" ")), args[1] === "stop" ? { ok: false, error: "docker is not running" } : { ok: true }));
   assert.deepEqual(failed, { ok: false, error: "docker is not running" });
   assert.equal(calls.at(-1), "server stop");
+});
+
+test("a computer goes by its name without whose it is", () => {
+  assert.equal(shortName("김아람의 Mac Studio"), "Mac Studio");
+  assert.equal(shortName("chenjing의 MacBook Pro"), "MacBook Pro");
+  assert.equal(shortName("Ana’s iMac"), "iMac");
+  assert.equal(shortName("gim-alam-ui-MacStudio"), "gim-alam-ui-MacStudio");
+  assert.equal(shortName("회의실 의자 옆 PC"), "회의실 의자 옆 PC", "의 inside a word is not whose");
+  assert.equal(shortName("의 "), "의");
 });

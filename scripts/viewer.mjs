@@ -74,15 +74,25 @@ export function hereOnly(req, pathname) {
   return why ? { status: 403, body: { ok: false, hereOnly: true, error: `이 일은 그 컴퓨터 앞에서 하세요. ${why}` } } : null;
 }
 
+/**
+ * A computer's name without whose it is ("chenjing의 MacBook Pro", "Ana's iMac"):
+ * every computer in the list is the owner's, and the box at the menu's foot is narrow.
+ */
+export function shortName(name) {
+  const text = String(name || "").trim();
+  const short = text.replace(/^[^\s]{1,32}(?:의|['’]s)\s+/u, "").trim();
+  return short || text;
+}
+
 let named = null;
-/** This computer's name as its owner calls it: macOS's own name, else the host name. */
+/** This computer's name as its owner calls it, short: macOS's own name, else the host name. */
 export function displayName({ platform = process.platform, run = execFileAsync } = {}) {
   if (!named) {
     named = (platform === "darwin"
       ? run("/usr/sbin/scutil", ["--get", "ComputerName"], { timeout: 2_000 }).then(({ stdout }) => String(stdout).trim())
       : Promise.resolve(""))
       .catch(() => "")
-      .then((name) => (name && name.length <= 64 && !/[\p{C}]/u.test(name) ? name : computerName()));
+      .then((name) => shortName(name && name.length <= 64 && !/[\p{C}]/u.test(name) ? name : computerName()));
   }
   return named;
 }
@@ -121,7 +131,7 @@ export async function probeServer(origin, { fetchImpl, paths, now = Date.now() }
     }, { paths, ...(fetchImpl ? { fetchImpl } : {}) });
     const body = await response.json().catch(() => null);
     if (response.ok && body && body.ok !== false) {
-      value = { ok: true, name: body.computer || body.team?.computer || new URL(origin).hostname, version: body.version || null };
+      value = { ok: true, name: shortName(body.computer || body.team?.computer || new URL(origin).hostname), version: body.version || null };
     } else {
       const reason = response.status === 403 ? "owner" : response.status === 404 ? "old" : response.status === 502 ? "off" : "unreachable";
       value = { ok: false, reason };
@@ -196,7 +206,7 @@ export function unreachablePage({ name, reason, homeUrl, here }) {
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark"><title>팀 메모리</title><link rel="stylesheet" href="${escapeHtml(homeUrl)}styles.css"></head>
 <body><div class="shell"><aside class="rail"><div class="mark"><span class="seal">기</span><strong>팀 메모리</strong></div>
-<div class="machine away"><a class="machine-btn" href="${escapeHtml(back)}"><span class="glyph">${GLYPH}</span><span><b>${escapeHtml(name)}</b><small>닿지 않음</small></span></a></div></aside>
+<div class="rail-foot"><div class="machine away"><a class="machine-btn" href="${escapeHtml(back)}"><span class="glyph">${GLYPH}</span><span><b>${escapeHtml(name)}</b><small>닿지 않음</small></span></a></div></div></aside>
 <div class="main away"><div class="away-strip"><span><b>${escapeHtml(name)}</b>에 닿지 않습니다.</span><a class="btn small" href="${escapeHtml(back)}">돌아가기</a></div>
 <main class="view"><div class="away-gate"><div class="gate-card"><span class="gate-mark">${GLYPH}</span><div>
 <b>${escapeHtml(name)}에 닿지 않습니다</b><p>${escapeHtml(reasonText(reason))}</p>
