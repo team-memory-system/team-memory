@@ -1022,7 +1022,10 @@ everything the owner has to answer, or the asker has to press, goes to the bell.
 The plugin's one command (`commands/team-memory.md`; Claude Code lists it as
 `/team-memory:team-memory`, and `/team-memory` finds it) runs
 `cli.mjs switch` (`scripts/switch.mjs`), whose every answer is one line of what it
-did and how to undo it. Typing the option is the confirmation.
+did and how to undo it. Typing the option is the confirmation. It is the only entry
+the plugin puts in Claude Code's `/` menu: both skills say `user-invocable: false`,
+`honcho-memory` because the agent reaches for it on its own and `setup-memory`
+because `/team-memory setup` opens it (Codex still lists `$setup-memory`).
 
 | Typed | Does what the app's button does |
 | --- | --- |

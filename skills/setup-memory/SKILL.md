@@ -2,6 +2,7 @@
 name: setup-memory
 description: Ask a teammate to open their memory, or install, update, or diagnose the bundled self-hosted personal-memory runtime for Codex and Claude Code. Use when the user asks to set up memory, read a teammate's or colleague's memory, connect coding agents to Honcho, choose which detected agents receive hooks, inspect an installation plan, repair hooks, or run a memory health check.
 disable-model-invocation: true
+user-invocable: false
 ---
 
 # Setup Memory

@@ -1,6 +1,7 @@
 ---
 name: honcho-memory
 description: Recall prior conversations, decisions, user context, and long-term memory from the configured self-hosted Honcho instance. Use whenever the user refers to earlier work, asks what was decided or learned before, requests persistent context, or asks the agent to search or reason over personal memory.
+user-invocable: false
 ---
 
 # Honcho Memory
