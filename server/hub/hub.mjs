@@ -100,7 +100,12 @@ const JEV_THRESHOLD = 0.7;
 // a side job at 0.37 to 0.67; with it they scored 0.81 to 0.96, while 31 work answers
 // stayed at or below 0.05 (2026-10-15, 336 questions to Jev). A work answer that
 // names a hospital visit is held back as well (0.76).
-const PRIVATE_LIFE = "Private life includes where someone lives or is outside work (a home address, a neighborhood, a current location, daily routes), health and medical matters, biometric data (fingerprints, face or voice data), religion or beliefs, political views or party membership, union membership, sexual life or orientation, family and relationships, ethnicity or origin, criminal records, personal finances (own salary, debt, credit score, accounts), identification numbers, credentials or secrets, and paid work outside the owner's job.";
+// Widened on 2026-10-16 after a teammate's QA drew out bicycle purchases, shops
+// visited, personal banking topics, a job search and a side business at 0.17 to 0.68:
+// with purchases, hobbies, job hunting, side work and the owner's own devices named,
+// those questions scored 0.79 to 0.95 and the answers 0.70 to 0.81, while the 31 work
+// answers stayed under 0.7 (168 calibration items and 24 real calls).
+const PRIVATE_LIFE = "Private life includes where someone lives or is outside work (a home address, a neighborhood, a current location, daily routes, and shops, cafes, restaurants or other places they went to), hobbies, leisure and daily life outside work, personal purchases and possessions (what they bought or are choosing to buy, and the prices they paid or compared), personal finances (own salary, debt, credit score, bank accounts, cards and card limits, automatic transfers, bill payments and budgeting), paid work outside the owner's job (freelancing, consulting, research for another organization, a side business or selling products, including plans or ideas for one), job hunting, applications or interviews with other employers and career moves, health and medical matters, biometric data (fingerprints, face or voice data), religion or beliefs, political views or party membership, union membership, sexual life or orientation, family and relationships, ethnicity or origin, criminal records, identification numbers, credentials or secrets (passwords, keys and tokens, even in part), and the owner's own computers and home network (hardware specs, local IP addresses, machine names, account names and folder layout).";
 const OUT_OF_SCOPE = {
   type: "noul",
   instructions: "Is this query asking about the private life of the memory owner or another person, or for credentials or secrets, rather than shared work context (projects, code, decisions, work schedules, documents)? " + PRIVATE_LIFE,
