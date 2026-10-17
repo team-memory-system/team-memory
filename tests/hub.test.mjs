@@ -1120,13 +1120,13 @@ test("an admin renames the team; bodies, routes and settings that are wrong get 
 
 const JEV_KEY = "ts-jev-key-0123456789abcdef";
 const NEXT_JEV_KEY = "ts-jev-key-fedcba9876543210";
-const PRIVATE_LIFE = "Private life includes where someone lives or is outside work (a home address, a neighborhood, a current location, daily routes, and shops, cafes, restaurants or other places they went to), hobbies, leisure and daily life outside work, personal purchases and possessions (what they bought or are choosing to buy, and the prices they paid or compared), personal finances (own salary, debt, credit score, bank accounts, cards and card limits, automatic transfers, bill payments and budgeting), paid work outside the owner's job (freelancing, consulting, research for another organization, a side business or selling products, including plans or ideas for one), job hunting, applications or interviews with other employers and career moves, health and medical matters, biometric data (fingerprints, face or voice data), religion or beliefs, political views or party membership, union membership, sexual life or orientation, family and relationships, ethnicity or origin, criminal records, identification numbers, credentials or secrets (passwords, keys and tokens, even in part), and the owner's own computers and home network (hardware specs, local IP addresses, machine names, account names and folder layout).";
-const GUARD_QUESTION = "Is this query asking about the private life of the memory owner or another person, or for credentials or secrets, rather than shared work context (projects, code, decisions, work schedules, documents)? " + PRIVATE_LIFE;
-const GUARD_TRUE = "The query reaches for a person's private life as listed, or for a secret or credential.";
-const GUARD_FALSE = "The query is about work the team shares, or is general and harmless.";
-const ANSWER_QUESTION = "A teammate asked the memory owner's work memory a question and will read this answer. Does the answer disclose anything about the private life of the owner or any other person, rather than shared work context (projects, code, decisions, work schedules, documents)? " + PRIVATE_LIFE;
-const ANSWER_TRUE = "The answer discloses something about a person's private life as listed, or a secret or credential.";
-const ANSWER_FALSE = "The answer only covers shared work context, such as work done, who did it, work schedules, business trips, or is general and harmless.";
+const PRIVATE_LIFE = "사생활에는 이런 것이 들어간다: 사는 곳과 업무 밖에서 있는 곳(집 주소, 동네, 지금 위치, 매일 다니는 길, 다녀온 가게·카페·식당), 취미·여가·업무 밖 일상, 개인 구매와 소유물(산 것이나 사려고 고르는 것, 낸 값이나 비교한 값), 개인 재정(본인 연봉·급여·실수령액, 연말정산·세금·환급, 빚, 신용점수, 계좌, 카드와 한도, 자동이체, 공과금, 가계부), 본업 밖의 돈 버는 일(프리랜서, 자문, 다른 기관 연구, 부업·판매, 그 계획이나 아이디어 포함), 이직·지원·다른 회사 면접, 건강과 진료, 생체정보(지문, 얼굴, 목소리), 종교·신념, 정치 성향·정당, 노조 가입, 성생활·성적 지향, 가족과 연애, 인종·출신, 범죄 경력, 사람을 가리키는 번호(주민번호, 휴대폰 번호, 차량번호 같은 것), 비밀번호·키·토큰(일부라도), 주인의 개인 컴퓨터와 집 네트워크(사양, 내부 IP, 기기 이름, 계정 이름, 폴더 구조).";
+const GUARD_QUESTION = "이 질문이 기억 주인이나 다른 사람의 사생활, 또는 비밀번호·키 같은 비밀을 묻는가? 업무 맥락(프로젝트, 코드, 결정, 업무 일정, 출장, 문서)을 묻는 것이면 아니다. " + PRIVATE_LIFE;
+const GUARD_TRUE = "질문이 위 목록의 사생활이나 비밀을 묻는다.";
+const GUARD_FALSE = "질문이 팀이 함께하는 업무를 묻거나, 일반적이고 해가 없다.";
+const ANSWER_QUESTION = "팀원이 이 사람의 업무 기억에 질문했고 이 답을 읽는다. 이 답에 기억 주인이나 다른 사람의 사생활이 한 줄이라도 드러나는가? 전체 주제가 아니라 가장 사적인 문장 하나로 판단한다. 대부분이 업무여도 메시지 하나, 문장 하나가 사생활이면 드러난 것이다. 업무 맥락(프로젝트, 코드, 결정, 업무 일정, 출장, 문서)이면 아니다. " + PRIVATE_LIFE;
+const ANSWER_TRUE = "답에 위 목록의 사생활이나 비밀이 한 줄이라도 드러난다.";
+const ANSWER_FALSE = "답이 누가 무슨 일을 했는지, 업무 일정, 출장 같은 팀의 업무 맥락만 다루거나, 일반적이고 해가 없다.";
 
 const sha256 = (text) => crypto.createHash("sha256").update(text).digest("hex");
 const jevAnswer = (noul, name = "out_of_scope") => ({ model: "jev-1.13.0", answers: { [name]: { type: "noul", noul } }, usage: { input_tokens: 335, output_tokens: 22 } });
@@ -1543,16 +1543,16 @@ test("a guard token stops with its server: removed, moved to another computer, o
   assert.equal(f.blocks.threw, 0);
 });
 
-test("a server asks /guard at most 240 times in any minute; others are not held back", async (t) => {
+test("a server asks /guard at most 600 times in any minute; others are not held back", async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   const f = await guardFixture(t, { key: null });
   await f.as("carol@example.com").post("/api/servers", { workspace: WORKSPACE });
   const carolToken = (await issueGuard(f, "carol@example.com")).json.token;
 
-  for (let index = 0; index < 240; index += 1) {
+  for (let index = 0; index < 600; index += 1) {
     const answer = await f.ask(index % 2 ? { query: `q${index}`, answer: `a${index}` } : { query: `q${index}` });
     assert.equal(answer.status, 200, `call ${index + 1}`);
-    if (index === 119) t.mock.timers.tick(30_000);
+    if (index === 299) t.mock.timers.tick(30_000);
   }
   const limited = await f.ask({ query: "one more" });
   assert.deepEqual([limited.status, limited.json.error], [429, "rate_limited"]);
@@ -1561,9 +1561,9 @@ test("a server asks /guard at most 240 times in any minute; others are not held 
   const renewed = (await issueGuard(f, "bob@example.com")).json.token;
   assert.equal((await f.ask({ query: "x" }, { token: renewed })).status, 429);
 
-  // Rolling: the first 120 calls leave the window a minute after they were made.
+  // Rolling: the first 300 calls leave the window a minute after they were made.
   t.mock.timers.tick(30_001);
-  for (let index = 0; index < 120; index += 1) assert.equal((await f.ask({ query: "x" }, { token: renewed })).status, 200);
+  for (let index = 0; index < 300; index += 1) assert.equal((await f.ask({ query: "x" }, { token: renewed })).status, 200);
   assert.equal((await f.ask({ query: "x" }, { token: renewed })).status, 429);
   t.mock.timers.tick(30_000);
   assert.equal((await f.ask({ query: "x" }, { token: renewed })).status, 200);

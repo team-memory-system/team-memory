@@ -82,8 +82,9 @@ const JEV_KEY = /^[\x21-\x7e]{8,1024}$/;
 const GUARD_TOKEN = /^bearer +([0-9a-f]{64})$/i;
 // A guard token is a server's, so a busy or broken server cannot spend the team's
 // Jev budget alone. Counted in memory: a restarted object starts again from zero.
-// A teammate's question costs two calls, one for it and one for the answer.
-const GUARD_CALLS_PER_MINUTE = 240;
+// A teammate's question costs one call for it and one for each message of the
+// answer (ten or so, up to fifty); Jev itself takes 1,200 a minute on one key.
+const GUARD_CALLS_PER_MINUTE = 600;
 const GUARD_WINDOW_MS = 60_000;
 const GUARD_TEXT_LENGTH = 16_000;
 const GUARD_FIELD_LENGTH = 320;
@@ -105,21 +106,29 @@ const JEV_THRESHOLD = 0.7;
 // with purchases, hobbies, job hunting, side work and the owner's own devices named,
 // those questions scored 0.79 to 0.95 and the answers 0.70 to 0.81, while the 31 work
 // answers stayed under 0.7 (168 calibration items and 24 real calls).
-const PRIVATE_LIFE = "Private life includes where someone lives or is outside work (a home address, a neighborhood, a current location, daily routes, and shops, cafes, restaurants or other places they went to), hobbies, leisure and daily life outside work, personal purchases and possessions (what they bought or are choosing to buy, and the prices they paid or compared), personal finances (own salary, debt, credit score, bank accounts, cards and card limits, automatic transfers, bill payments and budgeting), paid work outside the owner's job (freelancing, consulting, research for another organization, a side business or selling products, including plans or ideas for one), job hunting, applications or interviews with other employers and career moves, health and medical matters, biometric data (fingerprints, face or voice data), religion or beliefs, political views or party membership, union membership, sexual life or orientation, family and relationships, ethnicity or origin, criminal records, identification numbers, credentials or secrets (passwords, keys and tokens, even in part), and the owner's own computers and home network (hardware specs, local IP addresses, machine names, account names and folder layout).";
+// In Korean since 2026-10-17, the language of the memory, and the answer judged by
+// its most private line: of the 20 messages that leaked that day (the owner's salary
+// and tax refund among tax explanations), the English questions held 5 and these 12
+// to 13, with the 7 that carry the real figures at 0.82 to 0.95; 84 of 84 calibration
+// answers (82 before), 30 of 32 questions (28), and 0 of 113 work texts. The same
+// words sit in local-mcp-bridge/jev_gate.py of honcho-selfhost, for a server that
+// asks Jev itself.
+const PRIVATE_LIFE = "사생활에는 이런 것이 들어간다: 사는 곳과 업무 밖에서 있는 곳(집 주소, 동네, 지금 위치, 매일 다니는 길, 다녀온 가게·카페·식당), 취미·여가·업무 밖 일상, 개인 구매와 소유물(산 것이나 사려고 고르는 것, 낸 값이나 비교한 값), 개인 재정(본인 연봉·급여·실수령액, 연말정산·세금·환급, 빚, 신용점수, 계좌, 카드와 한도, 자동이체, 공과금, 가계부), 본업 밖의 돈 버는 일(프리랜서, 자문, 다른 기관 연구, 부업·판매, 그 계획이나 아이디어 포함), 이직·지원·다른 회사 면접, 건강과 진료, 생체정보(지문, 얼굴, 목소리), 종교·신념, 정치 성향·정당, 노조 가입, 성생활·성적 지향, 가족과 연애, 인종·출신, 범죄 경력, 사람을 가리키는 번호(주민번호, 휴대폰 번호, 차량번호 같은 것), 비밀번호·키·토큰(일부라도), 주인의 개인 컴퓨터와 집 네트워크(사양, 내부 IP, 기기 이름, 계정 이름, 폴더 구조).";
+const WORK_CONTEXT = "업무 맥락(프로젝트, 코드, 결정, 업무 일정, 출장, 문서)";
 const OUT_OF_SCOPE = {
   type: "noul",
-  instructions: "Is this query asking about the private life of the memory owner or another person, or for credentials or secrets, rather than shared work context (projects, code, decisions, work schedules, documents)? " + PRIVATE_LIFE,
+  instructions: `이 질문이 기억 주인이나 다른 사람의 사생활, 또는 비밀번호·키 같은 비밀을 묻는가? ${WORK_CONTEXT}을 묻는 것이면 아니다. ` + PRIVATE_LIFE,
   criteria: {
-    true: "The query reaches for a person's private life as listed, or for a secret or credential.",
-    false: "The query is about work the team shares, or is general and harmless.",
+    true: "질문이 위 목록의 사생활이나 비밀을 묻는다.",
+    false: "질문이 팀이 함께하는 업무를 묻거나, 일반적이고 해가 없다.",
   },
 };
 const SENSITIVE_ANSWER = {
   type: "noul",
-  instructions: "A teammate asked the memory owner's work memory a question and will read this answer. Does the answer disclose anything about the private life of the owner or any other person, rather than shared work context (projects, code, decisions, work schedules, documents)? " + PRIVATE_LIFE,
+  instructions: `팀원이 이 사람의 업무 기억에 질문했고 이 답을 읽는다. 이 답에 기억 주인이나 다른 사람의 사생활이 한 줄이라도 드러나는가? 전체 주제가 아니라 가장 사적인 문장 하나로 판단한다. 대부분이 업무여도 메시지 하나, 문장 하나가 사생활이면 드러난 것이다. ${WORK_CONTEXT}이면 아니다. ` + PRIVATE_LIFE,
   criteria: {
-    true: "The answer discloses something about a person's private life as listed, or a secret or credential.",
-    false: "The answer only covers shared work context, such as work done, who did it, work schedules, business trips, or is general and harmless.",
+    true: "답에 위 목록의 사생활이나 비밀이 한 줄이라도 드러난다.",
+    false: "답이 누가 무슨 일을 했는지, 업무 일정, 출장 같은 팀의 업무 맥락만 다루거나, 일반적이고 해가 없다.",
   },
 };
 // What /guard judges, each with its own question to Jev: a teammate's question
