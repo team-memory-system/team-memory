@@ -138,8 +138,8 @@ const KEPT_VERSION = 1;
 /**
  * What a window keeps of its setup once 적용 starts (lib/state.js): the choices the
  * rows run with and each row as it stands. Fields are taken one by one, so no secret
- * the steps hold (a server's token, the Cloudflare API token) is ever among them;
- * a server that needs a token has the row that reaches it ask for it again.
+ * the steps hold (a server's token, the Cloudflare API token) is ever among them.
+ * A server that needs a token is then refused at 점검, whose 대화 수집 수정 takes it.
  */
 export function setupSnapshot(state) {
   const { draft, team } = state;
