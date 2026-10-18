@@ -16,8 +16,9 @@
 //   update run       the same copy: updates the plugin of Claude Code (else Codex), then
 //                    starts the new plugin folder's
 //   update continue  doctor and fix.mjs there for the collector, the server and the app,
-//                    which restarts the app from that folder; then the Codex plugin, last,
-//                    since Codex keeps only its newest folder and the app may run from one
+//                    which restarts the app from that folder (with Codex only, the app
+//                    first); then the Codex plugin, last, since Codex keeps only its
+//                    newest folder and the app may run from one
 // A step that fails stops there with its reason, and `update retry` starts again at
 // it; a subscription login that ended puts a login row before the server's.
 //
@@ -349,10 +350,14 @@ function row(id, running = true) {
   return { id, title: TITLES[id] };
 }
 
-/** The order the rows run in: the plugin the rest runs from first, the Codex plugin last. */
+/**
+ * The order the rows run in: the plugin the rest runs from first, the Codex plugin
+ * last. With Codex only, the app goes up right after it: the plugin update took away
+ * the folder the app ran from, and the app's pages with it.
+ */
 function sortRows(progress) {
   const order = progress.host === "codex"
-    ? ["codex", "runtime", "login", "server", "app"]
+    ? ["codex", "app", "runtime", "login", "server"]
     : ["claude", "runtime", "login", "server", "app", "codex"];
   progress.rows.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 }
@@ -742,7 +747,8 @@ async function runPlugin(ctx, progress, save) {
 /**
  * `update continue`, in the new plugin's folder: doctor's checks there, fix.mjs for
  * the collector, the server and the app (which starts the app again from here), the
- * Codex plugin last, and what is left to do.
+ * Codex plugin last, and what is left to do. With Codex only, the app goes first, in
+ * a fix of its own (sortRows).
  */
 export async function updateContinue(options = {}) {
   const ctx = context(options);
@@ -753,21 +759,29 @@ async function continueHere(ctx, progress, save) {
   const before = await ctx.doctor();
   reconcile(progress, before.checks);
   await save.write();
-  const fixed = await ctx.fix(before.checks, save.step);
+  const parts = progress.host === "codex"
+    ? [before.checks.filter((check) => check.name === "app"), before.checks.filter((check) => check.name !== "app")]
+    : [before.checks];
+  const said = [];
+  let fixed;
+  for (const checks of parts) {
+    fixed = await ctx.fix(checks, save.step);
+    if (fixed.said) said.push(fixed.said);
+    if (!fixed.ok) break;
+  }
+  progress.said = said.join(" ");
   if (fixed.login) {
     progress.state = "login";
-    progress.said = fixed.said;
     await save.write();
-    return { ok: false, login: true, said: fixed.said };
+    return { ok: false, login: true, said: progress.said };
   }
   if (fixed.serverOff) progress.serverOff = true;
   if (!fixed.ok) {
     progress.state = "failed";
     progress.error = fixed.error || null;
-    progress.said = fixed.said;
     progress.finishedAt = iso(ctx.now());
     await save.write();
-    return { ok: false, error: fixed.error, said: fixed.said };
+    return { ok: false, error: fixed.error, said: progress.said };
   }
   const codex = progress.rows.find((item) => item.id === "codex");
   if (codex && codex.state !== "ok" && progress.host !== "codex") {
@@ -778,7 +792,7 @@ async function continueHere(ctx, progress, save) {
   }
   const plugins = progress.rows.filter((item) => item.id === "claude" || item.id === "codex")
     .map((item) => `${CLIENT_NAMES[item.id]} 플러그인을 ${progress.to}로 올렸습니다.`);
-  progress.said = [...plugins, fixed.said].filter(Boolean).join(" ");
+  progress.said = [...plugins, ...said].join(" ");
   progress.todo = await todoOf(ctx, progress);
   progress.state = "done";
   progress.finishedAt = iso(ctx.now());

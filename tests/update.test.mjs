@@ -4,8 +4,9 @@
 // app knows a newer version from the lowest one here, reads main once a day, warns
 // about a rebuild only when the server here is not what main runs, refuses while a
 // long job runs, runs the Claude Code plugin first, the rest from the new plugin's
-// folder and the Codex plugin last (first on a computer with Codex only), and writes
-// every row's state to the app's folder, where a new app reads how far it got.
+// folder and the Codex plugin last (first on a computer with Codex only, with the app
+// right after it), and writes every row's state to the app's folder, where a new app
+// reads how far it got.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import fsp from "node:fs/promises";
@@ -17,6 +18,7 @@ import { promisify } from "node:util";
 import test, { after } from "node:test";
 
 import { fixChecks } from "../scripts/fix.mjs";
+import { VERSION } from "../scripts/version.mjs";
 import {
   compareVersions,
   fixProgress,
@@ -431,24 +433,45 @@ test("the Claude Code plugin goes first, the rest runs from its new folder, and 
   assert.equal((await updateStatus(b.options)).progress.state, "done", "the status carries the update last done");
 });
 
-test("on a computer with Codex only, the Codex plugin goes first and the rest runs from its new folder", async (t) => {
-  const b = await bench(t, { claude: null, codex: "0.9.0", runtime: "0.9.0", app: "0.9.0", server: "same" });
+test("on a computer with Codex only, the Codex plugin goes first, the app right after it, and the rest from its new folder", async (t) => {
+  const b = await bench(t, { claude: null, codex: "0.9.0", runtime: "0.9.0", app: "0.9.0", server: "honcho" });
   const status = await updateStatus(b.options);
-  assert.deepEqual(b.ids(status.rows), ["codex", "runtime", "app"]);
+  assert.deepEqual(b.ids(status.rows), ["codex", "app", "runtime", "server"]);
   assert.equal((await updateStart(b.options)).ok, true);
   await drive(b);
+  // Codex took away the folder the app ran from: its pages are back before the server's rebuild.
   assert.deepEqual(b.calls, [
     "codex plugin marketplace upgrade team-memory",
     "codex plugin add team-memory@team-memory",
-    "setup apply",
     "app restart",
+    "setup apply",
+    "server start",
   ]);
+  assert.deepEqual(b.states(b.seen[0].rows), { codex: "ok", app: "ok", runtime: "ok", server: "run" });
   const newer = path.join(b.home, ".codex", "plugins", "cache", "team-memory", "team-memory", "0.9.1");
   assert.deepEqual(b.spawned.map(({ cli }) => cli), [path.join(b.codexOwn, "scripts", "cli.mjs"), path.join(newer, "scripts", "cli.mjs")]);
   await assert.rejects(fsp.access(b.codexOwn), "Codex took the old folder away");
   const done = await updateProgress(b.options);
   assert.equal(done.state, "done");
   assert.deepEqual(done.todo, [{ id: "codex", title: "Codex", text: "열린 창은 닫고 새로 여세요." }]);
+  assert.match(done.said, /^Codex 플러그인을 0\.9\.1로 올렸습니다\. 팀 메모리 앱을 새 판으로 다시 켰습니다\. 대화 모으기를 /);
+
+  // The server failing after it leaves the new app up, and 다시 시도 runs the server's row.
+  const failing = await bench(t, { claude: null, codex: "0.9.0", server: "honcho" });
+  failing.answers.started = { ok: false, ready: false, issues: ["Docker Desktop is not running"] };
+  await updateStart(failing.options);
+  await drive(failing);
+  const failed = await updateProgress(failing.options);
+  assert.deepEqual(failing.states(failed.rows), { codex: "ok", app: "ok", runtime: "ok", server: "bad" });
+  assert.equal(failed.said, `팀 메모리 앱을 새 판으로 다시 켰습니다. 대화 모으기를 ${VERSION}로 바꿨습니다. 기억 서버를 새 판으로 다시 시작하지 못했습니다: Docker Desktop is not running`);
+  failing.answers.started = { ok: true, ready: true };
+  failing.doctor = ["server-version"];
+  failing.calls.length = 0;
+  const from = failing.spawned.length;
+  await updateRetry(failing.options);
+  await drive(failing, from);
+  assert.deepEqual(failing.calls, ["server start"]);
+  assert.equal((await updateProgress(failing.options)).state, "done");
 });
 
 test("a step that fails stops there with its reason, and 다시 시도 starts again at it in the new folder", async (t) => {
