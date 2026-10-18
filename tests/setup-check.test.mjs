@@ -7,14 +7,19 @@
 // 다시 점검), never the terminal's `fix` line; a row that follows another (임베딩 when
 // Ollama is not there) is no failure of its own; a 고치기 that makes the server again
 // says so before it is pressed, and its rows come from fix.json, also once the app
-// started again and ended its request; an agent whose missing plugin its row copies
-// the commands for is not a to-do too; a setup that stores nothing looks at the
-// team's logins alone; Docker Desktop's own window is spelled out only for a plan
-// that installs it, read again on a window opened again; what the window keeps holds
-// no secret, nor what an address has after its path, and comes back at 적용, the
-// rows done kept done, running nothing until 이어서 하기, also as the app starts on a
-// computer set up since; 수정's 적용 drops it; and a computer that collects joins a
-// team alone, its peer name made the team's first when its setup has another.
+// started again and ended its request or answered with nothing, read no more often
+// than told and given up when they never come; on a page another computer shows,
+// 고치기 is locked with where to press it; an agent whose missing plugin its row
+// copies the commands for is not a to-do too, Codex's hook is to approve only when
+// setup wrote it anew, and the 수정 window's to-dos are the agents its 적용 changed;
+// a setup that stores nothing looks at the team's logins alone; Docker Desktop's own
+// window is spelled out only for a plan that installs it, read again on a window
+// opened again; what the window keeps holds no secret, nor what an address has after
+// its path, and comes back at 적용, the rows done kept done, running nothing until
+// 이어서 하기, also as the app starts on a computer set up since, and going to another
+// team's link as opening it with that link does; 수정's 적용 drops it; and a
+// computer that collects joins a team alone, its peer name made the team's first
+// when its setup has another.
 import assert from "node:assert/strict";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -22,10 +27,11 @@ import test, { afterEach } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { DEFAULT_MARKETPLACE, DEFAULT_SOURCE, manualCommands } from "../scripts/host-plugins.mjs";
-import { checkRows, failures, fixLines, fixOutcome, INSTALL_COMMANDS, missingPlugins, REBUILD_NOTE, runFix, teamCheckRows } from "../ui/lib/check.js";
-import { collectDraft, dockerSteps, remoteUrlProblem, teamServers, todoAgents } from "../ui/lib/collect.js";
+import { HERE_ONLY } from "../scripts/viewer.mjs";
+import { checkRows, failures, FIX_HERE_ONLY, fixLines, fixOutcome, INSTALL_COMMANDS, missingPlugins, offers, REBUILD_NOTE, runFix, teamCheckRows } from "../ui/lib/check.js";
+import { agentTodo, changedAgents, collectDraft, dockerSteps, hookWritten, remoteUrlProblem, teamServers, todoAgents } from "../ui/lib/collect.js";
 import { resumeAtBoot } from "../ui/lib/landing.js";
-import { applyRows, endButton, joinsAlone, peerChange, restoreSetup, resumable, setupSnapshot } from "../ui/views/setup.js";
+import { applyRows, endButton, joinsAlone, linkTurn, peerChange, restoreSetup, resumable, setupSnapshot } from "../ui/views/setup.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LOCAL = "http://127.0.0.1:8001";
@@ -352,6 +358,70 @@ test("고치기 cut off by the app starting again reads its rows and what it did
   assert.deepEqual(await runFix(() => {}, { every: 1 }), { text: "업데이트가 도는 중입니다.", bad: true });
 });
 
+test("고치기 reads fix.json no more often than it is told, whatever its request answers, and a wait without its rows ends", async () => {
+  const type = { "content-type": "application/json" };
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: type });
+  const before = { kind: "fix", state: "done", startedAt: "2026-10-18T00:00:00.000Z", rows: [], said: "지난번" };
+  // A request that ended with the app, here or on the way from another computer: a 200
+  // with nothing after it (a late answer cut short), the way's 502, or no answer at all.
+  const answers = {
+    "200 with no body": () => new Response("", { status: 200, headers: type }),
+    "200 with no type": () => new Response("", { status: 200 }),
+    "the way's 502": () => json({ ok: false, unreachable: true, reason: "off", error: "그 컴퓨터의 앱이 꺼져 있습니다." }, 502),
+    "no answer at all": () => { throw new TypeError("fetch failed"); },
+  };
+  const every = 2;
+  for (const [name, answer] of Object.entries(answers)) {
+    // fix.json never shows this 고치기: each read comes `every` after the one before, and the wait ends.
+    let reads = 0;
+    globalThis.fetch = async (url) => {
+      if (url === "/api/doctor/fix") return answer();
+      reads += 1;
+      return json({ ok: true, progress: before });
+    };
+    const started = performance.now();
+    assert.deepEqual(await runFix(() => {}, { every }), { text: "고치지 못했습니다.", bad: true }, name);
+    const took = performance.now() - started;
+    assert.ok(reads > 90 && reads < 96, `${name}: ${reads} reads`);
+    assert.ok(took >= (reads - 2) * every * 0.8, `${name}: ${reads} reads in ${Math.round(took)} ms`);
+  }
+  // A 200 with no body for a 고치기 that ran: its rows and what it did, from fix.json.
+  const running = { kind: "fix", state: "running", startedAt: "2026-10-19T09:00:00.000Z", rows: [{ id: "runtime", title: "대화 모으기", state: "run" }] };
+  const finished = { ...running, state: "done", rows: [{ id: "runtime", title: "대화 모으기", state: "ok" }], said: "대화 모으기를 0.8.14로 바꿨습니다." };
+  const reads = [before, running, finished];
+  globalThis.fetch = async (url) => {
+    if (url === "/api/doctor/fix") return new Response("", { status: 200, headers: type });
+    return json({ ok: true, progress: reads.length > 1 ? reads.shift() : reads[0] });
+  };
+  const drawn = [];
+  assert.deepEqual(await runFix((lines) => drawn.push(lines.at(-1).state), { every: 1 }), { text: finished.said, bad: false });
+  assert.deepEqual(drawn, ["run", "run", "ok"]);
+});
+
+test("on a page another computer shows, 고치기 is there but locked, with where to press it", async () => {
+  // The app there refuses it (scripts/viewer.mjs), and the lock says why as the update's does.
+  assert.equal(FIX_HERE_ONLY, `고치기는 그 컴퓨터에서 누르세요. ${HERE_ONLY.get("/api/doctor/fix")}`);
+  const FIX = "/team-memory doctor";
+  const rows = checkRows(doctor({ runtime: { ok: false, actualVersion: "0.8.13", fix: FIX }, "server-version": { ok: false, fix: FIX } }), verify(), { context: HERE, expected: LOCAL });
+  const behind = row(rows, "대화 모으기");
+  // Here: 고치기, with what it stops first.
+  assert.deepEqual(offers(behind), { locked: false, notes: [REBUILD_NOTE], actions: behind.actions });
+  // There: the same buttons, 고치기 locked with why, and where to press it in place of the note.
+  const there = offers(behind, { elsewhere: true });
+  assert.equal(there.locked, true);
+  assert.deepEqual(there.notes, [FIX_HERE_ONLY]);
+  assert.deepEqual(there.actions.map((action) => [action.label, action.hereOnly || null]), [["고치기", FIX_HERE_ONLY], ["다시 점검", null]]);
+  // A row with nothing to fix is the same there.
+  const down = row(checkRows(doctor({ "honcho-health": NO_ANSWER, "honcho-workspaces": NO_ANSWER }), null, { context: HERE, expected: LOCAL }), "기억 서버");
+  assert.deepEqual(offers(down, { elsewhere: true }), { locked: false, notes: [], actions: down.actions });
+  // The box asks which window it is in, and draws a locked one as the lock.
+  const box = exported(await read("ui/lib/check.js"), "checkBox");
+  assert.match(box, /const elsewhere = shownElsewhere\(\);/);
+  assert.match(box, /const \{ locked, notes, actions \} = offers\(row, \{ elsewhere \}\);/);
+  assert.match(box, /notes\.map\(\(text\) => \(locked \? hereOnlyNote\(text\) : h\("div", \{ class: "hint" \}, text\)\)\)/);
+  assert.match(box, /const press = \(action\) => \{\n\s*if \(action\.hereOnly\) return hereOnlyButton\(action\.label, action\.hereOnly\);/);
+});
+
 test("a setup that stores nothing looks at the team login and the teammates' servers login alone", async () => {
   const SERVER = "memory-bob.example.com";
   const status = { ok: true, hub: HUB, email: "me@example.com", hubLogin: { signedIn: true }, serversLogin: { signedIn: true, host: SERVER } };
@@ -518,6 +588,30 @@ test("a window opened again runs nothing by itself: its rows wait for 이어서 
   assert.match(setupPart(setup, "async function run("), /if \(task\.label \|\| task\.state === "ok"\) continue;/);
 });
 
+test("a window waiting for 이어서 하기 goes to another team's link as opening it with that link does", async () => {
+  const OTHER = "team.other.example";
+  const rows = [{ label: "점검" }, { key: "check", title: "점검", state: "wait" }];
+  const waiting = { path: "link", team: { hub: HUB }, tasks: rows };
+  // The same team's link keeps it waiting; another's, or one on a setup of no team, starts at that login.
+  assert.equal(linkTurn(waiting, HUB, { paused: true }), "keep");
+  assert.equal(linkTurn(waiting, OTHER, { paused: true }), "anew");
+  assert.equal(linkTurn({ path: "solo", team: { hub: "" }, tasks: rows }, HUB, { paused: true }), "anew");
+  // As opening the window with that link does: the kept setup goes on for its own team only.
+  const kept = { version: 1, path: "link", team: { hub: HUB }, draft: {}, tasks: rows };
+  const context = { configured: true, localServer: null, honcho: { url: MINE }, user: { peerId: "chen" }, team: null, targets: [] };
+  assert.notEqual(restoreSetup(kept, context, { link: HUB }), null);
+  assert.equal(restoreSetup(kept, context, { link: OTHER }), null);
+  // Applying, it keeps on; not yet applying, it starts over at the link's login unless it is at that team's.
+  assert.equal(linkTurn(waiting, OTHER), "keep");
+  assert.equal(linkTurn({ path: "solo", team: { hub: "" }, tasks: [] }, HUB), "login");
+  assert.equal(linkTurn({ path: "link", team: { hub: HUB }, tasks: [] }, HUB), "keep");
+  assert.equal(linkTurn(waiting, "", { paused: true }), "keep");
+  // "anew" is 처음부터 at that link: what was kept goes, and its login is the first step.
+  const setup = await read("ui/views/setup.js");
+  const follow = setup.slice(setup.indexOf("  win.follow = (team) => {"), setup.indexOf("  /** The first step:"));
+  assert.match(follow, /const turn = linkTurn\(state, team, \{ paused \}\);\n\s*if \(turn === "keep"\) return;\n\s*if \(turn === "anew"\) \{\n\s*link = team;\n\s*restart\(\);\n\s*return;\n\s*\}/);
+});
+
 test("a setup kept half way opens its window as the app starts, also on a computer set up since", async () => {
   // Not set up, every address opens first setup's window, which carries on by itself.
   assert.equal(resumeAtBoot("dashboard", { setUp: false, kept: true }), false);
@@ -548,16 +642,81 @@ test("대화 수집's 수정 window drops a first setup kept half way once it ap
   const settings = await read("ui/views/settings.js");
   const apply = settings.slice(settings.indexOf("  const apply = (control) =>"), settings.indexOf("  function showCheck("));
   assert.match(apply, /const outcome = await applySetup\(setupBody\(draft, context\)\);\n\s*if \(!outcome\.ok\) \{[^\n]*return; \}\n(?:\s*\/\/[^\n]*\n)*\s*dropSetup\(\);/);
-  assert.match(apply, /onApplied\?\.\(\);\n\s*showCheck\(outcome\.result\);\n\s*\}\);/);
+  assert.match(apply, /onApplied\?\.\(\);\n\s*showCheck\(outcome\.result, before\);\n\s*\}\);/);
   assert.equal(apply.includes('win.close("ok")'), false, "the window stays for 점검");
   const show = settings.slice(settings.indexOf("  function showCheck("), settings.indexOf("  function draw("));
   assert.match(show, /checkBox\(\{\n\s*check: \(\) => checkHere\(\{ verify, expected, done \}\),/);
   assert.match(show, /onCollect: \(\) => goTo\(0\),/);
-  assert.match(show, /heading\.textContent = failed \? `할 일 \$\{failed\}개` : "다 됐습니다";/);
   assert.match(show, /win\.foot\(null, button\("닫기", \{ kind: "primary", onClick: \(\) => win\.close\("ok"\) \}\)\);/);
   // First setup's end uses the same box.
   const finish = setupPart(await read("ui/views/setup.js"), "function finish(");
   assert.match(finish, /const check = checkBox\(\{\n\s*check: checkAll,/);
+});
+
+test("the 수정 window ends with what is left in the agents its 적용 changed, counted in its heading", async () => {
+  const hooks = (codex, claude = false) => [{ provider: "codex", changed: codex }, { provider: "claude", changed: claude }];
+  const plugins = (codex = "already", claude = "already") => [{ agent: "codex", action: codex }, { agent: "claude", action: claude }];
+  const both = new Set(["claude", "codex"]);
+  const before = { claude: true, codex: true };
+  // Folders alone: nothing changed in the agents, nothing to do in them.
+  assert.deepEqual([...changedAgents({ hooks: hooks(false), plugins: plugins(), nextSteps: [] }, both, before)], []);
+  // Codex chosen now: its to-do, though setup said nothing changed in it.
+  assert.deepEqual([...changedAgents({ hooks: hooks(true), plugins: plugins("installed") }, both, { claude: true, codex: false })], ["codex"]);
+  assert.deepEqual([...changedAgents({ hooks: hooks(false), plugins: plugins() }, both, { claude: true })], ["codex"]);
+  // A hook written anew (Claude Code's old one taken out), a plugin installed, or one left to install by hand.
+  assert.deepEqual([...changedAgents({ hooks: hooks(false, true), plugins: plugins() }, both, before)], ["claude"]);
+  assert.deepEqual([...changedAgents({ hooks: hooks(false), plugins: plugins("already", "installed") }, both, before)], ["claude"]);
+  assert.deepEqual([...changedAgents({ hooks: hooks(false), plugins: plugins("failed"), nextSteps: [{ agent: "codex", action: "install-plugin", commands: INSTALL_COMMANDS.codex }] }, both, before)], ["codex"]);
+  // An agent taken out has nothing to do, though its hook went with it.
+  assert.deepEqual([...changedAgents({ hooks: hooks(true), plugins: [] }, new Set(["claude"]), before)], []);
+  // A computer that did not collect: every agent it chose now.
+  assert.deepEqual([...changedAgents({ hooks: hooks(false), plugins: plugins() }, both, {})], ["claude", "codex"]);
+
+  // The window: those agents' to-dos once 점검 answers, without one whose row copies the
+  // install commands, counted with 점검's failures; the agents read before 적용.
+  const settings = await read("ui/views/settings.js");
+  const apply = settings.slice(settings.indexOf("  const apply = (control) =>"), settings.indexOf("  function showCheck("));
+  assert.match(apply, /const before = app\.context\?\.configured \? \{ \.\.\.app\.context\.agents \} : \{\};\n\s*const outcome = await applySetup\(setupBody\(draft, context\)\);/);
+  const show = settings.slice(settings.indexOf("  function showCheck("), settings.indexOf("  function draw("));
+  assert.match(show, /const agents = changedAgents\(done, draft\.agents, before\);/);
+  assert.match(show, /const items = agentTodo\(done, agents, \{ missing: missingPlugins\(rows\) \}\);\n\s*const count = items\.length \+ failures\(rows\);\n\s*heading\.textContent = count \? `할 일 \$\{count\}개` : "다 됐습니다";/);
+  assert.match(show, /clear\(left, items\.length \? \[h\("div", \{ class: "label" \}, "에이전트에서 할 일"\), todoList\(items\)\] : null\);/);
+  assert.match(show, /win\.body\(heading, check\.root, left\);/);
+});
+
+test("Codex's to-do approves its hook only when setup wrote it anew, also in a window opened again", () => {
+  const codex = new Set(["codex"]);
+  assert.deepEqual(agentTodo({ hooks: [{ provider: "codex", changed: true }], nextSteps: [] }, codex), [{ title: "Codex", text: "새 세션을 열고 훅을 승인하세요." }]);
+  // The peer name alone changed: the hook is as it was, and a new session reads the new name.
+  assert.deepEqual(agentTodo({ hooks: [{ provider: "codex", changed: false }], nextSteps: [] }, codex), [{ title: "Codex", text: "새 세션을 여세요." }]);
+  // An answer that does not say, as one kept by the version before: as before.
+  assert.equal(hookWritten({ nextSteps: [] }, "codex"), true);
+  assert.equal(hookWritten({ hooks: [{ provider: "claude", changed: false }] }, "codex"), true);
+  assert.equal(hookWritten({ hooks: [{ provider: "codex", changed: false }] }, "codex"), false);
+
+  // What the window keeps of setup apply holds whether each hook was written and each plugin installed, and nothing else.
+  const state = {
+    ...joining(COLLECTS),
+    picked: new Set(),
+    roles: null,
+    plan: null,
+    filling: false,
+    tasks: [{ label: "점검" }, { key: "check", title: "점검", sub: "대화 모으기, 기억 서버", state: "wait" }],
+    applied: {
+      ok: true,
+      hooks: [{ provider: "codex", target: "/Users/me/.codex/hooks.json", installed: true, mode: "host-settings", changed: false }, { provider: "claude", changed: undefined }],
+      plugins: [{ agent: "codex", action: "failed", error: "codex plugin add failed" }],
+      nextSteps: [{ agent: "codex", action: "approve-hook", message: "Codex asks to approve the new Stop hook." }],
+      paths: { configPath: "/Users/me/.team-memory/config.json" },
+    },
+  };
+  const kept = JSON.parse(JSON.stringify(setupSnapshot(state)));
+  assert.deepEqual(kept.applied, {
+    nextSteps: state.applied.nextSteps,
+    hooks: [{ provider: "codex", changed: false }, { provider: "claude", changed: false }],
+    plugins: [{ agent: "codex", action: "failed" }],
+  });
+  assert.deepEqual(agentTodo(restoreSetup(kept, COLLECTS, { link: HUB }).applied, codex), [{ title: "Codex", text: "새 세션을 여세요." }]);
 });
 
 test("적용 ends with 점검, the end screen has its box, and every row runs something", async () => {

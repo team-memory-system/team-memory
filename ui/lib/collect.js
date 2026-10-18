@@ -656,8 +656,31 @@ export function todoAgents(done, agents, { missing = null } = {}) {
 }
 
 /**
- * What to do in each agent once setup has applied: approve the Codex hook, reload
- * Claude Code's plugins, or run the plugin install by hand when it could not.
+ * Whether setup apply (`done`) wrote `agent`'s hook anew (`hooks[].changed`): Codex
+ * asks to approve a hook only then. An answer that does not say counts as written.
+ */
+export function hookWritten(done, agent) {
+  const hook = (done?.hooks || []).find((item) => item.provider === agent);
+  return hook ? Boolean(hook.changed) : true;
+}
+
+/**
+ * The agents 대화 수집's 수정 changed something in, of those it collects from now
+ * (`agents`): one chosen anew (not on in `before`, the context's agents before
+ * 적용), one whose hook setup apply wrote anew, and one whose plugin it installed or
+ * left to install by hand. A 적용 that changed only folders changes none.
+ */
+export function changedAgents(done, agents, before = {}) {
+  return new Set([...(agents || [])].filter((name) => !before?.[name]
+    || (done?.hooks || []).some((hook) => hook.provider === name && hook.changed)
+    || (done?.plugins || []).some((plugin) => plugin.agent === name && plugin.action === "installed")
+    || pluginCommands(done, name).length > 0));
+}
+
+/**
+ * What to do in each agent once setup has applied: open a new Codex session, and
+ * approve its hook when setup wrote it anew, reload Claude Code's plugins, or run
+ * the plugin install by hand when it could not.
  */
 export function agentTodo(done, agents, { missing = null } = {}) {
   const items = [];
@@ -667,7 +690,7 @@ export function agentTodo(done, agents, { missing = null } = {}) {
     } else if (name === "claude") {
       items.push({ title: "Claude Code", text: ["열린 세션에 ", h("span", { class: "mono" }, "/reload-plugins"), " 를 입력하세요."] });
     } else {
-      items.push({ title: "Codex", text: "새 세션을 열고 훅을 승인하세요." });
+      items.push({ title: "Codex", text: hookWritten(done, "codex") ? "새 세션을 열고 훅을 승인하세요." : "새 세션을 여세요." });
     }
   }
   return items;

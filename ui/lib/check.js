@@ -6,12 +6,14 @@
 // says: 고치기 runs doctor --fix and shows its rows (fix.json) while it goes, also
 // across the app starting again on its new version; 명령 복사, 서버 켜기, a team
 // login and 다시 점검 do the same in every window, and 대화 수집 수정 is the
-// window's own. First setup's end (views/setup.js) and the 대화 수집 window's 적용
-// (views/settings.js) use it.
+// window's own. On a page another computer shows, 고치기 is locked, as the app
+// there refuses it (scripts/viewer.mjs HERE_ONLY). First setup's end
+// (views/setup.js) and the 대화 수집 window's 적용 (views/settings.js) use it.
 import { get, post } from "./api.js";
 import { AGENTS, pluginCommands, problem, sameServer } from "./collect.js";
 import { h, clear, copyText } from "./dom.js";
 import { progressList } from "./kit.js";
+import { hereOnlyButton, hereOnlyNote, shownElsewhere } from "./machines.js";
 import { app, go, loadContext } from "./state.js";
 import { loginEndedText, loginTab, relogin, teamStatus } from "./team.js";
 import { busy, button, notice, tag } from "./ui.js";
@@ -24,6 +26,9 @@ const COLLECT = { kind: "collect", label: "대화 수집 수정" };
 
 /** Said before a 고치기 that makes the server again, in the update's words (scripts/update.mjs). */
 export const REBUILD_NOTE = "기억 서버를 다시 만드는 동안 팀원 열람이 멈춥니다.";
+
+/** Why 고치기 is locked on a page another computer shows: the way here goes while it runs. */
+export const FIX_HERE_ONLY = "고치기는 그 컴퓨터에서 누르세요. 고치는 동안 이 화면으로 오는 길이 끊깁니다.";
 
 /**
  * The plugin's install from its own repository, as scripts/host-plugins.mjs
@@ -211,6 +216,20 @@ export function teamCheckRows(status, { host = "" } = {}) {
   return rechecked(rows);
 }
 
+/**
+ * What a failed row offers in this window: its buttons and the lines over them. On
+ * a page another computer shows (`elsewhere`), 고치기 is there but locked, with
+ * FIX_HERE_ONLY in place of what it would stop first.
+ */
+export function offers(row, { elsewhere = false } = {}) {
+  const locked = elsewhere && row.actions.some((action) => action.kind === "fix");
+  return {
+    locked,
+    notes: locked ? [FIX_HERE_ONLY] : [...new Set(row.actions.map((action) => action.note).filter(Boolean))],
+    actions: locked ? row.actions.map((action) => (action.kind === "fix" ? { ...action, hereOnly: FIX_HERE_ONLY } : action)) : row.actions,
+  };
+}
+
 /** The rows that failed on their own: a row that follows another is not counted again. */
 export function failures(rows) {
   return (rows || []).filter((row) => !row.ok && !row.follows).length;
@@ -290,22 +309,27 @@ const fixStatus = () => get("/api/doctor/fix/status").then((answer) => answer?.p
  * request: the rows and what the fix said are then read from fix.json alone, the
  * app answering again after a few seconds. One refused because a 고치기 runs
  * already follows that one the same way: the browser may send a request that ended
- * with the app once more, to the app started again. `every` is how often fix.json
- * is read. Answers what fixOutcome says.
+ * with the app once more, to the app started again. A request that came back
+ * empty, or as the way's 502 from another computer, is one that ended with the app
+ * too. fix.json is read every `every` ms, never more often, and a wait without this
+ * 고치기's rows ends after GIVE_UP reads. Answers what fixOutcome says.
  */
 export async function runFix(draw, { every = POLL_MS } = {}) {
   const before = (await fixStatus())?.startedAt || null;
   let answer = null;
   // With no answer of its own, whose rows to follow: "ours" once the request ended
-  // with the app, "any" when another 고치기 was running.
+  // with the app or came back empty, "any" when another 고치기 was running.
   let follow = "";
+  let going = true;
   const asked = post("/api/doctor/fix", {}).then((value) => {
-    if (value?.ok === false && value.code === "fixing") follow = "any";
+    if (!value || typeof value !== "object") follow = "ours";
+    else if (value.ok === false && value.code === "fixing") follow = "any";
     else answer = value;
   }, (error) => {
-    if (error.unreachable && !error.status) follow = "ours";
+    // No answer at all here, or the way's 502 on a page another computer shows.
+    if (error.unreachable && (!error.status || error.status === 502)) follow = "ours";
     else answer = { ok: false, error: error.message };
-  });
+  }).finally(() => { going = false; });
   let progress = null;
   let misses = 0;
   // This 고치기's rows: one started after the press, or with "any", the one running and then the same one.
@@ -313,17 +337,18 @@ export async function runFix(draw, { every = POLL_MS } = {}) {
     || (follow === "any" && (now.state === "running" || now.startedAt === progress?.startedAt)));
   draw(fixLines(null));
   for (;;) {
-    await (follow ? pause(every) : Promise.race([asked, pause(every)]));
+    // While the request goes, its answer or `every`, whichever comes first; once it is back, `every` each time.
+    await (going ? Promise.race([asked, pause(every)]) : pause(every));
     const now = await fixStatus();
     if (followed(now)) {
       progress = now;
       misses = 0;
       draw(fixLines(now));
-    } else if (follow) {
+    } else if (!going) {
       misses += 1;
     }
     if (answer) break;
-    if (follow && ((progress && progress.state !== "running") || misses > GIVE_UP)) break;
+    if (!going && ((progress && progress.state !== "running") || misses > GIVE_UP)) break;
   }
   return fixOutcome(answer, progress?.state === "running" ? null : progress);
 }
@@ -356,6 +381,7 @@ export function checkBox({ check, rows = null, sub = "", onCollect = () => go("c
   }
 
   const press = (action) => {
+    if (action.hereOnly) return hereOnlyButton(action.label, action.hereOnly);
     if (action.kind === "copy") {
       return button(action.label, { kind: "small", onClick: async () => {
         await copyText(action.text);
@@ -386,23 +412,27 @@ export function checkBox({ check, rows = null, sub = "", onCollect = () => go("c
     }) });
   };
 
-  /** How it went, then a row each: a failed one with what is wrong, what 고치기 stops first, and its buttons. */
+  /**
+   * How it went, then a row each: a failed one with what is wrong, what 고치기 stops
+   * first (or, on a page another computer shows, where to press it), and its buttons.
+   */
   function boxLines() {
     if (!shown) return [{ label: "점검" }, { state: "run", title: "점검", sub }];
     const failed = failures(shown);
+    const elsewhere = shownElsewhere();
     return [
       { label: ["점검 ", failed ? tag(`실패 ${failed}개`, "bad") : tag("모두 통과", "ok")] },
       ...shown.map((row) => {
         if (row.follows) return { state: "wait", title: row.name };
         if (row.ok) return { state: "ok", title: row.name, end: row.value ? h("span", { class: "mono muted" }, row.value) : null };
-        const notes = [...new Set(row.actions.map((action) => action.note).filter(Boolean))];
+        const { locked, notes, actions } = offers(row, { elsewhere });
         return {
           state: "bad",
           title: row.name,
           sub: [
             row.problems.join(" "),
-            notes.map((text) => h("div", { class: "hint" }, text)),
-            h("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px" } }, row.actions.map(press)),
+            notes.map((text) => (locked ? hereOnlyNote(text) : h("div", { class: "hint" }, text))),
+            h("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px" } }, actions.map(press)),
           ],
         };
       }),

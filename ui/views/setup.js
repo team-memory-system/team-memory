@@ -14,7 +14,8 @@
 // order they were started, and keep going in after the window closes. A window
 // closed during 적용, or a computer restarted on the way, opens at 적용 again with
 // the rows done kept done (lib/state.js keeps the choices, without a secret), and
-// runs the rest on 이어서 하기 or starts anew on 처음부터. A computer is in one team
+// runs the rest on 이어서 하기 or starts anew on 처음부터, as it does for another
+// team's link opened while it waits. A computer is in one team
 // only: on one in another team, the login to a link's or a typed address's team
 // first shows both teams, and 옮기고 로그인 leaves the one it is in before the
 // login. On a computer set up already, a link's 취소 closes the window. One that
@@ -300,7 +301,13 @@ export function setupSnapshot(state) {
     picked: [...state.picked],
     mates: [...state.mates],
     requested: state.requested,
-    applied: state.applied ? { nextSteps: state.applied.nextSteps || [] } : null,
+    // What the end's to-dos read from setup apply: what is left to run by hand, and
+    // whether each hook was written anew or a plugin installed.
+    applied: state.applied ? {
+      nextSteps: state.applied.nextSteps || [],
+      ...(state.applied.hooks ? { hooks: state.applied.hooks.map(({ provider, changed }) => ({ provider, changed: Boolean(changed) })) } : {}),
+      ...(state.applied.plugins ? { plugins: state.applied.plugins.map(({ agent, action }) => ({ agent, action })) } : {}),
+    } : null,
     plan: state.plan || null,
     filling: Boolean(state.filling),
     tasks: state.tasks.map(({ extra, ...task }) => task),
@@ -350,6 +357,20 @@ export function restoreSetup(kept, context, { link = "" } = {}) {
   state.filling = Boolean(kept.filling);
   state.tasks = kept.tasks.map((task) => (task.label || task.state === "ok" ? task : { ...task, state: "wait", error: null }));
   return state;
+}
+
+/**
+ * What an open window does with a team link opened again (#/start?team=), `team`
+ * its address: "keep" what it shows, or "login" to start over at that team's login.
+ * A window that waits for 이어서 하기 (`paused`) does what opening it with that link
+ * does (restoreSetup): the same team's link keeps it waiting, another's is "anew",
+ * what it kept dropped and that team's login first. One applying keeps on.
+ */
+export function linkTurn(state, team, { paused = false } = {}) {
+  if (!team) return "keep";
+  if (paused) return state.team?.hub === team ? "keep" : "anew";
+  if (state.tasks.length || (state.path === "link" && state.team?.hub === team)) return "keep";
+  return "login";
 }
 
 /**
@@ -1287,11 +1308,18 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
 
   /**
    * A team link opened while the window is up (#/start?team= again): the window
-   * starts over from it, at the login, unless setup is already applying.
+   * starts over from it, at the login, unless setup is already applying. One that
+   * waits for 이어서 하기 on another team's setup drops it, as 처음부터 does (linkTurn).
    */
   win.follow = (team) => {
     team = teamHostOf(team) || team;
-    if (!team || state.tasks.length || (state.path === "link" && state.team.hub === team)) return;
+    const turn = linkTurn(state, team, { paused });
+    if (turn === "keep") return;
+    if (turn === "anew") {
+      link = team;
+      restart();
+      return;
+    }
     state.login.abort?.();
     state.login.tab?.close();
     Object.assign(state.login, { phase: "idle", error: "", tab: null, reopen: null, abort: null, leave: false });

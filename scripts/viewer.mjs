@@ -51,6 +51,7 @@ export const HERE_ONLY = new Map([
   ["/api/past/chatgpt", "큰 파일은 그 컴퓨터에서 올리세요."],
   ["/api/update/start", "업데이트하는 동안 이 화면으로 오는 길이 끊깁니다."],
   ["/api/update/retry", "업데이트하는 동안 이 화면으로 오는 길이 끊깁니다."],
+  ["/api/doctor/fix", "고치는 동안 이 화면으로 오는 길이 끊깁니다."],
 ]);
 
 /** The page's computer when another computer shows it, or null on its own computer. */

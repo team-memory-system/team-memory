@@ -1,21 +1,24 @@
 // 기억 설정: what this computer does with its own conversations and agents, as three
 // blocks on one page. 대화 수집's 수정 is first setup's own steps (lib/collect.js,
-// lib/past.js), and its 적용 ends with first setup's 점검 (lib/check.js); 지난 대화
-// shows where the past conversations came from and how far they went in, and its
-// 더 가져오기 opens the same steps at 지난 대화; MCP 도구 opens its own window. An
-// address can name a window to open with the page (computer/collect, computer/past,
-// computer/tools), which is how links and the setup skill open them. Letting the
-// owner's other computers in is 서버 → 공유 (share.js).
+// lib/past.js), and its 적용 ends with first setup's 점검 (lib/check.js) and what is
+// left to do in the agents it changed; 지난 대화 shows where the past conversations
+// came from and how far they went in, and its 더 가져오기 opens the same steps at 지난
+// 대화; MCP 도구 opens its own window. An address can name a window to open with the
+// page (computer/collect, computer/past, computer/tools), which is how links and the
+// setup skill open them. Letting the owner's other computers in is 서버 → 공유
+// (share.js).
 import { get, post } from "../lib/api.js";
 import { h, clear } from "../lib/dom.js";
 import { number } from "../lib/format.js";
-import { block, kv, modal, stepper } from "../lib/kit.js";
-import { checkBox, checkHere, checkingText, failures } from "../lib/check.js";
+import { block, kv, modal, stepper, todoList } from "../lib/kit.js";
+import { checkBox, checkHere, checkingText, failures, missingPlugins } from "../lib/check.js";
 import {
   AGENTS,
+  agentTodo,
   agentsStep,
   applySetup,
   applyTargets,
+  changedAgents,
   collectDraft,
   detectAgents,
   draftServer,
@@ -76,7 +79,7 @@ function collectBlock(openCollect) {
 /**
  * 대화 수집 → 수정: first setup's steps for this computer, any step one press away;
  * 더 가져오기 opens it at 지난 대화 (`at`). 적용 ends with 점검, whose 대화 수집 수정
- * is this window's first step again.
+ * is this window's first step again, and the to-dos of the agents it changed.
  */
 function openCollectWindow(onApplied, { at: startAt = 0 } = {}) {
   const context = app.context || {};
@@ -110,6 +113,8 @@ function openCollectWindow(onApplied, { at: startAt = 0 } = {}) {
       const issue = step.check();
       if (issue) { goTo(index); clear(problem, notice("warn", issue)); return; }
     }
+    // The agents collected from before this 적용: one chosen now has its to-do at the end.
+    const before = app.context?.configured ? { ...app.context.agents } : {};
     const outcome = await applySetup(setupBody(draft, context));
     if (!outcome.ok) { clear(problem, planProblems(outcome.result) || notice("bad", "적용하지 못했습니다.")); return; }
     // This setup is the one that counts now: a first setup kept half way would undo it.
@@ -144,25 +149,33 @@ function openCollectWindow(onApplied, { at: startAt = 0 } = {}) {
     await loadContext();
     refreshStatus();
     onApplied?.();
-    showCheck(outcome.result);
+    showCheck(outcome.result, before);
   });
 
-  /** What 적용 set up, checked as first setup's end checks it; `done` is what setup apply said. */
-  function showCheck(done) {
+  /**
+   * What 적용 set up, checked as first setup's end checks it, and what is left to do
+   * in the agents this 적용 changed, counted in the heading with what 점검 found;
+   * `done` is what setup apply said, `before` the agents collected from before.
+   */
+  function showCheck(done, before) {
     const verify = draft.server === "here" && Boolean(context.localServer);
     const expected = draft.server === "remote" ? draft.remoteUrl.trim() : context.localServer?.apiUrl || null;
+    const agents = changedAgents(done, draft.agents, before);
     const heading = h("h3", {}, "점검하는 중입니다");
+    const left = h("div", {});
     const check = checkBox({
       check: () => checkHere({ verify, expected, done }),
       sub: checkingText({ verify }),
       onCollect: () => goTo(0),
       onChecked: (rows) => {
-        const failed = failures(rows);
-        heading.textContent = failed ? `할 일 ${failed}개` : "다 됐습니다";
+        const items = agentTodo(done, agents, { missing: missingPlugins(rows) });
+        const count = items.length + failures(rows);
+        heading.textContent = count ? `할 일 ${count}개` : "다 됐습니다";
+        clear(left, items.length ? [h("div", { class: "label" }, "에이전트에서 할 일"), todoList(items)] : null);
       },
     });
     win.steps(stepper(STEPS, "done"));
-    win.body(heading, check.root);
+    win.body(heading, check.root, left);
     win.foot(null, button("닫기", { kind: "primary", onClick: () => win.close("ok") }));
   }
 
