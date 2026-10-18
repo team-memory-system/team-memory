@@ -12,6 +12,7 @@ import { joinedTeam, watchTeamLogin } from "./lib/team.js";
 import { landing, resumeAtBoot } from "./lib/landing.js";
 import { renderMachines } from "./lib/machines.js";
 import { TABS } from "./lib/tabs.js";
+import { reopenUpdate, watchUpdates } from "./lib/update.js";
 import { icon } from "./lib/icons.js";
 import { app, go, keptSetup, loadContext, me, onChange, refreshStatus, workspace } from "./lib/state.js";
 import { button, errorNotice, pageHead, toast } from "./lib/ui.js";
@@ -86,6 +87,9 @@ function glyph(name) {
 
 let current = { name: "", gate: null, frame: null, cleanup: null, update: null };
 let setupWindow = null;
+// The update's window opened as the app started, while it is open: `later` is the
+// setup window asked for meanwhile.
+let updateWindow = null;
 
 /** The hash as a path and its query: #/start?team=team.example.com is a team link. */
 function hashParts() {
@@ -256,6 +260,11 @@ function showSetup({ firstRun, team = "" }) {
     if (team) setupWindow.follow?.(team);
     return;
   }
+  // First setup opens at once; any other waits for the update's window to close.
+  if (updateWindow && !firstRun) {
+    updateWindow.later = { firstRun, team };
+    return;
+  }
   setupWindow = openSetup({
     firstRun,
     team,
@@ -421,6 +430,8 @@ async function boot() {
     return;
   }
   mountBell($(".main"));
+  // A new version, and an update or a 고치기 going or stopped, go to the bell.
+  watchUpdates();
   // Which of the owner's computers this window shows; not waited for.
   renderMachines();
   // The team's requests, and a team login that ended, go to the bell once this
@@ -439,6 +450,19 @@ async function boot() {
   // a moment rather than open a screen and then lock or hide it.
   await Promise.race([firstStatus, new Promise((resolve) => setTimeout(resolve, 3000))]);
   await probeAudit();
+  // An update going, or ended since this browser showed it, opens its window first
+  // (lib/update.js), over the screen shown next; a setup window asked for meanwhile
+  // opens once it closes (showSetup).
+  if (setupDone()) {
+    const waiting = { later: null };
+    const opened = await reopenUpdate({
+      onClose: () => {
+        updateWindow = null;
+        if (waiting.later) showSetup(waiting.later);
+      },
+    }).catch(() => false);
+    if (opened) updateWindow = waiting;
+  }
   await show();
   // A setup kept half way, on a computer set up since (its server installed): its
   // window again, unless the address opened 기억 설정's own window.

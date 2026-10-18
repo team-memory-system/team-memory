@@ -5,7 +5,8 @@
 // every 10 seconds; under it, how far the past conversations have gone in (지난
 // 대화 쌓기, lib/past.js) and how far Honcho has got putting them in order. Then
 // the parts around it, asked every minute: the gateway, backup, and sharing. A team
-// login that ended says so on top, with 다시 로그인.
+// login that ended says so on top, with 다시 로그인, and a new version where to press
+// 업데이트 (lib/update.js, which the bell reads again every minute).
 import { get, honcho, post } from "../lib/api.js";
 import { h, clear } from "../lib/dom.js";
 import { servingState } from "../lib/accounts.js";
@@ -17,6 +18,7 @@ import { app, onChange, savePrefs, workspace } from "../lib/state.js";
 import { loadRequests } from "../lib/requests.js";
 import { loginNotice } from "../lib/team.js";
 import { pageHead, spinner, toast } from "../lib/ui.js";
+import { loadUpdate, onUpdate, updateNotice } from "../lib/update.js";
 
 const FAST = 10_000;
 const SLOW = 60_000;
@@ -262,6 +264,7 @@ export default {
       ].filter(Boolean);
       clear(body,
         ended?.node || null,
+        updateNotice(),
         shown ? h("section", { "aria-label": "동기화 현황" },
           h("h2", { class: "sec" }, "동기화 현황"),
           h("div", { class: "card" }, h("table", { class: "sync" },
@@ -286,10 +289,12 @@ export default {
     }
 
     const stop = onChange(() => draw());
+    const unwatch = onUpdate(() => draw());
     const fast = setInterval(loadFlow, FAST);
     const slow = setInterval(loadAround, SLOW);
     draw();
+    loadUpdate();
     await Promise.all([loadFlow(), loadAround()]);
-    return { cleanup: () => { stop(); clearInterval(fast); clearInterval(slow); } };
+    return { cleanup: () => { stop(); unwatch(); clearInterval(fast); clearInterval(slow); } };
   },
 };
