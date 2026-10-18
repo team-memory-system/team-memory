@@ -10,13 +10,16 @@
 // from which agents, from where the past ones come and which folders, are
 // lib/collect.js's and lib/past.js's steps, the same ones 기억 설정 → 대화 수집 →
 // 수정 opens. The past conversations go in before any new one, in the order they
-// were started, and keep going in after the window closes.
+// were started, and keep going in after the window closes. A computer is in one
+// team only: on one in another team, the login to a link's or a typed address's
+// team first shows both teams, and 옮기고 로그인 leaves the one it is in before
+// the login. On a computer set up already, a link's 취소 closes the window.
 import { gateway, get, post } from "../lib/api.js";
 import { backendAccounts } from "../lib/accounts.js";
 import { defaultRoles, roleRows, ROLES } from "../lib/chat-roles.js";
 import { h, clear, copyText } from "../lib/dom.js";
 import { number } from "../lib/format.js";
-import { counter, field, modal, opt, opts, progressList, stepper, todoList } from "../lib/kit.js";
+import { counter, field, kv, modal, opt, opts, progressList, stepper, todoList } from "../lib/kit.js";
 import {
   AGENTS,
   agentTodo,
@@ -34,7 +37,21 @@ import {
 } from "../lib/collect.js";
 import { dayText, HELD, holdNewTurns, pastStep, pastToPut, periodText, planPast, releaseNewTurns, runLine, startPast } from "../lib/past.js";
 import { gatewayLogin } from "../lib/login.js";
-import { GOOGLE_ADD_ACCOUNT, loginTab, personName, registerWith, sameAccountAgain, sendRequest, switchAccount, teamDirectory, teamHostOf, teamLogin, teamMe } from "../lib/team.js";
+import {
+  GOOGLE_ADD_ACCOUNT,
+  joinCase,
+  leaveTeam,
+  loginTab,
+  personName,
+  registerWith,
+  sameAccountAgain,
+  sendRequest,
+  switchAccount,
+  teamDirectory,
+  teamHostOf,
+  teamLogin,
+  teamMe,
+} from "../lib/team.js";
 import { app, loadContext, refreshStatus, savePrefs } from "../lib/state.js";
 import { button, notice, spinner, tag } from "../lib/ui.js";
 
@@ -82,12 +99,15 @@ function joined(names) {
  */
 export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
   // The team link this window follows; a later one replaces it (win.follow).
-  let link = team;
+  let link = teamHostOf(team) || team;
+  // The team this computer is in, until 옮기고 로그인 leaves it.
+  let ownTeam = app.context?.team || null;
   const state = {
     path: link ? "link" : null,
     // zones and idps: what Cloudflare offered when the token sees more than one.
     team: { hub: link, me: null, directory: null, name: "", apiToken: "", email: "", zone: "", hubLabel: "", idp: "", zones: [], idps: [] },
-    login: { phase: "idle", error: "", tab: null, reopen: null, logouts: null, switchFrom: null, sameAccount: false },
+    // leave: 옮기고 로그인 was pressed, so the login starts by leaving ownTeam.
+    login: { phase: "idle", error: "", tab: null, reopen: null, logouts: null, switchFrom: null, sameAccount: false, leave: false },
     draft: collectDraft(app.context),
     models: { chosen: new Set(["codex"]), counts: { codex: 1, claude: 1 } },
     // 추출·드림·묻기, filled on the 모델 step; `picked` holds what the person changed
@@ -112,6 +132,8 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
   });
 
   const inTeam = () => ["join", "link", "make"].includes(state.path);
+  /** The team this computer leaves first, when the login is to another team's address. */
+  const teamToLeave = () => (["join", "link"].includes(state.path) && joinCase(ownTeam, state.team.hub) === "move" ? ownTeam : null);
   const me = () => state.team.me;
   const myServer = () => me()?.servers?.[0] || null;
   /** The server is the one this computer runs and already shares through the team. */
@@ -255,6 +277,23 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
         check: () => login.error,
       };
     }
+    const from = login.phase === "idle" && !login.tab ? teamToLeave() : null;
+    if (from) {
+      // Asked before the login starts: once it does, the team this computer is in is left.
+      const named = (name, hub) => [name ? [h("b", {}, name), " "] : null, h("span", { class: name ? "mono muted" : "mono" }, hub)];
+      return {
+        body: h("div", {}, h("h3", {}, "지금 팀에서 빠지고 새 팀으로 옮깁니다"),
+          h("div", { class: "sheet-kv" }, kv("지금 팀", named(from.name, from.hub)), kv("새 팀", named(state.team.name, state.team.hub))),
+          h("div", { class: "hint" }, "한 컴퓨터는 팀 하나에만 들어갑니다.")),
+        foot: [button("옮기고 로그인", { kind: "primary", onClick: () => {
+          // Opened in this click, so the browser lets it: the login goes there once this computer has left.
+          login.tab = loginTab("Google 로그인으로 넘어가는 중입니다…");
+          login.leave = true;
+          drawStep();
+        } })],
+        check: () => "옮기고 로그인을 누르세요.",
+      };
+    }
     if (login.phase === "idle" && !login.tab) {
       // A team link opens this step with no click behind it, and the browser blocks a
       // tab opened without one; the login starts in this button's click instead.
@@ -280,13 +319,21 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     };
   }
 
-  /** The hub login, then who the hub says this is. */
+  /** The hub login, then who the hub says this is; after 옮기고 로그인, out of the team this computer is in first. */
   async function startLogin() {
     const { login } = state;
     login.phase = "waiting";
     const controller = new AbortController();
     login.abort = () => controller.abort();
     try {
+      if (login.leave) {
+        await leaveTeam();
+        login.leave = false;
+        ownTeam = null;
+        // The screens under the window no longer show the team it left.
+        loadContext().catch(() => {});
+        if (controller.signal.aborted) throw new DOMException("cancelled", "AbortError");
+      }
       const flow = teamLogin({ kind: "hub", hub: state.team.hub, tab: login.tab, signal: controller.signal });
       login.reopen = flow.reopen;
       login.logouts = flow.logouts;
@@ -551,6 +598,8 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     const back = button(keys[at] === "login" ? "취소" : "이전", { kind: "quiet", onClick: () => {
       state.login.abort?.();
       if (keys[at] === "login") state.login.phase = "idle";
+      // A link on a computer set up already came for that team alone: no start cards behind it.
+      if (state.path === "link" && keys[at] === "login" && !firstRun) { win.close(); return; }
       if (at === 0 || (state.path === "link" && keys[at] === "login")) { state.path = link ? "link" : null; drawStart(); return; }
       at -= 1;
       drawStep();
@@ -569,8 +618,9 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
       if (problemText) { say(notice("warn", problemText)); return; }
       keys = stepKeys();
       if (last()) { apply(); return; }
-      // The login opens a tab: opened now, in the click, so the browser lets it.
-      if (keys[at + 1] === "login") state.login.tab = loginTab(step.run ? "팀을 만드는 중입니다. 다 되면 Google 로그인으로 넘어갑니다…" : "Google 로그인으로 넘어가는 중입니다…");
+      // The login opens a tab: opened now, in the click, so the browser lets it. Another
+      // team's login first asks to leave this computer's team, and 옮기고 로그인 opens it.
+      if (keys[at + 1] === "login" && !teamToLeave()) state.login.tab = loginTab(step.run ? "팀을 만드는 중입니다. 다 되면 Google 로그인으로 넘어갑니다…" : "Google 로그인으로 넘어가는 중입니다…");
       if (step.run) {
         const target = event.currentTarget;
         target.disabled = true;
@@ -907,13 +957,15 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
    * starts over from it, at the login, unless setup is already applying.
    */
   win.follow = (team) => {
+    team = teamHostOf(team) || team;
     if (!team || state.tasks.length || (state.path === "link" && state.team.hub === team)) return;
     state.login.abort?.();
     state.login.tab?.close();
-    Object.assign(state.login, { phase: "idle", error: "", tab: null, reopen: null, abort: null });
+    Object.assign(state.login, { phase: "idle", error: "", tab: null, reopen: null, abort: null, leave: false });
     link = team;
     state.path = "link";
-    state.team.hub = team;
+    // Who the hub said this is belongs to the team before: the new one's login says it again.
+    Object.assign(state.team, { hub: team, name: "", me: null, directory: null });
     at = 0;
     drawStep();
   };

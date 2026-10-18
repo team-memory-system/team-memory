@@ -1,12 +1,14 @@
 // The app shell: the menu, the bell, the theme, the quick-jump palette, and handing
 // the page to one screen at a time. Until this computer is set up, the page stays
-// empty under the first setup window (views/setup.js); what this computer runs, and
-// how each part stands, is the 대시보드 screen.
+// empty under the first setup window (views/setup.js); where an address lands, before
+// and after, is lib/landing.js's. What this computer runs, and how each part stands,
+// is the 대시보드 screen.
 import { get } from "./lib/api.js";
 import { h, clear, svg, $ } from "./lib/dom.js";
 import { mountBell, refreshBell } from "./lib/bell.js";
 import { requestsLoginRefused, watchRequests } from "./lib/requests.js";
 import { joinedTeam, watchTeamLogin } from "./lib/team.js";
+import { landing } from "./lib/landing.js";
 import { renderMachines } from "./lib/machines.js";
 import { TABS } from "./lib/tabs.js";
 import { icon } from "./lib/icons.js";
@@ -91,9 +93,8 @@ function hashParts() {
 }
 
 function route() {
-  const { path, query } = hashParts();
-  const [name = "", ...rest] = path.split("/");
-  return { name: VIEWS[name] || name === "start" ? name : "", params: rest, query };
+  const [name = "", ...rest] = hashParts().path.split("/");
+  return { name: VIEWS[name] || name === "start" ? name : "", params: rest };
 }
 
 function movedTo() {
@@ -276,22 +277,26 @@ async function show({ force = false } = {}) {
     return show();
   }
   const page = $("#page");
-  if (!setupDone()) {
+  const { path, query } = hashParts();
+  const lands = landing(path, { setUp: setupDone(), link: query.get("team") || "", team: app.context?.team });
+  if (lands.setup?.firstRun) {
     // Nothing opens before setup: the page stays empty under the setup window.
     renderNav();
     try { current.cleanup?.(); } catch {}
     current = { name: "", gate: null, frame: null, cleanup: null, update: null };
     clear(page);
-    showSetup({ firstRun: true, team: route().query.get("team") || "" });
+    showSetup(lands.setup);
     return;
   }
-  let { name, params, query } = route();
-  if (name === "start") {
+  if (lands.setup) {
+    // First setup's window again, over the screen on view, which the address goes back to.
     history.replaceState(null, "", `#/${current.name || "dashboard"}`);
-    showSetup({ firstRun: false, team: query.get("team") || "" });
+    showSetup(lands.setup);
     if (current.name) return;
-    ({ name, params } = route());
+  } else if (lands.screen !== path) {
+    history.replaceState(null, "", `#/${lands.screen}`);
   }
+  const { name, params } = route();
   if (!name || !visible(name)) {
     history.replaceState(null, "", "#/dashboard");
     return show();

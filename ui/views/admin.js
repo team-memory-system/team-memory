@@ -1,8 +1,10 @@
 // 관리자: the team, for its admins only. Who is in it (the team hub's roster, which
-// is also the email list every server's Cloudflare Access checks), the 팀 주소 to
-// send someone new, and, on the computer that made the team, the Cloudflare API
-// token it runs on. Adding someone takes their Google email and nothing else: they
-// log in at the team's address, and make a server of their own if they want one.
+// is also the email list every server's Cloudflare Access checks), the 팀 주소, whose
+// 복사 gives the invite line to send someone new (the plugin's repository and the
+// team's address, for their Claude Code or Codex), and, on the computer that made
+// the team, the Cloudflare API token it runs on. Adding someone takes their Google
+// email and nothing else: the invite line installs the app and opens the team's
+// login, and they make a server of their own if they want one.
 // An admin makes a teammate an admin too, or takes it away from another admin; no
 // one takes it from themselves, so the team always keeps one. An admin also names
 // each member (이름 바꾸기): the name the team's screens and every teammate's agents
@@ -15,7 +17,7 @@ import { post } from "../lib/api.js";
 import { h, clear, copyText } from "../lib/dom.js";
 import { fullDate, josa, number } from "../lib/format.js";
 import { block, confirmWindow, field, kv, list, listItem, modal } from "../lib/kit.js";
-import { personName, teamCall, teamErrorNotice } from "../lib/team.js";
+import { inviteLine, personName, teamCall, teamErrorNotice } from "../lib/team.js";
 import { app, loadContext } from "../lib/state.js";
 import { button, busy, notice, pageHead, spinner, tag, toast } from "../lib/ui.js";
 
@@ -107,7 +109,7 @@ function openAdd(onAdded) {
       await teamCall("/api/team/admin/add", { email: value });
       win.close("ok");
       onAdded(value);
-      toast(`${value}를 더했습니다. 위의 팀 주소를 보내 주세요.`, "ok");
+      toast(`${value}를 더했습니다. 팀 주소 줄의 복사를 눌러 초대 문구를 보내세요.`, "ok");
     }) }),
   ]);
   win.open();
@@ -210,8 +212,8 @@ export default {
       clear(body,
         block({ title: "팀" },
           kv("팀 이름", roster.team?.name || team.name || "-"),
-          kv("팀 주소", [h("span", { class: "mono" }, address || "-"), h("div", { class: "s" }, "새 팀원에게 이 주소를 보내세요.")],
-            button("복사", { kind: "small", onClick: async () => { await copyText(address); toast("팀 주소를 복사했습니다"); } })),
+          kv("팀 주소", [h("span", { class: "mono" }, address || "-"), h("div", { class: "s" }, "복사를 눌러 초대 문구를 새 팀원에게 보내세요. 팀원은 그 문구를 Claude Code나 Codex에 붙여 넣습니다.")],
+            team.hub ? button("복사", { kind: "small", onClick: async () => { await copyText(inviteLine(team.hub)); toast("초대 문구를 복사했습니다"); } }) : null),
           jevRow(jev, draw)),
         list({
           title: `팀원 ${number(people.length)}명`,

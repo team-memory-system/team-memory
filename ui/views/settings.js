@@ -356,6 +356,16 @@ function pastBlock(openMore) {
 
 // ── The page ─────────────────────────────────────────────
 
+/**
+ * The window an address opens with the page: 대화 수집's 수정 on any computer that
+ * is set up (computer/collect, what `/team-memory setup` opens), even one that does
+ * not collect yet; 지난 대화 and MCP 도구 once it collects.
+ */
+export function windowOf(name, configured) {
+  if (name === "collect") return name;
+  return configured && (name === "past" || name === "tools") ? name : null;
+}
+
 export default {
   title: "기억 설정",
   async mount(frame, params) {
@@ -376,9 +386,9 @@ export default {
         configured ? await toolsBlock(windows.tools) : null);
     }
     await draw();
-    const open = windows[params[0]];
+    const open = windows[windowOf(params[0], app.context?.configured)];
     if (params[0]) history.replaceState(null, "", "#/computer");
-    if (open && (params[0] === "collect" || app.context?.configured)) open();
+    open?.();
     return null;
   },
 };

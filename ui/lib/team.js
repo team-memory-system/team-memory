@@ -1,5 +1,6 @@
 // The team as this app sees it: the Google login, the hub's people and servers,
-// and requests between members.
+// and requests between members. Someone new comes in by the invite line an admin
+// sends, and a computer is in one team only: a login to another leaves it first.
 //
 // Logging in opens Google in the browser through the team's Cloudflare Access; the
 // browser comes back to this app (team-app.mjs) and the page only waits for the
@@ -22,6 +23,8 @@ const POLL_MS = 1500;
 const LOGOUT_PAUSE_MS = 2500;
 /** Where a browser adds another Google account: with only one, Google picks it without asking. */
 export const GOOGLE_ADD_ACCOUNT = "https://accounts.google.com/AddSession";
+/** Where the plugin comes from (scripts/host-plugins.mjs DEFAULT_SOURCE), for the invite line. */
+export const REPOSITORY = "https://github.com/team-memory-system/team-memory";
 
 /** A team address as typed: a host, or an https address. The server checks it again. */
 export function teamHostOf(value) {
@@ -35,6 +38,30 @@ export function teamHostOf(value) {
   } catch {
     return "";
   }
+}
+
+/**
+ * The one line an admin sends someone new (관리자 → 팀 주소 → 복사). Pasted into
+ * Claude Code or Codex, the agent installs the plugin from the repository and opens
+ * this team's link (#/start?team=<host>).
+ */
+export function inviteLine(host) {
+  return `팀 메모리 설치해 줘. ${REPOSITORY} 팀 주소 ${host}`;
+}
+
+/**
+ * What a login to the team at `host` is for a computer in `team` (the context's
+ * team): "in" when it is in that team already, a login that ended included; "move"
+ * when it is in another, which it leaves first, since a computer is in one team
+ * only; "join" when it is in none, or is that team's without a login. An address
+ * that is no team's is "join" too: its login says what is wrong with it.
+ */
+export function joinCase(team, host) {
+  const target = teamHostOf(host);
+  const hub = String(team?.hub || "").toLowerCase();
+  if (!target || !hub) return "join";
+  if (hub !== target) return "move";
+  return team.signedIn || team.loginEnded ? "in" : "join";
 }
 
 /**
@@ -140,6 +167,16 @@ export async function switchAccount(tab, logouts, { pause = LOGOUT_PAUSE_MS } = 
     tab.location.href = address;
     await new Promise((resolve) => setTimeout(resolve, pause));
   }
+}
+
+/**
+ * 옮기고 로그인 (joinCase "move"): this computer leaves the team it is in, its
+ * logins and device keys there with it, before the login to another. Still in the
+ * old team, the app would drop the new team's login with the old ones when it asks
+ * the new hub who this is.
+ */
+export function leaveTeam() {
+  return teamCall("/api/team/logout", {});
 }
 
 /**

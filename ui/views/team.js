@@ -119,7 +119,8 @@ export default {
           ? notice("warn", "열린 기억을 읽으려면 팀 서버 로그인이 한 번 필요합니다. ", serversLoginButton(opened[0].host, { onDone: draw }))
           : null,
         list({ title: "팀원 기억", empty: "아직 다른 팀원이 없습니다." }, mates),
-        opened.length ? h("p", { class: "hint" }, `Claude Code나 Codex에게 "${opened[0].name}에게 OCR 엔진 뭐로 바꿨는지 찾아봐"처럼 팀원 이름을 넣어 말하면, 열린 대화에서 찾아 답합니다.`) : null,
+        // A session reads the team-memory MCP tools as it starts: one open from before this computer joined has none.
+        opened.length ? h("p", { class: "hint" }, `Claude Code나 Codex에게 "${opened[0].name}에게 OCR 엔진 뭐로 바꿨는지 찾아봐"처럼 팀원 이름을 넣어 말하면, 열린 대화에서 찾아 답합니다.${signedIn ? " 전부터 열려 있던 창은 새 세션을 여세요." : ""}`) : null,
         granted ? list({
           title: "내 기억을 여는 팀원",
           empty: "아직 없습니다.",
