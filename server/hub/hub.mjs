@@ -80,13 +80,27 @@ const NICKNAME_LENGTH = 32;
 // A Jev API key: one token of printable ASCII, no spaces.
 const JEV_KEY = /^[\x21-\x7e]{8,1024}$/;
 const GUARD_TOKEN = /^bearer +([0-9a-f]{64})$/i;
+// The team's one Jev key takes JEV_CALLS_PER_MINUTE calls a minute from every server
+// together, so the hub starts at most JEV_CALLS_PER_WINDOW of them in any second: a
+// call that comes early waits its turn, at most JEV_QUEUE_MAX_MS (a hundred callers
+// ahead of it; a server's bridge gives up at 10 s, and a call to Jev takes half a
+// second), and past that the server is told when to try again, rather than have Jev
+// refuse the whole team for the rest of the minute. A teammate's question costs one
+// call for it and one for each message of the answer (ten or so, up to fifty), so one
+// agent's turn of a few searches and reads is 100 to 300 calls, and a team of six to
+// ten reading one owner at once needs the whole budget.
+const JEV_CALLS_PER_MINUTE = 1_200;
+const JEV_WINDOW_MS = 1_000;
+const JEV_CALLS_PER_WINDOW = JEV_CALLS_PER_MINUTE / 60;
+const JEV_QUEUE_MAX_MS = 5_000;
+// When Jev itself answers 429, every turn is held back for its Retry-After (a second
+// when it names none), and the call is asked once more when that is short.
+const JEV_BUSY_HOLD_DEFAULT_MS = 1_000;
+const JEV_BUSY_HOLD_MAX_MS = 60_000;
+const JEV_BUSY_RETRY_MAX_MS = 3_000;
 // A guard token is a server's, so a busy or broken server cannot spend the team's
 // Jev budget alone. Counted in memory: a restarted object starts again from zero.
-// A teammate's question costs one call for it and one for each message of the
-// answer (ten or so, up to fifty), so one agent's turn of a few searches and reads
-// is 100 to 300 calls, and a team of six to ten reading one owner at once needs
-// the whole budget of the team's one Jev key, which takes 1,200 calls a minute.
-const GUARD_CALLS_PER_MINUTE = 1_200;
+const GUARD_CALLS_PER_MINUTE = JEV_CALLS_PER_MINUTE;
 const GUARD_WINDOW_MS = 60_000;
 const GUARD_TEXT_LENGTH = 16_000;
 const GUARD_FIELD_LENGTH = 320;
@@ -142,13 +156,20 @@ const GUARD_CHECKS = {
 
 /** An answer other than success: its status, a code and a sentence in English. */
 class HubError extends Error {
-  constructor(status, code, detail, extra = {}) {
+  constructor(status, code, detail, extra = {}, headers = {}) {
     super(detail);
     this.name = "HubError";
     this.status = status;
     this.code = code;
     this.extra = extra;
+    this.headers = headers;
   }
+}
+
+/** 429 rate_limited, saying when to try again in `retry_after_s` and a Retry-After header. */
+function tooMany(detail, waitMs) {
+  const seconds = Math.max(1, Math.ceil(waitMs / 1000));
+  return new HubError(429, "rate_limited", `${detail}; try again in ${seconds} s`, { retry_after_s: seconds }, { "retry-after": String(seconds) });
 }
 
 /** A URL the tests set, taken only when it points at this machine. */
@@ -323,10 +344,10 @@ function crossSite(request, hubHost) {
 
 // ------------------------------------------------------------------ answers
 
-function json(status, body) {
+function json(status, body, headers = {}) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers },
   });
 }
 
@@ -345,7 +366,7 @@ function html(status, body) {
 
 /** The answer for an error: its own for a HubError, 502 for Cloudflare, 500 for the rest. */
 function failure(error, env = {}) {
-  if (error instanceof HubError) return json(error.status, { error: error.code, detail: error.message, ...error.extra });
+  if (error instanceof HubError) return json(error.status, { error: error.code, detail: error.message, ...error.extra }, error.headers);
   if (error instanceof CloudflareApiError) {
     // The client already cuts its token out of every message; this is a second guard.
     const token = String(env.CF_API_TOKEN || "").trim();
@@ -540,15 +561,28 @@ function guardInput(body) {
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Jev's Retry-After as ms: seconds or an HTTP date, a second without one, a minute at most. */
+function retryAfterMs(header) {
+  const text = String(header || "").trim();
+  let ms = NaN;
+  if (/^\d+$/.test(text)) ms = Number(text) * 1000;
+  else if (text) ms = Date.parse(text) - Date.now();
+  if (!Number.isFinite(ms)) ms = JEV_BUSY_HOLD_DEFAULT_MS;
+  return Math.min(Math.max(0, ms), JEV_BUSY_HOLD_MAX_MS);
+}
+
 /**
  * Jev's score for one question or answer (`checked`): how surely it reaches for, or
  * gives away, the owner's private life, from 0 to 1. A 5xx or a dropped connection
  * is often Jev's moment rather than the text's, so it is asked once more; a slow
- * answer is not, since a second wait would double the teammate's. Any failure is a
- * 502 jev_failed whose detail says what went wrong in the hub's own words, never
- * Jev's body, and never the key.
+ * answer is not, since a second wait would double the teammate's. A 429 means the
+ * team's key is over its calls, from this hub or elsewhere: `busy` hears for how
+ * long, so every turn waits, and the call is asked once more after a short wait, or
+ * refused with when to try again after a long one. Any other failure is a 502
+ * jev_failed whose detail says what went wrong in the hub's own words, never Jev's
+ * body, and never the key.
  */
-async function jevScore(env, key, state, checked) {
+async function jevScore(env, key, state, checked, { busy = () => {} } = {}) {
   const { name, question } = GUARD_CHECKS[checked];
   const failed = (detail) => new HubError(502, "jev_failed", detail.split(key).join("[redacted]"));
   const base = (loopbackUrl(env.JEV_API_BASE) || JEV_API_BASE).replace(/\/+$/, "");
@@ -570,6 +604,16 @@ async function jevScore(env, key, state, checked) {
       if (timedOut(error)) throw failed(slow);
       if (last) throw failed("Jev could not be reached");
       await pause(JEV_RETRY_MS);
+      continue;
+    }
+    if (response.status === 429) {
+      const hold = retryAfterMs(response.headers.get("retry-after"));
+      busy(hold);
+      await response.body?.cancel().catch(() => {});
+      if (last || hold > JEV_BUSY_RETRY_MAX_MS) {
+        throw tooMany(`The team's Jev key is over its ${JEV_CALLS_PER_MINUTE} calls a minute, Jev says`, hold);
+      }
+      await pause(hold);
       continue;
     }
     if (response.status < 500 || last) break;
@@ -736,6 +780,10 @@ export class TeamHub {
     this.seeded = false;
     // Each server's recent calls to /guard (times in ms), by host.
     this.guardCalls = new Map();
+    // When each call to Jev started or will start (times in ms, ascending): the pace.
+    this.jevStarts = [];
+    // Until when Jev's own 429 holds every turn.
+    this.jevHeldUntil = 0;
   }
 
   async fetch(request) {
@@ -1323,7 +1371,8 @@ export class TeamHub {
     const { state, checked } = guardInput(await readJson(request));
     const record = await this.storage.get("jev");
     if (!record?.key) return json(200, { judged: false, checked, allowed: true, score: null, reason: "no_key" });
-    const score = await jevScore(this.env, record.key, state, checked);
+    await this.jevTurn();
+    const score = await jevScore(this.env, record.key, state, checked, { busy: (ms) => this.jevBusy(ms) });
     return json(200, { judged: true, checked, allowed: score < JEV_THRESHOLD, score, threshold: JEV_THRESHOLD });
   }
 
@@ -1345,10 +1394,35 @@ export class TeamHub {
     const recent = (this.guardCalls.get(host) || []).filter((at) => now - at < GUARD_WINDOW_MS);
     if (recent.length >= GUARD_CALLS_PER_MINUTE) {
       this.guardCalls.set(host, recent);
-      throw new HubError(429, "rate_limited", `A server asks /guard at most ${GUARD_CALLS_PER_MINUTE} times a minute; try again shortly`);
+      throw tooMany(`A server asks /guard at most ${GUARD_CALLS_PER_MINUTE} times a minute`, recent[0] + GUARD_WINDOW_MS - now);
     }
     recent.push(now);
     this.guardCalls.set(host, recent);
+  }
+
+  /**
+   * The team's next turn with Jev, waited for: at most JEV_CALLS_PER_WINDOW calls
+   * start in any second, from all the servers together, so the one key never sees
+   * more than JEV_CALLS_PER_MINUTE a minute, and none while Jev's own 429 holds. A
+   * turn more than JEV_QUEUE_MAX_MS away is refused with when to try again, and is
+   * not taken.
+   */
+  async jevTurn() {
+    const now = Date.now();
+    const starts = this.jevStarts;
+    while (starts.length && starts[0] <= now - JEV_WINDOW_MS) starts.shift();
+    const paced = starts.length < JEV_CALLS_PER_WINDOW ? now : starts[starts.length - JEV_CALLS_PER_WINDOW] + JEV_WINDOW_MS;
+    const turn = Math.max(now, paced, this.jevHeldUntil);
+    if (turn - now > JEV_QUEUE_MAX_MS) {
+      throw tooMany(`The team's Jev key takes ${JEV_CALLS_PER_MINUTE} calls a minute and every turn is taken`, turn - now);
+    }
+    starts.push(turn);
+    if (turn > now) await pause(turn - now);
+  }
+
+  /** Jev answered 429: no turn starts for `ms`. */
+  jevBusy(ms) {
+    this.jevHeldUntil = Math.max(this.jevHeldUntil, Date.now() + ms);
   }
 }
 

@@ -1134,24 +1134,24 @@ const jevAnswer = (noul, name = "out_of_scope") => ({ model: "jev-1.13.0", answe
 /**
  * Jev, as a local server: every request it got (method, path, headers, raw body),
  * and the answer it gives, which a test changes. Answers queued in `next` go first,
- * one a request, each { status, body }. With hang it never answers; the next `drop`
- * requests it cuts off without an answer.
+ * one a request, each { status, body, headers? }. With hang it never answers; the
+ * next `drop` requests it cuts off without an answer. Each call seen says when (`at`).
  */
 async function startFakeJev(t) {
   const jev = { seen: [], status: 200, body: jevAnswer(0.02), headers: {}, hang: false, next: [], drop: 0 };
   const server = http.createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
-    jev.seen.push({ method: request.method, path: request.url, headers: request.headers, body: Buffer.concat(chunks).toString("utf8") });
+    jev.seen.push({ at: Date.now(), method: request.method, path: request.url, headers: request.headers, body: Buffer.concat(chunks).toString("utf8") });
     if (jev.hang) return;
     if (jev.drop > 0) {
       jev.drop -= 1;
       request.socket.destroy();
       return;
     }
-    const { status, body } = jev.next.shift() || jev;
+    const { status, body, headers = jev.headers } = jev.next.shift() || jev;
     const text = typeof body === "string" ? body : JSON.stringify(body);
-    response.writeHead(status, { "content-type": "application/json", ...jev.headers });
+    response.writeHead(status, { "content-type": "application/json", ...headers });
     response.end(text);
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -1555,7 +1555,8 @@ test("a server asks /guard at most 1,200 times in any minute; others are not hel
     if (index === 599) t.mock.timers.tick(30_000);
   }
   const limited = await f.ask({ query: "one more" });
-  assert.deepEqual([limited.status, limited.json.error], [429, "rate_limited"]);
+  assert.deepEqual([limited.status, limited.json.error, limited.json.retry_after_s, limited.headers.get("retry-after")], [429, "rate_limited", 30, "30"]);
+  assert.match(limited.json.detail, /try again in 30 s$/, "the first call leaves the window in 30 s");
   assert.equal((await f.ask({ query: "x" }, { token: carolToken })).status, 200, "the count is per server");
   // A new token is the same server.
   const renewed = (await issueGuard(f, "bob@example.com")).json.token;
@@ -1567,6 +1568,64 @@ test("a server asks /guard at most 1,200 times in any minute; others are not hel
   assert.equal((await f.ask({ query: "x" }, { token: renewed })).status, 429);
   t.mock.timers.tick(30_000);
   assert.equal((await f.ask({ query: "x" }, { token: renewed })).status, 200);
+});
+
+test("the hub starts at most 20 calls to Jev a second from every server together; the rest wait their turn", async (t) => {
+  const f = await guardFixture(t);
+  await f.as("carol@example.com").post("/api/servers", { workspace: WORKSPACE });
+  const carolToken = (await issueGuard(f, "carol@example.com")).json.token;
+  const began = Date.now();
+  const answers = await Promise.all(Array.from({ length: 25 }, (_, index) => f.ask({ query: `q${index}` }, index % 2 ? { token: carolToken } : {})));
+  assert.deepEqual(answers.map((answer) => answer.status), Array(25).fill(200));
+  const starts = f.jev.seen.map((call) => call.at);
+  assert.equal(starts.length, 25);
+  // The first twenty went at once; each of the next five a second after the one twenty before it.
+  assert.ok(starts[19] - began < 500, `the twentieth went at +${starts[19] - began} ms`);
+  for (let index = 20; index < 25; index += 1) {
+    assert.ok(starts[index] - starts[index - 20] >= 950, `call ${index + 1} went ${starts[index] - starts[index - 20]} ms after call ${index - 19}`);
+  }
+  assert.ok(Date.now() - began < 3_000, "and no longer than that");
+});
+
+test("Jev's 429 holds every turn for its Retry-After: asked once more when short, refused with when to try again when long", async (t) => {
+  const f = await guardFixture(t);
+  const question = { query: "지난 회의 요약", answer: "배포를 한 주 미루기로 했습니다." };
+  f.jev.body = jevAnswer(0.04, "sensitive_answer");
+
+  // A second: the hub waits it and asks again.
+  f.jev.next = [{ status: 429, body: { error: "rate limited" }, headers: { "retry-after": "1" } }];
+  let began = Date.now();
+  const retried = await f.ask(question);
+  assert.deepEqual([retried.status, retried.json.score], [200, 0.04]);
+  assert.equal(f.jev.seen.length, 2, "asked once more");
+  assert.ok(Date.now() - began >= 950, "after the second Jev asked for");
+  assert.equal(f.jev.seen[1].body, f.jev.seen[0].body, "the same request again");
+
+  // No Retry-After: a second too.
+  f.jev.next = [{ status: 429, body: {} }];
+  began = Date.now();
+  assert.equal((await f.ask(question)).json.score, 0.04);
+  assert.equal(f.jev.seen.length, 4);
+  assert.ok(Date.now() - began >= 950);
+
+  // Thirty seconds: the caller is told, and so is everyone until then; Jev is left alone.
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() + 1_000 });
+  f.jev.next = [{ status: 429, body: {}, headers: { "retry-after": "30" } }];
+  const refused = await f.ask(question);
+  assert.deepEqual([refused.status, refused.json.error, refused.json.retry_after_s, refused.headers.get("retry-after")], [429, "rate_limited", 30, "30"]);
+  assert.match(refused.json.detail, /Jev says; try again in 30 s$/);
+  assert.equal(f.jev.seen.length, 5, "not asked again");
+  const held = await f.ask(question);
+  assert.deepEqual([held.status, held.json.error, held.json.retry_after_s], [429, "rate_limited", 30]);
+  assert.match(held.json.detail, /every turn is taken; try again in 30 s$/);
+  assert.equal(f.jev.seen.length, 5, "Jev was not asked while held");
+  t.mock.timers.tick(24_000);
+  assert.equal((await f.ask(question)).json.retry_after_s, 6);
+  t.mock.timers.tick(6_000);
+  const after = await f.ask(question);
+  assert.deepEqual([after.status, after.json.score], [200, 0.04]);
+  assert.equal(f.jev.seen.length, 6);
+  assert.equal(kept(f).includes("지난 회의"), false);
 });
 
 test("when Jev fails, /guard answers 502 jev_failed, and never with the key", async (t) => {
@@ -1666,9 +1725,10 @@ test("a 5xx or a dropped connection from Jev is asked once more before /guard gi
   assert.deepEqual([dropped.status, dropped.json.detail], [502, "Jev could not be reached"]);
   assert.equal(f.jev.seen.length, 8);
 
-  // A refusal is not asked again: it would be refused again.
-  f.jev.next = [{ status: 429, body: {} }];
-  assert.equal((await f.ask(question)).json.detail, "Jev answered HTTP 429");
+  // A refusal is not asked again: it would be refused again. (A 429 is its own case,
+  // in the test of Jev's Retry-After.)
+  f.jev.next = [{ status: 403, body: {} }];
+  assert.equal((await f.ask(question)).json.detail, "Jev answered HTTP 403");
   assert.equal(f.jev.seen.length, 9);
 });
 
