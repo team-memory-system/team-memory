@@ -40,7 +40,10 @@ answer.
 1. **Collect.** An agent's Stop hook runs `scripts/main.mjs`, which reads that
    turn's transcript file and posts new messages to Honcho. There is no daemon:
    the hook is invoked by the agent, once per turn. Failed writes are queued in a
-   spool and retried on the next hook. Conversations from chosen folders can also
+   spool and retried on the next hook. An entry whose transcript file is gone (its
+   session folder deleted) leaves the spool instead, with a `TRANSCRIPT_GONE` line
+   in the gate log: it could never be sent, and while it waited every later hook
+   failed. Conversations from chosen folders can also
    go to a second server (`target ...`, `scripts/targets.mjs`); each such server
    has its own spool and dedupe state.
 2. **Install.** `scripts/cli.mjs` detects agents, previews changes, backs up what it

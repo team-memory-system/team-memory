@@ -288,6 +288,39 @@ test("a target that is down never holds up the primary, gets its copy on the nex
   assert.equal(primaryState.sessions["claude-down"].imported_hashes.length, 3);
 });
 
+test("a transcript deleted while it waits leaves both spools and fails no later turn", async (t) => {
+  const primary = await fakeHoncho();
+  const target = await fakeHoncho();
+  t.after(() => { primary.server.close(); target.server.close(); });
+  const install = await makeInstall(t, primary);
+  assert.equal((await addTarget(install, target)).body.ok, true);
+  const gone = path.join(install.home, ".claude", "projects", "scratch", "gone.jsonl");
+  await writeClaude(gone, { sessionId: "gone", cwd: install.team, turns: [["user", "probe"], ["assistant", "probe answer"]] });
+
+  primary.down = true;
+  target.down = true;
+  assert.equal((await hook("claude", gone, install.env)).status, 1, "neither server took the turn");
+  const primarySpool = path.join(install.dataDir, "spool", "claude", "pending");
+  const targetSpool = path.join(install.dataDir, "targets", "team", "spool", "claude", "pending");
+  assert.equal((await pendingFiles(primarySpool)).length, 1);
+  assert.equal((await pendingFiles(targetSpool)).length, 1);
+
+  // The session's folder goes before either server is back.
+  await fsp.rm(path.dirname(gone), { recursive: true });
+  primary.down = false;
+  target.down = false;
+  const next = path.join(install.home, ".claude", "projects", "team", "next.jsonl");
+  await writeClaude(next, { sessionId: "next", cwd: install.team, turns: [["user", "next question"], ["assistant", "next answer"]] });
+  assert.equal((await hook("claude", next, install.env)).status, 0);
+  assert.deepEqual(primary.sessionIds(), ["claude-next"]);
+  assert.deepEqual(target.sessionIds(), ["claude-next"], "the gone one does not hold up the target's next entry");
+  assert.equal((await pendingFiles(primarySpool)).length, 0);
+  assert.equal((await pendingFiles(targetSpool)).length, 0);
+  const log = await fsp.readFile(path.join(install.dataDir, "logs", "claude-gate.log"), "utf8");
+  assert.ok(log.includes(`TRANSCRIPT_GONE ${gone} dropped 1`));
+  assert.ok(log.includes(`TARGET_TRANSCRIPT_GONE team ${gone} dropped 1`));
+});
+
 test("a target's secrets are refused on the command line and never printed", async (t) => {
   const primary = await fakeHoncho();
   const target = await fakeHoncho();

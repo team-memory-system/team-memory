@@ -292,12 +292,42 @@ function groupByTranscript(entries) {
   return groups;
 }
 
+/**
+ * A transcript that is no longer there (its session folder deleted, a temporary
+ * folder cleaned up) can never be sent, and while its entries wait every drain
+ * fails, so the agent reports a failed hook on every turn after it: on the owner's
+ * Mac one such entry did so for five days (2026-10-09) and another for two
+ * (2026-10-17). Its entries leave the spool with a log line. Only a file that is
+ * gone counts; one that cannot be read now is tried again on the next drain.
+ */
+async function transcriptGone(transcriptPath) {
+  try {
+    await fsp.stat(transcriptPath);
+    return false;
+  } catch (error) {
+    return error?.code === "ENOENT" || error?.code === "ENOTDIR";
+  }
+}
+
+async function dropGone(group, dryRun, message) {
+  if (dryRun) return { ok: true, skipped: "transcript gone" };
+  for (const entry of group) {
+    if (entry.filePath) await fsp.unlink(entry.filePath).catch(() => {});
+  }
+  await logLine(`${message} dropped ${group.length}`).catch(() => {});
+  return { ok: true, skipped: "transcript gone", dropped: group.length };
+}
+
 async function drainPending(dryRun, extraEntries = []) {
   const entries = [...(await readPendingEntries()), ...extraEntries];
   const groups = groupByTranscript(entries);
 
   const results = [];
   for (const [transcriptPath, group] of groups) {
+    if (await transcriptGone(transcriptPath)) {
+      results.push({ transcript_path: transcriptPath, result: await dropGone(group, dryRun, `TRANSCRIPT_GONE ${transcriptPath}`) });
+      continue;
+    }
     const result = runImporter(transcriptPath, dryRun, group.find((entry) => entry.filePath)?.filePath || "");
     results.push({ transcript_path: transcriptPath, result });
     if (result.ok && !dryRun) {
@@ -343,6 +373,14 @@ async function drainTargets() {
     for (const [transcriptPath, group] of groupByTranscript(entries)) {
       if (failed) {
         results.push({ transcript_path: transcriptPath, result: { ok: false, deferred: true } });
+        continue;
+      }
+      // Here a gone transcript would also hold up every entry behind it.
+      if (await transcriptGone(transcriptPath)) {
+        results.push({
+          transcript_path: transcriptPath,
+          result: await dropGone(group, false, `TARGET_TRANSCRIPT_GONE ${target.id} ${transcriptPath}`),
+        });
         continue;
       }
       const result = runImporter(transcriptPath, false, group[0].filePath, env);

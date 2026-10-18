@@ -134,3 +134,70 @@ test("queue never expires a reclaim guard whose owner is still alive", async (t)
   );
   assert.equal(await fsp.readFile(guardPath, "utf8"), liveGuard);
 });
+
+/** A spool with one entry per [file name, transcript], and an importer that records what it was asked for. */
+async function spoolWith(t, prefix, entries, importerResult) {
+  const directory = await fsp.mkdtemp(path.join(os.tmpdir(), prefix));
+  t.after(() => fsp.rm(directory, { recursive: true, force: true }));
+  const spool = path.join(directory, "spool");
+  const pending = path.join(spool, "pending");
+  const importer = path.join(directory, "importer.mjs");
+  const calls = path.join(directory, "calls.log");
+  await fsp.mkdir(pending, { recursive: true });
+  for (const [name, transcript] of entries) {
+    await fsp.writeFile(path.join(pending, name), JSON.stringify({ transcript_path: transcript, created_at: new Date().toISOString() }));
+  }
+  await fsp.writeFile(
+    importer,
+    `import fs from "node:fs";
+fs.appendFileSync(${JSON.stringify(calls)}, process.argv[process.argv.indexOf("--rollout") + 1] + "\\n");
+const result = ${JSON.stringify(importerResult)};
+console.log(JSON.stringify(result));
+process.exitCode = result.ok ? 0 : 1;
+`,
+  );
+  const env = {
+    ...process.env,
+    HONCHO_CODEX_GATE_SPOOL: spool,
+    HONCHO_CODEX_GATE_LOG: path.join(directory, "queue.log"),
+    HONCHO_CODEX_GATE_QUIET: "0",
+    HONCHO_CODEX_IMPORTER: importer,
+  };
+  return { directory, pending, calls, env, log: path.join(directory, "queue.log") };
+}
+
+test("a transcript that is gone leaves the spool, and the drain still sends the rest and succeeds", async (t) => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "honcho-agent-bridge-queue-transcripts-"));
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  const gone = path.join(root, "deleted-session", "gone.jsonl");
+  const kept = path.join(root, "kept.jsonl");
+  await fsp.writeFile(kept, "{}\n");
+  const queue = await spoolWith(t, "honcho-agent-bridge-queue-gone-", [["1.json", gone], ["2.json", gone], ["3.json", kept]], { ok: true });
+
+  const result = JSON.parse((await execFileAsync(process.execPath, [QUEUE, "--drain"], { env: queue.env })).stdout);
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    result.results.find((item) => item.transcript_path === gone).result,
+    { ok: true, skipped: "transcript gone", dropped: 2 },
+  );
+  assert.equal((await fsp.readFile(queue.calls, "utf8")).trim(), kept, "the importer is never asked for the gone one");
+  assert.deepEqual(await fsp.readdir(queue.pending), []);
+  assert.ok((await fsp.readFile(queue.log, "utf8")).includes(`TRANSCRIPT_GONE ${gone} dropped 2`));
+});
+
+test("an entry the server did not take stays in the spool for the next drain", async (t) => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "honcho-agent-bridge-queue-transcripts-"));
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  const transcript = path.join(root, "transcript.jsonl");
+  await fsp.writeFile(transcript, "{}\n");
+  const queue = await spoolWith(t, "honcho-agent-bridge-queue-down-", [["one.json", transcript]], {
+    ok: false,
+    error: "HTTP 503 for /v3/workspaces/memory/sessions",
+  });
+
+  await assert.rejects(
+    execFileAsync(process.execPath, [QUEUE, "--drain"], { env: queue.env }),
+    (error) => JSON.parse(String(error.stdout)).ok === false,
+  );
+  assert.deepEqual(await fsp.readdir(queue.pending), ["one.json"]);
+});
