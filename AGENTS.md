@@ -533,7 +533,8 @@ and the app asks the rest and does it.
   one team only.
 - **The setup skill** (`skills/setup-memory`) does the same once the plugin is in: it
   finds what the user asked in its table, sees without asking whether the app counts
-  this computer as set up (`detect`) and, for a few screens the app leaves out where
+  this computer as set up (`detect`, and `team status` for a teammate who chose 쌓지
+  않기 and has only a team login) and, for a few screens the app leaves out where
   they mean nothing, whether it is in a team or has a memory server (`team status`,
   `server status`), runs `ui open --screen <screen>` and says that request's line, the
   app's address in it. `/team-memory setup` in Claude Code and `$setup-memory` in Codex
@@ -554,12 +555,15 @@ and the app asks the rest and does it.
   the person into the app, never through chat.
 - **Over SSH** (`SSH_CONNECTION` set), the browser window `ui open` asks for opens on
   that computer's own screen and the app answers only on its 127.0.0.1, so the line
-  adds `ssh -o ExitOnForwardFailure=yes -L 4180:127.0.0.1:4180 <user>@<host>` for the
-  computer in front of the person, whose browser then opens the same address (`<user>`
-  from `whoami`, on Windows the part after `\`). Without the option, a computer in
-  front that holds 4180 itself, with its own Team Memory app, only warns and connects,
-  and its browser opens its own app. With it the command ends instead, and the person
-  gets the same command with `-L 14180:127.0.0.1:4180` and the address with 14180.
+  adds `ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:4180:127.0.0.1:4180 <user>@<host>`
+  for the computer in front of the person, whose browser then opens the same address
+  (`<user>` from `whoami`, on Windows the part after `\`). A computer in front often
+  holds 127.0.0.1:4180 itself, with its own Team Memory app, and its browser would open
+  that app. A forward with no address in front listens on every loopback address and
+  counts as made when any one is free, so it would take `::1` alone; without the option
+  ssh only warns and connects. With both, the command ends with "Could not request
+  local forwarding.", and the person gets the same command with
+  `-L 127.0.0.1:14180:127.0.0.1:4180` and the address with 14180.
 
 The app's windows run the same CLI a terminal would:
 
@@ -860,7 +864,7 @@ address it started with. For a gateway on another computer, open a tunnel, then 
 the app's server with that address:
 
 ```sh
-ssh -N -o ExitOnForwardFailure=yes -L 21450:127.0.0.1:11450 <server>
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:21450:127.0.0.1:11450 <server>
 # start the app's server with GATEWAY_UI_URL=http://127.0.0.1:21450 in its environment
 ```
 

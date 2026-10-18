@@ -119,8 +119,13 @@ test("every SSH forward the docs give ends when its port is taken, rather than o
     const text = await read(file);
     const forwards = [...text.matchAll(/`ssh [^`]*-L [^`]*`/g)].map((match) => match[0]);
     assert.ok(forwards.length, `${file} gives no SSH forward`);
-    for (const command of forwards) assert.match(command, /-o ExitOnForwardFailure=yes /, `${file}: ${command}`);
+    for (const command of forwards) {
+      assert.match(command, /-o ExitOnForwardFailure=yes /, `${file}: ${command}`);
+      // With no address in front, ssh also listens on ::1 and counts the forward made
+      // when the front computer's own app holds 127.0.0.1, so its browser opens that app.
+      assert.match(command, /-L 127\.0\.0\.1:/, `${file}: ${command}`);
+    }
     // The other port, for a computer in front whose own app holds 4180.
-    assert.ok(text.includes("-L 14180:127.0.0.1:"), `${file} gives no other port`);
+    assert.ok(text.includes("-L 127.0.0.1:14180:127.0.0.1:"), `${file} gives no other port`);
   }
 });

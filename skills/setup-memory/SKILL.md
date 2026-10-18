@@ -13,10 +13,10 @@ Team Memory is set up in its app. The app's first setup window asks where the me
 `<plugin-root>` is the directory two levels above this `SKILL.md`. The checks below answer without any token and change nothing.
 
 1. Find the user's words in the table below. Words that carry a team address (`팀 주소 team.example.com`, as in the invite line an admin copies) open `start?team=<that address>`, the address alone, without `https://` or a trailing `/`.
-2. Run `node "<plugin-root>/scripts/cli.mjs" detect`. The app counts this computer as set up when `configured` is true, when a memory server answers (`honcho.health.ok`), or when one is installed here (`honcho.source` is `installed-server`). Until then it shows its first setup window, 팀 메모리 시작하기, over every screen, so the line comes from "Before setup" below. To install and with a team address the line is the same either way.
+2. Run `node "<plugin-root>/scripts/cli.mjs" detect` and `node "<plugin-root>/scripts/cli.mjs" team status`. The app counts this computer as set up when `configured` is true, when a memory server answers (`honcho.health.ok`), when one is installed here (`honcho.source` is `installed-server`), or when it is logged in to a team (`login.hub` is set and `login.hubLogin` has `signedIn: true` or an `ended`), which is all a teammate who chose "쌓지 않기" has. Until then it shows its first setup window, 팀 메모리 시작하기, over every screen, so the line comes from "Before setup" below. To install and with a team address the line is the same either way.
 3. On a computer set up already, check these screens first: the app leaves each out where it means nothing and shows the dashboard instead.
-   - `team` and `admin`: run `node "<plugin-root>/scripts/cli.mjs" team status`. This computer is in a team when `login.hub` or `made` (the team made on this computer) is set, and is the team's admin when `login.admin` is true or `made` is set. In no team, open `start` and say the "To join a team" line, or for `admin` the "To make a team" line.
-   - `models` and `share`: run `node "<plugin-root>/scripts/cli.mjs" server status`. With `installed: false` this computer has no memory server.
+   - `team` and `admin`, from `team status`: this computer is in a team when `login.hub` or `made` (the team made on this computer) is set, and is the team's admin when `login.admin` is true or `made` is set. In no team, open `start` and say the "To join a team" line, or for `admin` the "To make a team" line.
+   - `server`, `models` and `share`: run `node "<plugin-root>/scripts/cli.mjs" server status`. With `installed: false` this computer has no memory server.
    When a check finds a case in "When nothing opens", open nothing and say its line.
 4. Run `node "<plugin-root>/scripts/cli.mjs" ui open --screen '<screen>'`. It starts the app when it is not running and asks for a browser window.
 5. Say the line, `<url>` being the `url` of the result (over SSH, with the sentence in "Over SSH" after it), and stop.
@@ -60,6 +60,7 @@ The screen asked for opens under 팀 메모리 시작하기, whose first step ch
 | A check finds | Line |
 |---|---|
 | `admin` asked, in a team whose admin this computer is not | 팀원은 팀 관리자가 더합니다. 관리자에게 더할 사람의 Google 이메일을 보내세요. |
+| `server` asked, with no memory server on this computer | 이 컴퓨터에는 기억 서버가 없습니다. 기억 서버가 있는 컴퓨터의 팀 메모리 앱에서 서버 → 기억 서버를 여세요. |
 | `models` asked, with no memory server on this computer | 이 컴퓨터에는 기억 서버가 없습니다. 기억 서버가 있는 컴퓨터의 팀 메모리 앱에서 서버 → 모델의 "계정 더하기"를 누르세요. |
 | `share` asked, with no memory server on this computer | 이 컴퓨터에는 기억 서버가 없습니다. 기억 서버가 있는 컴퓨터의 팀 메모리 앱에서 서버 → 공유를 열고, 공유를 켠 뒤 "서버 token" 옆의 "복사"를 누르세요. |
 
@@ -67,9 +68,9 @@ The screen asked for opens under 팀 메모리 시작하기, whose first step ch
 
 When the environment has `SSH_CONNECTION`, this computer was opened over SSH: the browser window `ui open` asked for opens on this computer's own screen, and the app answers only on this computer's 127.0.0.1. The person sets up from the browser of the computer in front of them, through an SSH forward, so the line goes on with:
 
-이 컴퓨터는 SSH로 열려 있습니다. 앞에 있는 컴퓨터의 터미널에서 `ssh -o ExitOnForwardFailure=yes -L <port>:127.0.0.1:<port> <user>@<host>`를 실행해 둔 채로 그 컴퓨터의 브라우저에서 <url>을 여세요.
+이 컴퓨터는 SSH로 열려 있습니다. 앞에 있는 컴퓨터의 터미널에서 `ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:<port>:127.0.0.1:<port> <user>@<host>`를 실행해 둔 채로 그 컴퓨터의 브라우저에서 <url>을 여세요.
 
-`<port>` is the port of `<url>` (4180), `<user>` this computer's user name (`whoami`, on Windows the part after `\`), and `<host>` the third value of `SSH_CONNECTION`; when its fourth value is not 22, add `-p <that value>`. Without `ExitOnForwardFailure=yes`, a computer in front that holds the port already (its own Team Memory app does) only warns and connects, and its browser then opens its own app. With it the command ends instead; when the person says so, give the same command with `-L 14180:127.0.0.1:<port>` and the address with 14180 in place of the port.
+`<port>` is the port of `<url>` (4180), `<user>` this computer's user name (`whoami`, on Windows the part after `\`), and `<host>` the third value of `SSH_CONNECTION`; when its fourth value is not 22, add `-p <that value>`. A computer in front often holds 127.0.0.1:<port> already, with its own Team Memory app, and its browser would then open its own app. A forward with no address in front listens on every loopback address and counts as made when any one is free, so it would take `::1` alone and connect; without `ExitOnForwardFailure=yes`, ssh only warns and connects as well. With both, the command ends with "Could not request local forwarding."; when the person says so, give the same command with `-L 127.0.0.1:14180:127.0.0.1:<port>` and the address with 14180 in place of the port.
 
 ## When the app does not open
 
@@ -92,7 +93,7 @@ A server token lets a computer write to a memory server, and a Cloudflare API to
 - Make changes through the app or the CLI, and never recreate by hand what the CLI does (hook entries, `config.json`, the server's `.env` and Compose files): the CLI marks what it writes, backs up what it rewrites and rolls back a failed apply, and a hand edit has none of that.
 - Preserve unrelated hooks and settings. The CLI removes only entries bearing its managed markers and creates timestamped backups before rewriting existing files.
 - Install Node.js or git only the official way README's 에이전트에게 names. Never pipe a downloaded script into a shell or swap in an unofficial package: a piped script runs before anyone has read it, and an unofficial package is not what the publisher ships.
-- A Honcho server that already answers and is healthy is connected to, never replaced or installed over, because its database is the user's memory.
+- A Honcho server that already answers and is healthy is never replaced or installed over, because its database is someone's memory. Connect to it only when this install manages it (`honcho.managedByThisInstall` in `detect`) or the user says it is theirs: one answering on loopback can be another computer's, through an SSH tunnel.
 - Never display API tokens, bearer tokens, or secret environment values.
 - Never put the gateway's router key on a command line or in chat. The server's preparation writes it into the installed private `.env`, and no result prints it. The opt-in live verification reads it there inside the process, sends it only to this machine's router, discards the completion response body, and reports only success/model.
 - The sharing this version supports is a team (its roster, requests and approvals, each server's own permissions), reading teammates' memories (the `team-memory` MCP server), opening this computer's memory to the user's other computers and to teammates the user approves, and sending chosen folders to a target the user adds explicitly. Do not add teammates, approve requests, open folders to teammates, add targets, folders or backfills the user did not ask for, and do not add cross-device synchronization.
