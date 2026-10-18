@@ -396,10 +396,13 @@ test("while past conversations go in, the memory is made again, or a fix runs, t
   await put(rederive, JSON.stringify({ job: { pid: 4322, kind: "build" } }));
   b.live.add(4322);
   assert.deepEqual((await updateStatus(b.options)).blocked, { code: "rederive", reason: "기억을 다시 정리하는 중입니다. 다 끝난 뒤 업데이트를 누르세요." });
-  // Its process gone, the app carries it on: it is going until it ends or stops with an error.
+  // Its process gone (a restart, say), the server's screen carries it on: it holds the
+  // update up until it ends or stops with an error, and says where it goes on.
   b.live.delete(4322);
-  assert.equal((await updateStatus(b.options)).blocked?.code, "rederive");
-  assert.equal((await updateStart(b.options)).code, "rederive");
+  const stopped = "기억 다시 정리가 멈춰 있습니다. 서버 → 기억 서버를 열면 이어서 정리합니다. 다 끝난 뒤 업데이트를 누르세요.";
+  assert.deepEqual((await updateStatus(b.options)).blocked, { code: "rederive", reason: stopped });
+  assert.deepEqual(await updateStart(b.options), { ok: false, code: "rederive", error: stopped });
+  assert.equal(b.spawned.length, 0);
   await put(rederive, JSON.stringify({ job: { pid: 4322, kind: "build", error: "Honcho answered 500" } }));
   assert.equal((await updateStatus(b.options)).blocked, null, "one that stopped with an error holds nothing up");
 
@@ -665,7 +668,14 @@ test("업데이트 reads main again, and starts nothing when main's version or t
   // The server was started since: its rebuild now stops teammates' reading.
   b.running = true;
   const warned = await updateStart({ ...b.options, seen: { latest: "0.9.2", warning: false } });
-  assert.deepEqual([warned.code, warned.status.warning], ["changed", "기억 서버를 다시 만드는 동안 팀원 열람이 멈춥니다."]);
+  assert.deepEqual([warned.code, warned.error, warned.status.warning], [
+    "changed", "그사이 기억 서버가 켜져, 다시 만드는 동안 팀원 열람이 멈춥니다. 보고 업데이트를 다시 누르세요.", "기억 서버를 다시 만드는 동안 팀원 열람이 멈춥니다.",
+  ]);
+  // And stopped again: the warning the bell showed is gone.
+  b.running = false;
+  const unwarned = await updateStart({ ...b.options, seen: { latest: "0.9.2", warning: true } });
+  assert.deepEqual([unwarned.code, unwarned.error, unwarned.status.warning], ["changed", "그사이 기억 서버가 바뀌어, 팀원 열람은 멈추지 않습니다. 보고 업데이트를 다시 누르세요.", null]);
+  b.running = true;
 
   // main cannot be read now: what it would bring is not known.
   b.offline = true;
@@ -855,11 +865,11 @@ test("the app answers the bell from its own folder, and another computer's scree
   await new Promise((resolve) => ui.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve) => ui.close(resolve)));
   const { port } = ui.address();
-  const call = async (pathname, { method = "GET", viewer = false } = {}) => {
+  const call = async (pathname, { method = "GET", viewer = false, body = {} } = {}) => {
     const response = await fetch(`http://127.0.0.1:${port}${pathname}`, {
       method,
       headers: { ...(method === "POST" ? { "content-type": "application/json" } : {}), ...(viewer ? { "x-team-memory-viewer": encodeURIComponent("MacBook") } : {}) },
-      ...(method === "POST" ? { body: "{}" } : {}),
+      ...(method === "POST" ? { body: JSON.stringify(body) } : {}),
     });
     return { status: response.status, body: await response.json() };
   };
@@ -879,6 +889,20 @@ test("the app answers the bell from its own folder, and another computer's scree
   assert.deepEqual((await call("/api/update/progress")).body, { ok: true, progress: null });
   assert.deepEqual((await call("/api/doctor/fix/status")).body, { ok: true, progress: null });
   assert.equal((await call("/api/update/start")).status, 405, "a GET changes nothing");
+
+  // What the bell showed goes to the CLI by its options, which refuses what is no longer
+  // so: an option one side names otherwise leaves the CLI without it. A fix said to be
+  // going holds the start up as well, so that even then nothing starts.
+  await put(path.join(b.appHome, "update", "fix.json"), JSON.stringify({ version: 1, kind: "fix", state: "running", pid: process.pid, rows: [] }));
+  // The CLI asks the app answering here for its version: this one, never the computer's own.
+  const uiPort = process.env.HONCHO_AGENT_BRIDGE_UI_PORT;
+  process.env.HONCHO_AGENT_BRIDGE_UI_PORT = String(port);
+  t.after(() => { if (uiPort === undefined) delete process.env.HONCHO_AGENT_BRIDGE_UI_PORT; else process.env.HONCHO_AGENT_BRIDGE_UI_PORT = uiPort; });
+  const moved = await call("/api/update/start", { method: "POST", body: { seen: { latest: "0.9.0", warning: false } } });
+  assert.deepEqual([moved.status, moved.body.code, moved.body.error, moved.body.status?.latest], [200, "changed", "새 판이 바뀌었습니다. 바뀐 내용을 보고 업데이트를 다시 누르세요.", "0.9.1"]);
+  const unwarned = await call("/api/update/start", { method: "POST", body: { seen: { latest: "0.9.1", warning: true } } });
+  assert.deepEqual([unwarned.body.code, unwarned.body.error], ["changed", "그사이 기억 서버가 바뀌어, 팀원 열람은 멈추지 않습니다. 보고 업데이트를 다시 누르세요."]);
+  assert.equal(await fsp.access(b.update).then(() => true, () => false), false, "nothing started");
 });
 
 test("update status runs from the CLI against main, with the app answering here, and prints no secret", async (t) => {

@@ -97,10 +97,18 @@ const BLOCKED = Object.freeze({
   rederive: "기억을 다시 정리하는 중입니다. 다 끝난 뒤 업데이트를 누르세요.",
   "no-plugin": "Claude Code나 Codex에 팀 메모리 플러그인을 설치한 뒤 업데이트를 누르세요.",
 });
+// A rebuild of the memory whose process stopped (the computer restarted, say) goes on
+// when 서버 → 기억 서버 asks how it goes (rederive status), and holds the update up till then.
+const REDERIVE_STOPPED = "기억 다시 정리가 멈춰 있습니다. 서버 → 기억 서버를 열면 이어서 정리합니다. 다 끝난 뒤 업데이트를 누르세요.";
 const UPDATING = "팀 메모리 앱에서 업데이트가 도는 중입니다. 업데이트가 끝나기를 기다리세요.";
 const FIXING = "고치기가 이미 도는 중입니다. 끝나기를 기다리세요.";
 const STARTING = "업데이트나 고치기를 시작하는 중입니다. 끝나기를 기다리세요.";
+// What start says when the bell showed something else: main's version, or at the same
+// version whether teammates' reading stops (the server came on, or went off or was
+// brought up to that version, in between).
 const CHANGED = "새 판이 바뀌었습니다. 바뀐 내용을 보고 업데이트를 다시 누르세요.";
+const WARNED = "그사이 기억 서버가 켜져, 다시 만드는 동안 팀원 열람이 멈춥니다. 보고 업데이트를 다시 누르세요.";
+const UNWARNED = "그사이 기억 서버가 바뀌어, 팀원 열람은 멈추지 않습니다. 보고 업데이트를 다시 누르세요.";
 const UNREAD = "GitHub에서 새 판을 읽지 못했습니다. 인터넷 연결을 확인하고 업데이트를 다시 누르세요.";
 
 // What is written to update.json and fix.json, which the app shows: addresses in a
@@ -406,15 +414,17 @@ function summaryOf(rows) {
 
 /**
  * 지난 대화 쌓기 or 기억 다시 정리 going now, from their status files only (as
- * rederive.mjs reads them). A rebuild of the memory is going until it ends or stops
- * with an error, whether or not its process runs: the app carries one on whose
- * process stopped.
+ * rederive.mjs reads them): { code, reason }, or null. A rebuild of the memory is going
+ * until it ends or stops with an error, whether or not its process runs: the app
+ * carries one on whose process stopped, and the reason says where.
  */
 async function longJob(ctx, config) {
   const paths = rederivePaths(config);
   const [past, rederive] = await Promise.all([readJson(paths.pastStatus, null), readJson(paths.status, null)]);
-  if (past?.running && ctx.alive(Number(past.running.pid))) return "past";
-  if (rederive?.job && !rederive.job.error) return "rederive";
+  if (past?.running && ctx.alive(Number(past.running.pid))) return { code: "past", reason: BLOCKED.past };
+  if (rederive?.job && !rederive.job.error) {
+    return { code: "rederive", reason: ctx.alive(Number(rederive.job.pid)) ? BLOCKED.rederive : REDERIVE_STOPPED };
+  }
   return null;
 }
 
@@ -425,7 +435,7 @@ async function blockedNow(ctx, config, here = null) {
   const reason = (code) => ({ code, reason: BLOCKED[code] });
   if (runningIn(ctx, await readJson(ctx.paths.fix, null))) return reason("fixing");
   const job = await ctx.longJob(ctx, config);
-  if (job) return reason(job);
+  if (job) return job;
   if (here && !here.claude && !here.codex) return reason("no-plugin");
   return null;
 }
@@ -724,8 +734,10 @@ export async function updateStart(options = {}) {
     if (seen.going) return { ok: false, code: "running", error: "업데이트가 이미 도는 중입니다." };
     if (seen.check?.error) return { ok: false, code: "unread", error: UNREAD, detail: clean(seen.check.error) };
     if (!seen.newer) return { ok: false, code: "current", error: "이 컴퓨터는 새 판입니다." };
-    if (options.seen && (seen.latest !== options.seen.latest || Boolean(warningOf(seen.server)) !== Boolean(options.seen.warning))) {
-      return { ok: false, code: "changed", error: CHANGED, status: await statusOf(ctx, seen) };
+    const warned = Boolean(warningOf(seen.server));
+    if (options.seen && (seen.latest !== options.seen.latest || warned !== Boolean(options.seen.warning))) {
+      const error = seen.latest !== options.seen.latest ? CHANGED : warned ? WARNED : UNWARNED;
+      return { ok: false, code: "changed", error, status: await statusOf(ctx, seen) };
     }
     if (seen.blocked) return { ok: false, code: seen.blocked.code, error: seen.blocked.reason };
     const now = iso(ctx.now());

@@ -1,8 +1,8 @@
 // `ui open` starts the app's screen once, detached, in the app home, and reuses it; it
 // tells it apart from another program on the same port by the page's marker, or by
 // what an app whose pages went with its plugin folder says of itself, and replaces
-// that one. `bridge disconnect` clears what the shared bridge of 0.3.28 and before
-// left in the configuration.
+// that one, but stops no program other than node. `bridge disconnect` clears what the
+// shared bridge of 0.3.28 and before left in the configuration.
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
@@ -47,6 +47,36 @@ http.createServer((request, response) => {
   response.end(JSON.stringify({ error: "Not found" }));
 }).listen(Number(process.env.PAGELESS_PORT), "127.0.0.1", () => process.stdout.write("ready\\n"));
 `;
+
+// The old app is found with lsof, as a process of its own, as it is on a computer.
+const NO_LSOF = !["/usr/sbin/lsof", "/usr/bin/lsof"].some((file) => fs.existsSync(file));
+
+/**
+ * This node under another name, which lsof gives as the process's command: a program
+ * that answers on the port for another computer's app (an SSH forward, say), without
+ * starting one. A node that loads its library from beside it (Homebrew's) has it
+ * copied too. Null where the copy does not run.
+ */
+async function otherProgram(root, name) {
+  const real = await fsp.realpath(process.execPath);
+  const program = path.join(root, "bin", name);
+  await fsp.mkdir(path.dirname(program), { recursive: true });
+  await fsp.copyFile(real, program, fs.constants.COPYFILE_FICLONE);
+  const lib = path.join(path.dirname(real), "..", "lib");
+  for (const file of (await fsp.readdir(lib).catch(() => [])).filter((item) => item.startsWith("libnode"))) {
+    await fsp.mkdir(path.join(root, "lib"), { recursive: true });
+    await fsp.copyFile(path.join(lib, file), path.join(root, "lib", file), fs.constants.COPYFILE_FICLONE);
+  }
+  return execFileAsync(program, ["-e", ""]).then(() => program, () => null);
+}
+
+/** `script` run by `program` on `port`, once it listens. */
+async function serve(t, program, script, port) {
+  const child = spawn(program, [script], { env: { ...process.env, PAGELESS_PORT: String(port) }, stdio: ["ignore", "pipe", "ignore"] });
+  t.after(() => { try { process.kill(child.pid); } catch {} });
+  await new Promise((resolve, reject) => { child.stdout.once("data", resolve); child.once("exit", reject); });
+  return child;
+}
 
 async function cli(args, env) {
   const merged = { ...process.env, ...env };
@@ -147,16 +177,13 @@ test("ui open does not mistake another program on its port for the setup screen"
   assert.match(body.error, /Something else is answering/);
 });
 
-// listeningPid finds the old app with lsof; the old app is a process of its own, as it is on a computer.
-test("ui open replaces an app of ours whose pages went with its plugin folder, and starts the new one in the app home", { skip: !["/usr/sbin/lsof", "/usr/bin/lsof"].some((file) => fs.existsSync(file)) }, async (t) => {
+test("ui open replaces an app of ours whose pages went with its plugin folder, and starts the new one in the app home", { skip: NO_LSOF }, async (t) => {
   const { root, appHome, env } = await workspace(t);
   const port = await freePort();
   const script = path.join(root, "pageless-app.mjs");
   await fsp.writeFile(script, PAGELESS_APP);
-  const old = spawn(process.execPath, [script], { env: { ...process.env, PAGELESS_PORT: String(port) }, stdio: ["ignore", "pipe", "ignore"] });
+  const old = await serve(t, process.execPath, script, port);
   const gone = new Promise((resolve) => old.once("exit", resolve));
-  t.after(() => { try { process.kill(old.pid); } catch {} });
-  await new Promise((resolve, reject) => { old.stdout.once("data", resolve); old.once("exit", reject); });
 
   // Plain ui open, as /team-memory setup runs it: not only doctor --fix replaces it.
   const opened = await cli(["ui", "open", "--no-browser"], { ...env, HONCHO_AGENT_BRIDGE_UI_PORT: String(port) });
@@ -171,4 +198,23 @@ test("ui open replaces an app of ours whose pages went with its plugin folder, a
     const { stdout } = await execFileAsync("/usr/sbin/lsof", ["-a", "-p", String(opened.body.pid), "-d", "cwd", "-Fn"]);
     assert.equal(stdout.split("\n").find((line) => line.startsWith("n"))?.slice(1), await fsp.realpath(appHome));
   }
+});
+
+test("ui open stops no program but node on its port, such as an SSH forward to another computer's app", { skip: NO_LSOF }, async (t) => {
+  const { root, env } = await workspace(t);
+  const ssh = await otherProgram(root, "ssh");
+  if (!ssh) return t.skip("a copy of node does not run from another folder here");
+  const port = await freePort();
+  const script = path.join(root, "pageless-app.mjs");
+  await fsp.writeFile(script, PAGELESS_APP);
+  const forward = await serve(t, ssh, script, port);
+
+  const opened = await cli(["ui", "open", "--no-browser"], { ...env, HONCHO_AGENT_BRIDGE_UI_PORT: String(port) });
+  // An app it started in the forward's place, were it to, is stopped with the test.
+  t.after(() => { try { if (opened.body.pid) process.kill(opened.body.pid); } catch {} });
+  assert.equal(opened.body.ok, false, opened.stdout);
+  assert.match(opened.body.error, /^Something else is answering at /);
+  assert.equal(forward.exitCode, null, "it was not stopped");
+  const context = await (await fetch(`http://127.0.0.1:${port}/api/app/context`)).json();
+  assert.equal(context.version, "0.0.1", "and it still answers");
 });

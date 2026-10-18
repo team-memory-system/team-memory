@@ -1747,16 +1747,37 @@ async function runningAppVersion() {
   return app.state === "ours" ? (app.version ?? (await uiVersion(url))) || null : null;
 }
 
-/** The process listening on `port` on this machine, found with the system's own tool, or null. */
-function listeningPid(port) {
+// What node is called as a process: lsof's command name, or Windows's process name.
+const NODE_PROCESS = /^node(?:js)?(?:\.exe)?$/i;
+
+/**
+ * The process listening on `port` at UI_HOST, found with the system's own tool:
+ * { pid, command }, its command name and never its arguments, or null.
+ */
+function listeningProcess(port) {
   try {
-    const output = process.platform === "win32"
-      ? execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
-        `(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess`],
-      { encoding: "utf8", timeout: 20_000, windowsHide: true })
-      : execFileSync(fs.existsSync("/usr/sbin/lsof") ? "/usr/sbin/lsof" : "lsof", ["-tnP", `-iTCP:${port}`, "-sTCP:LISTEN"], { encoding: "utf8", timeout: 10_000 });
-    const pid = Number(String(output).trim().split(/\s+/)[0]);
-    return Number.isInteger(pid) && pid > 0 && pid !== process.pid ? pid : null;
+    let pid;
+    let command = "";
+    if (process.platform === "win32") {
+      const output = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+        `$c = Get-NetTCPConnection -LocalAddress ${UI_HOST} -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; `
+        + "if ($c) { '{0}|{1}' -f $c.OwningProcess, (Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue).ProcessName }"],
+      { encoding: "utf8", timeout: 20_000, windowsHide: true });
+      const [id, name = ""] = String(output).trim().split("|");
+      pid = Number(id);
+      command = name.trim();
+    } else {
+      // -F: a line `p<pid>` and a line `c<command name>` for each process.
+      const output = execFileSync(fs.existsSync("/usr/sbin/lsof") ? "/usr/sbin/lsof" : "lsof", ["-nP", `-iTCP@${UI_HOST}:${port}`, "-sTCP:LISTEN", "-Fpc"], { encoding: "utf8", timeout: 10_000 });
+      for (const line of String(output).split(/\r?\n/)) {
+        if (line.startsWith("p")) {
+          if (pid && pid !== process.pid) break;
+          pid = Number(line.slice(1));
+          command = "";
+        } else if (line.startsWith("c") && !command) command = line.slice(1);
+      }
+    }
+    return Number.isInteger(pid) && pid > 0 && pid !== process.pid ? { pid, command } : null;
   } catch {
     return null;
   }
@@ -1796,9 +1817,8 @@ async function uiOpen(options = {}) {
   const pageUrl = screen ? `${url}#/${screen}` : url;
   const answer = await uiAnswer(url);
   let state = answer.state;
-  if (state === "other") {
-    return { ok: false, url, error: `Something else is answering at ${url}. Close it, or set HONCHO_AGENT_BRIDGE_UI_PORT.` };
-  }
+  const elsewhere = { ok: false, url, error: `Something else is answering at ${url}. Close it, or set HONCHO_AGENT_BRIDGE_UI_PORT.` };
+  if (state === "other") return elsewhere;
   let pid = null;
   let replaced = null;
   // doctor --fix: an app started from an older copy of the plugin serves that copy's
@@ -1807,9 +1827,12 @@ async function uiOpen(options = {}) {
   if (state === "ours" && (options.replaceOlder || !answer.pages)) {
     const running = answer.version ?? (await uiVersion(url));
     if (running !== VERSION || !answer.pages) {
-      const old = listeningPid(port);
+      const old = listeningProcess(port);
       if (!old) return { ok: false, url, error: `An older Team Memory app (${running || "unknown version"}) is running at ${url} and could not be found to stop` };
-      try { process.kill(old); } catch (error) { return { ok: false, url, error: `The older Team Memory app could not be stopped: ${error.message}` }; }
+      // Only an app this computer runs is stopped: another program can answer for one
+      // (an SSH forward to another computer's app, say).
+      if (!NODE_PROCESS.test(old.command)) return elsewhere;
+      try { process.kill(old.pid); } catch (error) { return { ok: false, url, error: `The older Team Memory app could not be stopped: ${error.message}` }; }
       for (let attempt = 0; attempt < 40 && state !== "down"; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 150));
         state = await uiState(url);
