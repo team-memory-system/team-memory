@@ -682,11 +682,11 @@ export function changedAgents(done, agents, before = {}) {
  * approve its hook when setup wrote it anew, reload Claude Code's plugins, or run
  * the plugin install by hand when it could not.
  */
-export function agentTodo(done, agents, { missing = null } = {}) {
+export function agentTodo(done, agents, { missing = null, elsewhere = false } = {}) {
   const items = [];
   for (const { name, commands } of todoAgents(done, agents, { missing })) {
     if (commands.length) {
-      items.push({ title: AGENTS[name], text: ["터미널에서 차례로 실행하세요. ", commands.map((command, index) => [index ? " → " : "", h("span", { class: "mono" }, command)])] });
+      items.push({ title: AGENTS[name], text: [elsewhere ? "그 컴퓨터의 터미널에서 차례로 실행하세요. " : "터미널에서 차례로 실행하세요. ", commands.map((command, index) => [index ? " → " : "", h("span", { class: "mono" }, command)])] });
     } else if (name === "claude") {
       items.push({ title: "Claude Code", text: ["열린 세션에 ", h("span", { class: "mono" }, "/reload-plugins"), " 를 입력하세요."] });
     } else {

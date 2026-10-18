@@ -236,7 +236,7 @@ test("a plugin to install copies its own repository's commands when setup gave n
   assert.deepEqual(todoAgents(done, agents, { missing: new Set() }), [{ name: "claude", commands: [] }, { name: "codex", commands: [] }]);
   // The end screen asks with what 점검 found.
   const finish = setupPart(await read("ui/views/setup.js"), "function finish(");
-  assert.match(finish, /agentTodo\(state\.applied, state\.draft\.agents, \{ missing: missingPlugins\(rows\) \}\)/);
+  assert.match(finish, /agentTodo\(state\.applied, state\.draft\.agents, \{ missing: missingPlugins\(rows\), elsewhere: shownElsewhere\(\) \}\)/);
   assert.match(finish, /const failed = failures\(rows\);\n\s*const count = items\.length \+ failed;/);
 });
 
@@ -679,16 +679,19 @@ test("the 수정 window ends with what is left in the agents its 적용 changed,
   assert.match(apply, /const before = app\.context\?\.configured \? \{ \.\.\.app\.context\.agents \} : \{\};\n\s*const outcome = await applySetup\(setupBody\(draft, context\)\);/);
   const show = settings.slice(settings.indexOf("  function showCheck("), settings.indexOf("  function draw("));
   assert.match(show, /const agents = changedAgents\(done, draft\.agents, before\);/);
-  assert.match(show, /const items = agentTodo\(done, agents, \{ missing: missingPlugins\(rows\) \}\);\n\s*const count = items\.length \+ failures\(rows\);\n\s*heading\.textContent = count \? `할 일 \$\{count\}개` : "다 됐습니다";/);
-  assert.match(show, /clear\(left, items\.length \? \[h\("div", \{ class: "label" \}, "에이전트에서 할 일"\), todoList\(items\)\] : null\);/);
+  assert.match(show, /const elsewhere = shownElsewhere\(\);\n\s*const items = agentTodo\(done, agents, \{ missing: missingPlugins\(rows\), elsewhere \}\);\n\s*const count = items\.length \+ failures\(rows\);\n\s*heading\.textContent = count \? `할 일 \$\{count\}개` : "다 됐습니다";/);
+  assert.match(show, /clear\(left, items\.length \? \[h\("div", \{ class: "label" \}, elsewhere \? "그 컴퓨터의 에이전트에서 할 일" : "에이전트에서 할 일"\), todoList\(items\)\] : null\);/);
   assert.match(show, /win\.body\(heading, check\.root, left\);/);
 });
 
-test("Codex's to-do approves its hook only when setup wrote it anew, also in a window opened again", () => {
+test("Codex's to-do approves its hook only when setup wrote it anew, also in a window opened again", async () => {
   const codex = new Set(["codex"]);
   assert.deepEqual(agentTodo({ hooks: [{ provider: "codex", changed: true }], nextSteps: [] }, codex), [{ title: "Codex", text: "새 세션을 열고 훅을 승인하세요." }]);
   // The peer name alone changed: the hook is as it was, and a new session reads the new name.
   assert.deepEqual(agentTodo({ hooks: [{ provider: "codex", changed: false }], nextSteps: [] }, codex), [{ title: "Codex", text: "새 세션을 여세요." }]);
+  // On a page another computer shows, commands copied here are run on that computer.
+  assert.match(await read("ui/lib/collect.js"), /elsewhere \? "그 컴퓨터의 터미널에서 차례로 실행하세요\. " : "터미널에서 차례로 실행하세요\. "/);
+  assert.match(await read("ui/lib/check.js"), /shownElsewhere\(\) \? "명령을 복사했습니다\. 그 컴퓨터의 터미널에서 실행하세요\." : "명령을 복사했습니다\. 터미널에서 실행하세요\."/);
   // An answer that does not say, as one kept by the version before: as before.
   assert.equal(hookWritten({ nextSteps: [] }, "codex"), true);
   assert.equal(hookWritten({ hooks: [{ provider: "claude", changed: false }] }, "codex"), true);

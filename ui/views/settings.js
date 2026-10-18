@@ -12,6 +12,7 @@ import { h, clear } from "../lib/dom.js";
 import { number } from "../lib/format.js";
 import { block, kv, modal, stepper, todoList } from "../lib/kit.js";
 import { checkBox, checkHere, checkingText, failures, missingPlugins } from "../lib/check.js";
+import { shownElsewhere } from "../lib/machines.js";
 import {
   AGENTS,
   agentTodo,
@@ -168,10 +169,11 @@ function openCollectWindow(onApplied, { at: startAt = 0 } = {}) {
       sub: checkingText({ verify }),
       onCollect: () => goTo(0),
       onChecked: (rows) => {
-        const items = agentTodo(done, agents, { missing: missingPlugins(rows) });
+        const elsewhere = shownElsewhere();
+        const items = agentTodo(done, agents, { missing: missingPlugins(rows), elsewhere });
         const count = items.length + failures(rows);
         heading.textContent = count ? `할 일 ${count}개` : "다 됐습니다";
-        clear(left, items.length ? [h("div", { class: "label" }, "에이전트에서 할 일"), todoList(items)] : null);
+        clear(left, items.length ? [h("div", { class: "label" }, elsewhere ? "그 컴퓨터의 에이전트에서 할 일" : "에이전트에서 할 일"), todoList(items)] : null);
       },
     });
     win.steps(stepper(STEPS, "done"));

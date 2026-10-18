@@ -29,6 +29,7 @@ import { h, clear, copyText } from "../lib/dom.js";
 import { number } from "../lib/format.js";
 import { counter, field, kv, modal, opt, opts, progressList, stepper, todoList } from "../lib/kit.js";
 import { checkBox, checkHere, checkingText, checkTeam, failures, missingPlugins, startServer } from "../lib/check.js";
+import { shownElsewhere } from "../lib/machines.js";
 import {
   AGENTS,
   agentTodo,
@@ -1240,7 +1241,7 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
      * the admin's first step.
      */
     const todo = (rows) => {
-      const items = state.applied ? agentTodo(state.applied, state.draft.agents, { missing: missingPlugins(rows) }) : [];
+      const items = state.applied ? agentTodo(state.applied, state.draft.agents, { missing: missingPlugins(rows), elsewhere: shownElsewhere() }) : [];
       if (state.requested.length) items.push(TODO_BELL);
       if (state.path === "make") items.push({ title: "관리자 탭", text: "팀원 더하기로 팀원 이메일을 넣고, 팀 주소 줄의 복사를 눌러 초대 문구를 보내세요." });
       return items;
@@ -1252,7 +1253,8 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
       // Waiting only when this setup asked someone: the admin who made a team asked nobody.
       heading.textContent = chatOnly && state.requested.length && !failed ? "승인 기다리는 중" : count ? `할 일 ${count}개` : "다 됐습니다";
       const agentsOnly = items.every((item) => Object.values(AGENTS).includes(item.title));
-      clear(left, items.length ? [h("div", { class: "label" }, agentsOnly ? "에이전트에서 할 일" : "남은 할 일"), todoList(items)] : null);
+      const where = shownElsewhere() ? "그 컴퓨터의 " : "";
+      clear(left, items.length ? [h("div", { class: "label" }, `${where}${agentsOnly ? "에이전트에서 할 일" : "남은 할 일"}`), todoList(items)] : null);
       clear(lead, !items.length && !failed && !chatOnly ? h("p", { class: "lead" }, "이제 대화가 끝날 때마다 기억 서버에 쌓입니다.") : null);
     };
     const check = checkBox({

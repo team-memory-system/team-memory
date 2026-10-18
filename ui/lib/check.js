@@ -385,7 +385,8 @@ export function checkBox({ check, rows = null, sub = "", onCollect = () => go("c
     if (action.kind === "copy") {
       return button(action.label, { kind: "small", onClick: async () => {
         await copyText(action.text);
-        note = { text: "명령을 복사했습니다. 터미널에서 실행하세요." };
+        // Copied on the computer in front; the command is for the one this page shows.
+        note = { text: shownElsewhere() ? "명령을 복사했습니다. 그 컴퓨터의 터미널에서 실행하세요." : "명령을 복사했습니다. 터미널에서 실행하세요." };
         sayNote();
       } });
     }
