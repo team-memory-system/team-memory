@@ -13,36 +13,37 @@
 // 대화 수집 → 수정 opens. The past conversations go in before any new one, in the
 // order they were started, and keep going in after the window closes. A window
 // closed during 적용, or a computer restarted on the way, opens at 적용 again with
-// the rows done kept done (lib/state.js keeps the choices, without a secret). A
-// computer is in one team only: on one in another team, the login to a link's or a
-// typed address's team first shows both teams, and 옮기고 로그인 leaves the one it
-// is in before the login. On a computer set up already, a link's 취소 closes the
-// window, and joining a team leaves the rest as it is: after the login only the
-// 팀원 step, the team's rows and 점검.
+// the rows done kept done (lib/state.js keeps the choices, without a secret), and
+// runs the rest on 이어서 하기 or starts anew on 처음부터. A computer is in one team
+// only: on one in another team, the login to a link's or a typed address's team
+// first shows both teams, and 옮기고 로그인 leaves the one it is in before the
+// login. On a computer set up already, a link's 취소 closes the window. One that
+// collects, or one in a team that stores nothing, joins a team leaving the rest as
+// it is: after the login only the 팀원 step, the team's rows (with the peer name the
+// team gives, when its setup has another) and 점검.
 import { gateway, get, post } from "../lib/api.js";
 import { backendAccounts } from "../lib/accounts.js";
 import { defaultRoles, roleRows, ROLES } from "../lib/chat-roles.js";
 import { h, clear, copyText } from "../lib/dom.js";
 import { number } from "../lib/format.js";
 import { counter, field, kv, modal, opt, opts, progressList, stepper, todoList } from "../lib/kit.js";
+import { checkBox, checkHere, checkingText, checkTeam, failures, missingPlugins, startServer } from "../lib/check.js";
 import {
   AGENTS,
   agentTodo,
   agentsStep,
   applySetup,
-  checkRows,
   collectDraft,
   detectAgents,
   dockerSteps,
   draftServer,
-  explainWarning,
   loadProjects,
   NEW_SERVER_SUB,
+  problem,
   projectsStep,
   sameServer,
   serverStep,
   setupBody,
-  teamCheckRows,
   teamServers,
 } from "../lib/collect.js";
 import { dayText, HELD, holdNewTurns, pastStep, pastToPut, periodText, planPast, releaseNewTurns, runLine, startPast } from "../lib/past.js";
@@ -50,11 +51,11 @@ import { gatewayLogin } from "../lib/login.js";
 import {
   GOOGLE_ADD_ACCOUNT,
   joinCase,
+  joinedTeam,
   leaveTeam,
   loginTab,
   personName,
   registerWith,
-  relogin,
   sameAccountAgain,
   sendRequest,
   switchAccount,
@@ -62,10 +63,9 @@ import {
   teamHostOf,
   teamLogin,
   teamMe,
-  teamStatus,
 } from "../lib/team.js";
 import { app, dropSetup, keepSetup, keptSetup, loadContext, refreshStatus, savePrefs } from "../lib/state.js";
-import { button, busy, notice, spinner, tag, toast } from "../lib/ui.js";
+import { button, notice, spinner, tag } from "../lib/ui.js";
 
 const TITLE = "팀 메모리 시작하기";
 const STARTS = [
@@ -86,12 +86,6 @@ const NEXT_ACTIONS = {
   "docker-install-approval": "Docker Desktop을 설치하려면 Windows가 묻는 창에서 예를 눌러야 합니다. 누른 뒤 다시 시도를 누르세요.",
 };
 
-/** What a CLI answer that did not succeed says, in one line. */
-function problem(result, fallback) {
-  const lines = [...(result?.issues || []), result?.error, result?.next].filter(Boolean).map(explainWarning).filter(Boolean);
-  return lines.join(" ") || fallback;
-}
-
 /** A Google login's id under its name, only when another one has the same name. */
 function idpSub(idp, idps) {
   const named = (idp.name || "").trim();
@@ -108,6 +102,17 @@ function joined(names) {
 function currentServer(context) {
   if (!context?.configured) return "none";
   return sameServer(context.honcho?.url, context.localServer?.apiUrl) ? "here" : "remote";
+}
+
+/**
+ * Whether a computer joins a team by itself, its setup left as it is: one that
+ * collects, or one in a team that stores nothing. A server installed but not
+ * collecting, or a Honcho this app did not make answering (`answers`), takes every
+ * step. `mode` is how first setup ended here (app.prefs.mode).
+ */
+export function joinsAlone(context, { mode = "", answers = false } = {}) {
+  if (context?.configured) return true;
+  return !context?.localServer && !answers && joinedTeam(context?.team, mode);
 }
 
 /** What the window starts from: nothing chosen, at a team link's team when it came from one. */
@@ -133,13 +138,131 @@ function startState(link, context) {
   };
 }
 
+// ── What the window does, from its state and this computer's context ──
+
+const inTeamPath = (state) => ["join", "link", "make"].includes(state.path);
+/** The server the hub says this person has. */
+const ownServer = (state) => state.team.me?.servers?.[0] || null;
+/** The server is the one this computer runs and already shares through the team. */
+const runsHere = (server, context) => Boolean(server && context?.localServer && server.host === context?.team?.localHost);
+/** This computer made the server: the hub keeps the name of the computer that made it. */
+const madeOn = (server, context) => Boolean(server?.createdOn && context?.team?.computer && server.createdOn === context.team.computer);
+/** A server to make here first: one chosen here, with none on this computer yet. */
+const newServer = (state, context) => state.draft.server === "here" && !context?.localServer;
+
+/** The teammates ticked in the 팀원 step, with their servers. */
+function chosenMates(state) {
+  if (!inTeamPath(state) || state.path === "make") return [];
+  const servers = new Map((state.team.directory?.servers || []).map((server) => [server.owner, server]));
+  return (state.team.directory?.people || [])
+    .filter((person) => state.mates.has(person.email) && servers.has(person.email))
+    .map((person) => ({ email: person.email, name: personName(person), host: servers.get(person.email).host }));
+}
+
+/**
+ * The peer name the team gives this person, on a computer set up already that
+ * joins it alone with another one in its setup: `{ from, to }`, or null when they
+ * are the same. The hub names a person after their email (server/hub/hub.mjs), and
+ * a computer takes that name at its setup.
+ */
+export function peerChange(state, context) {
+  const to = state.team.me?.peer || "";
+  const from = context?.user?.peerId || "";
+  return state.joinOnly && context?.configured && to && to !== from ? { from, to } : null;
+}
+
+/**
+ * The rows of 적용, as data: each names what it runs by its `key` (RUNS in
+ * openSetup), so a window opened again runs the rows left from what it kept. The
+ * last is 점검. A computer set up already that joins a team alone has the team's
+ * rows only: its peer name when the team's is another, its server opened to the
+ * team, the teammates asked, and 점검.
+ */
+export function applyRows(state, context) {
+  const { draft } = state;
+  const tasks = [];
+  const install = newServer(state, context);
+  const mine = ownServer(state);
+  // In a team this computer's server opens to it unless it is open already; joining
+  // alone, also unless the person has a server on another computer.
+  const opens = inTeamPath(state) && draft.server === "here" && !runsHere(mine, context) && (!state.joinOnly || !mine || madeOn(mine, context));
+  const share = { key: "share", title: "팀에 내 서버 열기", sub: "팀원이 승인을 받아 물을 수 있는 내 서버 주소를 만듭니다." };
+  if (state.joinOnly) {
+    const peer = peerChange(state, context);
+    if (peer) tasks.push({ label: "대화 수집" }, { key: "peer", title: "peer 이름 바꾸기", sub: peer.from ? `${peer.from} → ${peer.to}` : peer.to });
+    if (opens) tasks.push({ label: "기억 서버" }, share);
+  } else {
+    if (draft.server !== "none") tasks.push({ label: "기억 서버" });
+    if (install) {
+      tasks.push({ key: "install", title: "기억 서버 설치", sub: "Docker와 Ollama, Honcho, 구독 게이트웨이를 받아 설치합니다. 처음에는 몇 분 걸립니다." });
+      for (const [backend, name] of BACKENDS) {
+        if (!state.models.chosen.has(backend)) continue;
+        const count = state.models.counts[backend];
+        for (let index = 1; index <= count; index += 1) {
+          tasks.push({ key: "login", backend, index, title: `${name} 계정 로그인${count > 1 ? ` ${index}/${count}` : ""}`, sub: "브라우저에서 로그인을 마치세요." });
+        }
+      }
+      tasks.push({ key: "prepare", title: "기억 서버 준비", sub: "서버 설정을 쓰고 임베딩 모델을 받습니다. 처음에는 오래 걸립니다." });
+      tasks.push({ key: "start", title: "기억 서버 켜기" });
+    } else if (draft.server === "found") {
+      tasks.push({ key: "found", title: "내 서버 연결", sub: mine?.host || "" });
+    } else if (draft.server !== "none") {
+      const host = draft.server === "remote" ? draft.remoteUrl.trim() : context?.localServer?.apiUrl || "";
+      tasks.push({ key: "reach", title: draft.server === "remote" ? "내 서버 연결" : "이 컴퓨터 서버 연결", sub: host.replace(/^https?:\/\//, "") });
+    }
+    if (opens) tasks.push(share);
+    if (draft.company?.on) tasks.push({ key: "company", title: "회사 서버에 승인 요청", sub: draft.company.host });
+    if (draft.server !== "none") {
+      tasks.push({ label: "에이전트" });
+      const agents = Object.keys(AGENTS).filter((name) => draft.agents?.has(name));
+      const held = pastToPut(draft) ? HELD : null;
+      agents.forEach((name, index) => tasks.push({ key: "plugin", first: !index, title: `${AGENTS[name]}에 플러그인 설치`, sub: held }));
+      tasks.push({ label: "지난 대화" });
+      tasks.push({ key: "line", title: "시작한 시각순으로 줄 세우기" });
+      if (draft.past.totals?.dupes) tasks.push({ key: "dupes", title: "겹치는 대화 빼기" });
+      if (!install) tasks.push({ key: "onServer", title: "서버에 있는 대화 빼기" });
+      tasks.push({ key: "fill", title: "시간순으로 쌓기 시작" });
+    }
+  }
+  const mates = chosenMates(state);
+  if (mates.length) {
+    tasks.push({ label: "팀원" });
+    tasks.push({ key: "mates", title: `${joined(mates.map((mate) => mate.name))}에게 열람 요청` });
+  }
+  tasks.push({ label: "점검" }, { key: "check", title: "점검", sub: checkSub(state) });
+  return tasks.map((task) => (task.label ? task : { state: "wait", ...task }));
+}
+
+/** What 점검 looks at: the team's logins for a setup that stores nothing. */
+function checkSub(state) {
+  return checkingText({ team: state.draft.server === "none", verify: state.verify });
+}
+
+/** The end's button, as [label, screen]: a computer that joined a team alone, or stores nothing, has its news on the team screen. */
+export function endButton(state) {
+  if (state.path === "make") return ["관리자 탭 열기", "admin"];
+  if (state.draft.server === "none" || state.joinOnly) return ["팀 화면 열기", "team"];
+  return ["대시보드 열기", "dashboard"];
+}
+
 const KEPT_VERSION = 1;
+
+/** An address as it is kept: its origin and path, so nothing typed after them is. */
+function plainUrl(value) {
+  try {
+    const url = new URL(String(value || "").trim());
+    return `${url.origin}${url.pathname}`.replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
 
 /**
  * What a window keeps of its setup once 적용 starts (lib/state.js): the choices the
  * rows run with and each row as it stands. Fields are taken one by one, so no secret
- * the steps hold (a server's token, the Cloudflare API token) is ever among them.
- * A server that needs a token is then refused at 점검, whose 대화 수집 수정 takes it.
+ * the steps hold (a server's token, the Cloudflare API token) is ever among them,
+ * and an address keeps its origin and path only. A server that needs a token is
+ * then refused at 점검, whose 대화 수집 수정 takes it.
  */
 export function setupSnapshot(state) {
   const { draft, team } = state;
@@ -150,12 +273,10 @@ export function setupSnapshot(state) {
     path: state.path,
     joinOnly: Boolean(state.joinOnly),
     verify: Boolean(state.verify),
-    // What Docker Desktop's window asks, once the plan said (undefined until then).
-    docker: state.docker,
     team: { hub: team.hub, name: team.name, me: team.me, directory: team.directory },
     draft: {
       server: draft.server,
-      remoteUrl: draft.remoteUrl,
+      remoteUrl: plainUrl(draft.remoteUrl),
       userPeer: draft.userPeer,
       workspace: draft.workspace,
       agents: list(draft.agents),
@@ -186,18 +307,24 @@ export function setupSnapshot(state) {
   };
 }
 
+/** A setup kept half way that a window can carry on: kept by this version, with its rows. */
+export function resumable(kept) {
+  return kept?.version === KEPT_VERSION && Array.isArray(kept.tasks) && kept.tasks.length > 0;
+}
+
 /**
  * A window opened again on a setup kept half way: its state, at 적용, the rows done
- * kept done and the one that was running or stopped to run again. Null when there
- * is nothing to carry on, or `link` is another team's: that link starts anew.
+ * kept done and the one that was running or stopped to run again. Docker Desktop's
+ * window is read from the plan again, which a restart may have changed. Null when
+ * there is nothing to carry on, or `link` is another team's: that link starts anew.
  */
 export function restoreSetup(kept, context, { link = "" } = {}) {
-  if (kept?.version !== KEPT_VERSION || !Array.isArray(kept.tasks) || !kept.tasks.length) return null;
+  if (!resumable(kept)) return null;
   if (link && kept.team?.hub !== link) return null;
   const state = startState(kept.path === "link" ? kept.team?.hub || "" : "", context);
   const saved = kept.draft || {};
   const draft = state.draft;
-  Object.assign(state, { path: kept.path || null, joinOnly: Boolean(kept.joinOnly), verify: Boolean(kept.verify), docker: kept.docker });
+  Object.assign(state, { path: kept.path || null, joinOnly: Boolean(kept.joinOnly), verify: Boolean(kept.verify) });
   Object.assign(state.team, { hub: kept.team?.hub || "", name: kept.team?.name || "", me: kept.team?.me || null, directory: kept.team?.directory || null });
   Object.assign(draft, {
     server: saved.server || draft.server,
@@ -235,11 +362,13 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
   let link = teamHostOf(team) || team;
   // The team this computer is in, until 옮기고 로그인 leaves it.
   let ownTeam = app.context?.team || null;
-  // A setup kept half way carries on at 적용; another team's link starts anew.
+  // A setup kept half way opens at 적용, its rows done kept done, and waits for 이어서
+  // 하기 or 처음부터; another team's link starts anew.
   const kept = keptSetup();
   const resumed = restoreSetup(kept, app.context, { link });
   if (kept && !resumed) dropSetup();
-  const state = resumed || startState(link, app.context);
+  let state = resumed || startState(link, app.context);
+  let paused = Boolean(resumed);
   let at = 0;
   let steps = [];
   let keys = [];
@@ -257,33 +386,32 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     },
   });
 
-  const inTeam = () => ["join", "link", "make"].includes(state.path);
+  const inTeam = () => inTeamPath(state);
   /** The team this computer leaves first, when the login is to another team's address. */
   const teamToLeave = () => (["join", "link"].includes(state.path) && joinCase(ownTeam, state.team.hub) === "move" ? ownTeam : null);
   const me = () => state.team.me;
-  const myServer = () => me()?.servers?.[0] || null;
-  /** The server is the one this computer runs and already shares through the team. */
-  const thisComputers = (server) => Boolean(server && app.context?.localServer && server.host === app.context?.team?.localHost);
-  /** This computer made the server: the hub keeps the name of the computer that made it. */
-  const madeHere = (server) => Boolean(server?.createdOn && app.context?.team?.computer && server.createdOn === app.context.team.computer);
+  const myServer = () => ownServer(state);
+  const thisComputers = (server) => runsHere(server, app.context);
+  const madeHere = (server) => madeOn(server, app.context);
   /** The team's company server, when this person is not its owner. */
   const company = () => (state.team.directory?.servers || []).find((server) => server.company && server.owner !== me()?.email) || null;
 
   // ── The steps, which follow the first choice and the server chosen ──
 
   /**
-   * The first choice, or a link's. On a computer set up already, a team's address
-   * joins that team alone, and the computer goes on collecting where it does now.
+   * The first choice, or a link's. On a computer that collects, or one in a team
+   * that stores nothing, a team's address joins that team alone, and the computer
+   * goes on as it does now (joinsAlone).
    */
   function choose(path) {
     const joinedOnly = state.joinOnly;
     state.path = path;
-    state.joinOnly = !firstRun && ["join", "link"].includes(path);
+    state.joinOnly = !firstRun && ["join", "link"].includes(path) && joinsAlone(app.context, { mode: app.prefs.mode, answers: app.status?.honcho?.state === "on" });
     if (state.joinOnly) state.draft.server = currentServer(app.context);
     else if (joinedOnly) state.draft.server = collectDraft(app.context).server;
   }
 
-  const needsModel = () => state.draft.server === "here" && !app.context?.localServer;
+  const needsModel = () => newServer(state, app.context);
   const stepKeys = () => (state.joinOnly
     ? [...(state.path === "join" ? ["team"] : []), "login", "mates"]
     : [
@@ -796,78 +924,9 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     win.foot(back, [waiting, primary]);
   }
 
-  // ── 적용 중: each thing the setup does, one row each ──
+  // ── 적용 중: each thing the setup does, one row each (applyRows) ──
 
-  /**
-   * The rows of 적용, as data: each names what it runs by its `key` (RUNS), so a
-   * window opened again runs the rows left from what it kept.
-   */
-  function buildTasks() {
-    const { draft } = state;
-    const tasks = [];
-    const install = needsModel();
-    // In a team this computer's server opens to it unless it is open already; joining
-    // alone, also unless the person has a server on another computer.
-    const opens = inTeam() && draft.server === "here" && !thisComputers(myServer()) && (!state.joinOnly || !myServer() || madeHere(myServer()));
-    const share = { key: "share", title: "팀에 내 서버 열기", sub: "팀원이 승인을 받아 물을 수 있는 내 서버 주소를 만듭니다." };
-    if (state.joinOnly) {
-      if (opens) tasks.push({ label: "기억 서버" }, share);
-    } else {
-      if (draft.server !== "none") tasks.push({ label: "기억 서버" });
-      if (install) {
-        tasks.push({ key: "install", title: "기억 서버 설치", sub: "Docker와 Ollama, Honcho, 구독 게이트웨이를 받아 설치합니다. 처음에는 몇 분 걸립니다." });
-        for (const [backend, name] of BACKENDS) {
-          if (!state.models.chosen.has(backend)) continue;
-          const count = state.models.counts[backend];
-          for (let index = 1; index <= count; index += 1) {
-            tasks.push({ key: "login", backend, index, title: `${name} 계정 로그인${count > 1 ? ` ${index}/${count}` : ""}`, sub: "브라우저에서 로그인을 마치세요." });
-          }
-        }
-        tasks.push({ key: "prepare", title: "기억 서버 준비", sub: "서버 설정을 쓰고 임베딩 모델을 받습니다. 처음에는 오래 걸립니다." });
-        tasks.push({ key: "start", title: "기억 서버 켜기" });
-      } else if (draft.server === "found") {
-        tasks.push({ key: "found", title: "내 서버 연결", sub: myServer()?.host || "" });
-      } else if (draft.server !== "none") {
-        const host = draft.server === "remote" ? draft.remoteUrl.trim() : app.context?.localServer?.apiUrl || "";
-        tasks.push({ key: "reach", title: draft.server === "remote" ? "내 서버 연결" : "이 컴퓨터 서버 연결", sub: host.replace(/^https?:\/\//, "") });
-      }
-      if (opens) tasks.push(share);
-      if (draft.company?.on) tasks.push({ key: "company", title: "회사 서버에 승인 요청", sub: draft.company.host });
-      if (draft.server !== "none") {
-        tasks.push({ label: "에이전트" });
-        const agents = Object.keys(AGENTS).filter((name) => draft.agents?.has(name));
-        const held = pastToPut(draft) ? HELD : null;
-        agents.forEach((name, index) => tasks.push({ key: "plugin", first: !index, title: `${AGENTS[name]}에 플러그인 설치`, sub: held }));
-        tasks.push({ label: "지난 대화" });
-        tasks.push({ key: "line", title: "시작한 시각순으로 줄 세우기" });
-        if (draft.past.totals?.dupes) tasks.push({ key: "dupes", title: "겹치는 대화 빼기" });
-        if (!install) tasks.push({ key: "onServer", title: "서버에 있는 대화 빼기" });
-        tasks.push({ key: "fill", title: "시간순으로 쌓기 시작" });
-      }
-    }
-    const mates = matesChosen();
-    if (mates.length) {
-      tasks.push({ label: "팀원" });
-      tasks.push({ key: "mates", title: `${joined(mates.map((mate) => mate.name))}에게 열람 요청` });
-    }
-    tasks.push({ label: "점검" }, { key: "check", title: "점검", sub: checkSub() });
-    return tasks.map((task) => (task.label ? task : { state: "wait", ...task }));
-  }
-
-  /** What 점검 looks at: the team's logins for a setup that stores nothing. */
-  function checkSub() {
-    if (state.draft.server === "none") return "팀 로그인, 팀 서버 로그인";
-    return state.verify ? "대화 모으기, 기억 서버, 임베딩" : "대화 모으기, 기억 서버";
-  }
-
-  /** The teammates ticked in the 팀원 step, with their servers. */
-  function matesChosen() {
-    if (!inTeam() || state.path === "make") return [];
-    const servers = new Map((state.team.directory?.servers || []).map((server) => [server.owner, server]));
-    return (state.team.directory?.people || [])
-      .filter((person) => state.mates.has(person.email) && servers.has(person.email))
-      .map((person) => ({ email: person.email, name: personName(person), host: servers.get(person.email).host }));
-  }
+  const matesChosen = () => chosenMates(state);
 
   async function prepare(task) {
     // Docker Desktop's own window comes up during the install: what to do in it shows from the start.
@@ -919,13 +978,18 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     task.sub = app.context?.localServer?.apiUrl?.replace(/^https?:\/\//, "") || "";
   }
 
-  /** The server on this computer and its host services; `again` is the button to press once more. */
-  async function startServer(again) {
-    const started = await post("/api/server/start", { profile: "personal" });
-    // What did not come up on this computer often comes up on a second try.
-    if (!started.ok) throw new Error(`${problem(started, "기억 서버를 켜지 못했습니다.")}${started.host ? ` ${again}를 누르세요.` : ""}`);
-    await post("/api/host/start", {}).catch(() => {});
-    await loadContext();
+  /**
+   * The peer name the team gives this person, on a computer set up already that
+   * joins it alone: setup apply with that name only keeps the server, the folders,
+   * the agents and the rest as they are.
+   */
+  async function renamePeer() {
+    const peer = peerChange(state, app.context);
+    if (!peer) return;
+    const outcome = await applySetup({ userPeer: peer.to });
+    if (!outcome.ok) throw new Error(problem(outcome.result, "peer 이름을 바꾸지 못했습니다."));
+    state.applied = outcome.result;
+    await loadContext().catch(() => {});
   }
 
   async function reach() {
@@ -1029,20 +1093,14 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
   }
 
   // 점검: doctor's checks and, for the server here, `server verify`; the team's logins
-  // for a setup that stores nothing (lib/collect.js). The row ends whatever it finds:
+  // for a setup that stores nothing (lib/check.js). The row ends whatever it finds:
   // the end screen shows what it found.
-  async function checkAll() {
+  function checkAll() {
     if (state.draft.server === "none") {
       const host = matesChosen()[0]?.host || state.team.directory?.servers?.[0]?.host || "";
-      state.check = teamCheckRows(await teamStatus().catch(() => null), { host });
-      return;
+      return checkTeam({ host });
     }
-    await loadContext().catch(() => {});
-    const [status, verify] = await Promise.all([
-      get("/api/status").catch(() => null),
-      state.verify ? post("/api/server/verify", { profile: "personal" }).catch((error) => ({ ok: false, error: error.message })) : null,
-    ]);
-    state.check = checkRows(status?.doctor, verify, { context: app.context, expected: expectedServer(), done: state.applied });
+    return checkHere({ verify: state.verify, expected: expectedServer(), done: state.applied });
   }
 
   /** The server this setup chose for the conversations, which 점검 expects them to go to. */
@@ -1068,8 +1126,9 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     dupes: dupesOut,
     onServer: serverOut,
     fill: startFill,
+    peer: renamePeer,
     mates: requestMates,
-    check: checkAll,
+    check: async () => { state.check = await checkAll(); },
   };
 
   /** What this setup chose and did so far, for a window opened again (lib/state.js). */
@@ -1079,7 +1138,8 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     const running = state.tasks.find((task) => task.state === "run");
     const failed = state.tasks.find((task) => task.state === "bad");
     win.body(
-      h("h3", {}, "설정하는 중입니다"),
+      h("h3", {}, "적용 중"),
+      paused ? h("p", { class: "lead" }, "이어서 하기를 누르면 남은 줄부터 합니다.") : null,
       progressList(state.tasks.map((task) => {
         if (task.label) return task;
         const sub = task.state === "bad" ? task.error : task.sub;
@@ -1088,8 +1148,22 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
         return { state: task.state, title: task.title, sub: docker ? [sub, docker.map((line) => h("div", { class: "hint" }, line))] : sub };
       })),
       running?.extra || null);
+    // A window opened again runs nothing by itself: the rows left wait for 이어서 하기.
+    if (paused) {
+      win.foot(button("처음부터", { kind: "quiet", onClick: restart }), button("이어서 하기", { kind: "primary", onClick: () => { paused = false; run(); } }));
+      return;
+    }
     win.foot(failed ? button("설정으로 돌아가기", { kind: "quiet", onClick: () => { state.tasks = []; dropSetup(); drawStep(); } }) : null,
       failed ? button(failed.retry || "다시 시도", { kind: "primary", onClick: () => run() }) : null);
+  }
+
+  /** 처음부터: what the window kept goes, and it is back at its first step. */
+  function restart() {
+    dropSetup();
+    paused = false;
+    state = startState(link, app.context);
+    at = 0;
+    begin();
   }
 
   async function run() {
@@ -1120,7 +1194,7 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     // A server on this computer is checked end to end at 점검.
     state.verify = state.draft.server === "here";
     win.steps(stepper(stepKeys().map((key) => LABELS[key]), "done"));
-    state.tasks = buildTasks();
+    state.tasks = applyRows(state, app.context);
     keep();
     run();
   }
@@ -1133,93 +1207,52 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     // The setup just written names this person: the menu behind the window shows them
     // now, not 이름 미설정 until the window closes.
     loadContext().catch(() => {}).then(() => refreshStatus());
-    const items = state.applied ? agentTodo(state.applied, state.draft.agents) : [];
-    if (state.requested.length) items.push(TODO_BELL);
-    if (state.path === "make") items.push({ title: "관리자 탭", text: "팀원 더하기로 팀원 이메일을 넣고, 팀 주소 줄의 복사를 눌러 초대 문구를 보내세요." });
-    const agentsOnly = items.every((item) => Object.values(AGENTS).includes(item.title));
     const chatOnly = state.draft.server === "none";
-    // A computer set up already that joined alone has its news on the team screen.
-    const next = state.path === "make" ? ["관리자 탭 열기", "admin"]
-      : chatOnly || state.joinOnly ? ["팀 화면 열기", "team"]
-        : ["대시보드 열기", "dashboard"];
+    const [nextLabel, nextScreen] = endButton(state);
     const names = matesChosen().filter((mate) => state.requested.includes(mate.email)).map((mate) => mate.name);
     const heading = h("h3", {}, "점검하는 중입니다");
-    const box = h("div", {});
-    const said = h("div", {});
+    const left = h("div", {});
     const lead = h("div", {});
-    // What the last button said: doctor --fix's line, or why the server did not start.
-    let note = null;
-    const paint = () => {
-      if (state.check) {
-        const failed = state.check.filter((row) => !row.ok).length;
-        const count = items.length + failed;
-        // Waiting only when this setup asked someone: the admin who made a team asked nobody.
-        heading.textContent = chatOnly && state.requested.length && !failed ? "승인 기다리는 중" : count ? `할 일 ${count}개` : "다 됐습니다";
-        clear(lead, !items.length && !failed && !chatOnly ? h("p", { class: "lead" }, "이제 대화가 끝날 때마다 기억 서버에 쌓입니다.") : null);
-      }
-      clear(box, progressList(checkLines()));
-      clear(said, note ? (note.bad ? notice("bad", note.text) : h("div", { class: "hint" }, note.text)) : null);
+    /**
+     * What is left once 점검 answers: what to do in each agent, but for an agent
+     * whose missing plugin its row already copies the commands for, the bell, and
+     * the admin's first step.
+     */
+    const todo = (rows) => {
+      const items = state.applied ? agentTodo(state.applied, state.draft.agents, { missing: missingPlugins(rows) }) : [];
+      if (state.requested.length) items.push(TODO_BELL);
+      if (state.path === "make") items.push({ title: "관리자 탭", text: "팀원 더하기로 팀원 이메일을 넣고, 팀 주소 줄의 복사를 눌러 초대 문구를 보내세요." });
+      return items;
     };
-    const again = async () => {
-      state.check = null;
-      paint();
-      await checkAll();
-      paint();
+    const paint = (rows) => {
+      const items = todo(rows);
+      const failed = failures(rows);
+      const count = items.length + failed;
+      // Waiting only when this setup asked someone: the admin who made a team asked nobody.
+      heading.textContent = chatOnly && state.requested.length && !failed ? "승인 기다리는 중" : count ? `할 일 ${count}개` : "다 됐습니다";
+      const agentsOnly = items.every((item) => Object.values(AGENTS).includes(item.title));
+      clear(left, items.length ? [h("div", { class: "label" }, agentsOnly ? "에이전트에서 할 일" : "남은 할 일"), todoList(items)] : null);
+      clear(lead, !items.length && !failed && !chatOnly ? h("p", { class: "lead" }, "이제 대화가 끝날 때마다 기억 서버에 쌓입니다.") : null);
     };
-    /** The button a failed row offers; each but 명령 복사 and 대화 수집 수정 checks again after it. */
-    const press = (action) => {
-      if (action.kind === "copy") return button(action.label, { kind: "small", onClick: async () => { await copyText(action.text); toast("명령을 복사했습니다"); } });
-      if (action.kind === "collect") return button(action.label, { kind: "small", onClick: () => { win.close("done"); onDone?.("computer/collect"); } });
-      if (action.kind === "login") {
-        return button(action.label, { kind: "small", onClick: (event) => {
-          // Opened in this click, so the browser lets it.
-          const tab = loginTab("Google 로그인으로 넘어가는 중입니다…");
-          busy(event.currentTarget, async () => {
-            note = null;
-            await relogin({ kind: action.login, host: action.host, tab }).catch((error) => {
-              tab?.close();
-              note = { text: error.message, bad: true };
-            });
-            await again();
-          });
-        } });
-      }
-      return button(action.label, { kind: "small", onClick: (event) => busy(event.currentTarget, async () => {
-        note = null;
-        if (action.kind === "fix") {
-          // The app may start again on its new version, which ends this request.
-          const result = await post("/api/doctor/fix", {}).catch(() => null);
-          const text = result?.said || (result?.ok === false && !result.checks ? problem(result, "고치지 못했습니다.") : "");
-          // A fix that stopped, or one refused while an update or another fix runs.
-          if (text) note = { text, bad: result.fixed ? result.fixed.ok === false : result.ok === false };
-        }
-        if (action.kind === "start") await startServer("서버 켜기").catch((error) => { note = { text: error.message, bad: true }; });
-        await again();
-      }) });
-    };
-    /** The 점검 box: how it went, then a row each, a failed one with what is wrong and its buttons. */
-    const checkLines = () => {
-      if (!state.check) return [{ label: "점검" }, { state: "run", title: "점검", sub: checkSub() }];
-      const failed = state.check.filter((row) => !row.ok).length;
-      return [
-        { label: ["점검 ", failed ? tag(`실패 ${failed}개`, "bad") : tag("모두 통과", "ok")] },
-        ...state.check.map((row) => (row.ok
-          ? { state: "ok", title: row.name, end: row.value ? h("span", { class: "mono muted" }, row.value) : null }
-          : { state: "bad", title: row.name, sub: [row.problems.join(" "), h("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px" } }, row.actions.map(press))] })),
-      ];
-    };
+    const check = checkBox({
+      check: checkAll,
+      // What the 점검 row found; a window opened again after that row has it run once more.
+      rows: state.check || null,
+      sub: checkSub(state),
+      onCollect: () => { win.close("done"); onDone?.("computer/collect"); },
+      onChecked: (rows) => {
+        state.check = rows;
+        paint(rows);
+      },
+    });
     win.body(
       heading,
       chatOnly && names.length ? h("p", { class: "lead" }, `${joined(names)}에게 열람 요청을 보냈습니다.`) : null,
-      box,
-      said,
-      items.length ? [h("div", { class: "label" }, agentsOnly ? "에이전트에서 할 일" : "남은 할 일"), todoList(items)] : null,
+      check.root,
+      left,
       lead,
       state.filling ? fillJob() : null);
-    win.foot(null, button(next[0], { kind: "primary", onClick: () => { win.close("done"); onDone?.(next[1]); } }));
-    // A window opened again after 점검 was done has it run once more.
-    if (state.check) paint();
-    else again();
+    win.foot(null, button(nextLabel, { kind: "primary", onClick: () => { win.close("done"); onDone?.(nextScreen); } }));
   }
 
   /** 지난 대화 쌓는 중: how far the run got, asked again while the window shows it. */
@@ -1270,20 +1303,25 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     drawStep();
   };
 
+  /** The first step: a team link's login, whose button opens the tab, or the start cards. */
+  function begin() {
+    if (link) {
+      choose("link");
+      drawStep();
+    } else {
+      drawStart();
+    }
+  }
+
   detectAgents({ fresh: true });
   loadProjects({ fresh: true });
   if (resumed) {
-    // Back at 적용: 설정으로 돌아가기 goes to the last step, as after 적용.
+    // Back at 적용, paused: 설정으로 돌아가기 goes to the last step, as after 적용.
     at = stepKeys().length - 1;
     win.steps(stepper(stepKeys().map((key) => LABELS[key]), "done"));
-    run();
-  } else if (link) {
-    // A team link starts at the login, whose button opens the tab.
-    choose("link");
-    at = 0;
-    drawStep();
+    draw();
   } else {
-    drawStart();
+    begin();
   }
   win.open();
   return win;

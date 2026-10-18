@@ -1,15 +1,16 @@
 // 기억 설정: what this computer does with its own conversations and agents, as three
 // blocks on one page. 대화 수집's 수정 is first setup's own steps (lib/collect.js,
-// lib/past.js); 지난 대화 shows where the past conversations came from and how far
-// they went in, and its 더 가져오기 opens the same steps at 지난 대화; MCP 도구
-// opens its own window. An address can name a window to open with the page
-// (computer/collect, computer/past, computer/tools), which is how links and the
-// setup skill open them. Letting the owner's other computers in is 서버 → 공유
-// (share.js).
+// lib/past.js), and its 적용 ends with first setup's 점검 (lib/check.js); 지난 대화
+// shows where the past conversations came from and how far they went in, and its
+// 더 가져오기 opens the same steps at 지난 대화; MCP 도구 opens its own window. An
+// address can name a window to open with the page (computer/collect, computer/past,
+// computer/tools), which is how links and the setup skill open them. Letting the
+// owner's other computers in is 서버 → 공유 (share.js).
 import { get, post } from "../lib/api.js";
 import { h, clear } from "../lib/dom.js";
 import { number } from "../lib/format.js";
 import { block, kv, modal, stepper } from "../lib/kit.js";
+import { checkBox, checkHere, checkingText, failures } from "../lib/check.js";
 import {
   AGENTS,
   agentsStep,
@@ -29,7 +30,7 @@ import {
 import { lateLine, monthText, pastStep, periodText, planPast, shortDay, startPast } from "../lib/past.js";
 import { sendRequest, teamDirectory } from "../lib/team.js";
 import { TOOL_GROUPS, TOOL_INFO } from "../lib/tools.js";
-import { app, loadContext, refreshStatus } from "../lib/state.js";
+import { app, dropSetup, loadContext, refreshStatus } from "../lib/state.js";
 import { button, busy, errorNotice, notice, pageHead, spinner, tag, toast, toggle } from "../lib/ui.js";
 
 const STEPS = ["서버", "에이전트", "지난 대화", "프로젝트"];
@@ -73,7 +74,8 @@ function collectBlock(openCollect) {
 
 /**
  * 대화 수집 → 수정: first setup's steps for this computer, any step one press away;
- * 더 가져오기 opens it at 지난 대화 (`at`).
+ * 더 가져오기 opens it at 지난 대화 (`at`). 적용 ends with 점검, whose 대화 수집 수정
+ * is this window's first step again.
  */
 function openCollectWindow(onApplied, { at: startAt = 0 } = {}) {
   const context = app.context || {};
@@ -109,6 +111,8 @@ function openCollectWindow(onApplied, { at: startAt = 0 } = {}) {
     }
     const outcome = await applySetup(setupBody(draft, context));
     if (!outcome.ok) { clear(problem, planProblems(outcome.result) || notice("bad", "적용하지 못했습니다.")); return; }
+    // This setup is the one that counts now: a first setup kept half way would undo it.
+    dropSetup();
     // The past conversations the new choice adds, in the order they were started:
     // what the server holds already is left out.
     try {
@@ -136,12 +140,31 @@ function openCollectWindow(onApplied, { at: startAt = 0 } = {}) {
       clear(problem, notice("bad", h("b", {}, "내 서버에는 적용했지만 다른 서버는 다 바꾸지 못했습니다."), h("ul", {}, failed.map((line) => h("li", {}, line)))));
       return;
     }
-    win.close("ok");
     await loadContext();
     refreshStatus();
     onApplied?.();
-    toast("적용했습니다.", "ok");
+    showCheck(outcome.result);
   });
+
+  /** What 적용 set up, checked as first setup's end checks it; `done` is what setup apply said. */
+  function showCheck(done) {
+    const verify = draft.server === "here" && Boolean(context.localServer);
+    const expected = draft.server === "remote" ? draft.remoteUrl.trim() : context.localServer?.apiUrl || null;
+    const heading = h("h3", {}, "점검하는 중입니다");
+    const check = checkBox({
+      check: () => checkHere({ verify, expected, done }),
+      sub: checkingText({ verify }),
+      onCollect: () => goTo(0),
+      onChecked: (rows) => {
+        const failed = failures(rows);
+        heading.textContent = failed ? `할 일 ${failed}개` : "다 됐습니다";
+      },
+    });
+    win.steps(stepper(STEPS, "done"));
+    win.body(heading, check.root);
+    win.foot(null, button("닫기", { kind: "primary", onClick: () => win.close("ok") }));
+  }
+
   function draw() {
     steps = build();
     clear(problem);

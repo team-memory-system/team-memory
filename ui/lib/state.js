@@ -12,7 +12,8 @@ function readPrefs() {
 /**
  * First setup as far as it got (views/setup.js): the choices and the rows of 적용,
  * with no secret in them, so a window closed half way, or a computer restarted on
- * the way, opens at 적용 again. Kept in this browser until the window reaches its end.
+ * the way, opens at 적용 again. Kept in this browser until the window reaches its
+ * end, 처음부터 is pressed, or 대화 수집's 수정 window applies a setup of its own.
  */
 export function keepSetup(kept) {
   try { localStorage.setItem(SETUP_KEY, JSON.stringify(kept)); } catch {}

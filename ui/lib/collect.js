@@ -12,7 +12,6 @@ import { number } from "./format.js";
 import { folderTreeTable, openAtFirst, treeRows } from "./folder-tree.js";
 import { field, opt, opts } from "./kit.js";
 import { loadOverview, overviewTotals, pastDraft, pastSummary } from "./past.js";
-import { loginEndedText } from "./team.js";
 import { details, notice, spinner, tag } from "./ui.js";
 
 export const AGENTS = { claude: "Claude Code", codex: "Codex" };
@@ -113,6 +112,23 @@ export function activeTargets(draft) {
 // ── 서버 ─────────────────────────────────────────────────
 
 /**
+ * What is wrong with my server's address on another computer, as typed: null when
+ * it can be used. A token goes in its own field, never in the address, which a
+ * window keeps when it is closed half way (views/setup.js).
+ */
+export function remoteUrlProblem(value) {
+  let url;
+  try {
+    url = new URL(String(value || "").trim());
+  } catch {
+    url = null;
+  }
+  if (!url || !/^https?:$/.test(url.protocol)) return "다른 컴퓨터 서버의 주소를 http:// 나 https:// 로 시작하게 넣으세요.";
+  if (url.username || url.password || url.search || url.hash) return "기억 서버 주소에 아이디·비밀번호·물음표 뒤 값을 넣지 마세요. token은 서버 token 칸에 넣습니다.";
+  return null;
+}
+
+/**
  * Where to collect. `choices` lists what this window offers: "here" (this computer's
  * server, made now when there is none), "remote" (my server on another computer)
  * and "none" (store nothing, for someone who only asks teammates). `onPick(choice)`
@@ -170,12 +186,10 @@ export function serverStep(draft, context, { choices = ["here", "remote"], peer 
     body,
     check() {
       if (draft.server === "remote") {
-        try {
-          const url = new URL(draft.remoteUrl.trim());
-          if (!/^https?:$/.test(url.protocol)) throw new Error();
-        } catch {
+        const wrong = remoteUrlProblem(draft.remoteUrl);
+        if (wrong) {
           urlInput.focus();
-          return "다른 컴퓨터 서버의 주소를 http:// 나 https:// 로 시작하게 넣으세요.";
+          return wrong;
         }
         if (Boolean(draft.accessClientId.trim()) !== Boolean(draft.accessClientSecret.trim())) return "Access 서비스 토큰은 ID와 비밀을 함께 넣어야 합니다.";
       }
@@ -598,6 +612,12 @@ export function explainWarning(text) {
   return text;
 }
 
+/** What a CLI answer that did not succeed says, in one line. */
+export function problem(result, fallback) {
+  const lines = [...(result?.issues || []), result?.error, result?.next].filter(Boolean).map(explainWarning).filter(Boolean);
+  return lines.join(" ") || fallback;
+}
+
 /** What a plan or an apply refused or warned about, as notices; null when nothing. */
 export function planProblems(result) {
   const issues = result?.issues || (result?.error ? [result.error] : []);
@@ -623,14 +643,25 @@ export function pluginCommands(done, agent) {
 }
 
 /**
+ * The agents with something to do once setup has applied, each with the commands
+ * to install the plugin by hand when setup could not. `missing` is the agents whose
+ * plugin 점검 found missing (lib/check.js), null before it: their row copies the
+ * commands, so they are not a to-do too, and one 점검 found there needs only what
+ * comes after an install.
+ */
+export function todoAgents(done, agents, { missing = null } = {}) {
+  return Object.keys(AGENTS)
+    .filter((name) => agents.has(name) && !missing?.has(name))
+    .map((name) => ({ name, commands: missing ? [] : pluginCommands(done, name) }));
+}
+
+/**
  * What to do in each agent once setup has applied: approve the Codex hook, reload
  * Claude Code's plugins, or run the plugin install by hand when it could not.
  */
-export function agentTodo(done, agents) {
+export function agentTodo(done, agents, { missing = null } = {}) {
   const items = [];
-  for (const name of Object.keys(AGENTS)) {
-    if (!agents.has(name)) continue;
-    const commands = pluginCommands(done, name);
+  for (const { name, commands } of todoAgents(done, agents, { missing })) {
     if (commands.length) {
       items.push({ title: AGENTS[name], text: ["터미널에서 차례로 실행하세요. ", commands.map((command, index) => [index ? " → " : "", h("span", { class: "mono" }, command)])] });
     } else if (name === "claude") {
@@ -642,177 +673,7 @@ export function agentTodo(done, agents) {
   return items;
 }
 
-// ── 점검: what a setup left, as the end of its window shows it ──
-
-// What a failed row of 점검 offers; 다시 점검 ends every one.
-const RECHECK = { kind: "recheck", label: "다시 점검" };
-const FIX = { kind: "fix", label: "고치기" };
-const START = { kind: "start", label: "서버 켜기" };
-const COLLECT = { kind: "collect", label: "대화 수집 수정" };
-
-/** An address as a row shows it: its host and port. */
-function hostOf(value) {
-  try { return new URL(value).host; } catch { return ""; }
-}
-
-const checkRow = (name, value = "") => ({ name, value, ok: true, problems: [], actions: [] });
-
-/** A problem on a row, once, and what to press for it; commands to copy join the row's one 명령 복사. */
-function fail(row, text, action = null) {
-  row.ok = false;
-  if (!row.problems.includes(text)) row.problems.push(text);
-  if (!action) return;
-  const kept = row.actions.find((item) => item.kind === action.kind);
-  if (!kept) row.actions.push({ ...action });
-  else if (action.text && !kept.text.includes(action.text)) kept.text = `${kept.text}\n${action.text}`;
-}
-
-const rechecked = (rows) => rows.map((row) => (row.ok ? row : { ...row, actions: [...row.actions, RECHECK] }));
-
-/**
- * Why a server did not answer one of doctor's probes, and what to press: one on
- * this computer is started from here, another only where it runs. `named` is the
- * server as the line names it.
- */
-function reachProblem(probe, named, local) {
-  if (probe?.access || probe?.status === 401 || probe?.status === 403) return [`${named}가 이 컴퓨터의 요청을 막았습니다.`, COLLECT];
-  if (probe?.status) return [`${named}가 오류로 답합니다 (HTTP ${probe.status}).`, null];
-  return local ? [`${named}가 답하지 않습니다.`, START] : [`${named}가 답하지 않습니다. 서버를 둔 컴퓨터에서 서버를 켜세요.`, null];
-}
-
-/**
- * 점검 at the end of a setup that collects: doctor's checks and, for a server on
- * this computer, `server verify` without a model call (`verify`, null when not
- * asked), as the rows its window shows, `{ name, ok, value, problems, actions }`
- * each. A failed row says what is wrong and offers what to press: 고치기 (`doctor
- * --fix`) for what is behind this version, 서버 켜기 for the server here, 명령 복사
- * for a plugin to install or turn on, 대화 수집 수정 for a server that refuses this
- * computer or is not the one chosen (`expected`), and 다시 점검. `done` is what
- * setup apply said, with the commands it could not run. A check's own `fix` line is
- * for the terminal and never shown.
- */
-export function checkRows(doctor, verify, { context = null, expected = null, done = null } = {}) {
-  const checks = new Map((doctor?.checks || []).map((check) => [check.name, check]));
-  if (!checks.size) {
-    const row = checkRow("점검");
-    fail(row, "점검하지 못했습니다.");
-    return rechecked([row]);
-  }
-  const rows = [];
-
-  // 대화 모으기: the setup, the files the hooks run, the MCP server and each agent's plugin.
-  const runtime = checks.get("runtime");
-  const collect = checkRow("대화 모으기", runtime?.actualVersion || "");
-  const configuration = checks.get("configuration");
-  if (configuration && !configuration.ok) fail(collect, configuration.state === "missing" ? "이 컴퓨터에 대화 수집 설정이 없습니다." : "대화 수집 설정을 읽을 수 없습니다.", COLLECT);
-  if (runtime && !runtime.ok && runtime.fix) {
-    const old = runtime.actualVersion && runtime.actualVersion !== runtime.expectedVersion ? `(${runtime.actualVersion})` : "";
-    fail(collect, runtime.missingFiles?.length ? "대화 모으기 파일이 빠졌습니다." : `대화 모으기가 옛 판${old}입니다.`, FIX);
-  }
-  if (checks.get("mcp")?.ok === false) fail(collect, "MCP 서버가 답하지 않습니다.");
-  for (const name of Object.keys(AGENTS)) {
-    const plugin = checks.get(`${name}-plugin`);
-    if (!plugin || plugin.ok) continue;
-    if (!plugin.installed) {
-      const commands = pluginCommands(done, name);
-      fail(collect, `${AGENTS[name]}에 팀 메모리 플러그인이 없습니다.`, commands.length ? { kind: "copy", label: "명령 복사", text: commands.join("\n") } : null);
-      continue;
-    }
-    // Claude Code turns a plugin on with a command; Codex only in its own settings.
-    const id = name === "claude" ? plugin.pluginIds?.[0] : "";
-    fail(collect, `${AGENTS[name]}에 팀 메모리 플러그인이 꺼져 있습니다.`, id ? { kind: "copy", label: "명령 복사", text: `claude plugin enable ${id}` } : null);
-  }
-  if (checks.get("codex-hook")?.ok === false) fail(collect, "Codex 훅이 설정돼 있지 않습니다.", COLLECT);
-  rows.push(collect);
-
-  // 기억 서버: the one collection goes to and, with verify, the server here end to end.
-  const health = checks.get("honcho-health");
-  const url = health?.url || "";
-  const local = Boolean(context?.localServer) && (sameServer(url, context.localServer.apiUrl) || (Boolean(context.team?.localHost) && hostOf(url) === context.team.localHost));
-  const { status, honcho, containerHost, embedding } = verify?.checks || {};
-  const down = Boolean(status && !status.ok);
-  const server = checkRow("기억 서버", hostOf(url));
-  if (health && !health.ok && !(local && down)) fail(server, ...reachProblem(health, "기억 서버", local));
-  const workspaces = checks.get("honcho-workspaces");
-  if (health?.ok && workspaces && !workspaces.ok) fail(server, ...reachProblem(workspaces, "기억 서버", local));
-  if (url && expected && !sameServer(url, expected)) fail(server, `대화가 ${hostOf(expected)} 대신 ${hostOf(url)}에 쌓이게 돼 있습니다.`, COLLECT);
-  const version = checks.get("server-version");
-  if (version && !version.ok && version.fix) fail(server, "기억 서버가 옛 판입니다.", FIX);
-  if (down) {
-    const host = status.host || {};
-    if (status.docker && !status.docker.running) fail(server, "Docker Desktop이 꺼져 있습니다.", START);
-    else if (!status.running) fail(server, "기억 서버가 꺼져 있습니다.", START);
-    else if (!host.gatewayLoggedIn) fail(server, "구독 게이트웨이에 로그인한 계정이 없습니다. 서버 → 모델에서 로그인하세요.");
-    else if (!host.routerHealthy) fail(server, "구독 게이트웨이가 응답하지 않습니다.", START);
-    else if (!host.ollamaHealthy) fail(server, "Ollama가 응답하지 않습니다.", START);
-    else if (!host.embeddingResident) fail(server, "Ollama가 아직 임베딩 모델을 불러오지 못했습니다.", START);
-    else fail(server, "기억 서버가 답하지 않습니다.", START);
-  } else {
-    if (honcho && !honcho.ok) fail(server, "기억 서버가 답하지 않습니다.", START);
-    if (containerHost?.router?.ok === false) fail(server, "기억 서버가 구독 게이트웨이를 부르지 못합니다.", START);
-    if (containerHost?.ollama?.ok === false) fail(server, "기억 서버가 Ollama를 부르지 못합니다.", START);
-  }
-  if (health || verify) rows.push(server);
-
-  // 임베딩: a long text through the embedding model, as Honcho sends one.
-  if (verify) {
-    const row = checkRow("임베딩");
-    if (!verify.checks) fail(row, "임베딩을 점검하지 못했습니다.");
-    else if (embedding && !embedding.ok) {
-      if (!embedding.status) fail(row, "임베딩 모델(Ollama)이 답하지 않습니다.", START);
-      else if (embedding.status >= 400) fail(row, `Ollama가 임베딩 요청을 받지 않습니다 (HTTP ${embedding.status}).`, START);
-      else fail(row, "임베딩 모델의 답이 이 서버의 설정과 맞지 않습니다.");
-    }
-    rows.push(row);
-  }
-
-  // The other servers that take some folders' conversations.
-  for (const [name, check] of checks) {
-    if (!name.startsWith("target-")) continue;
-    const id = name.slice("target-".length);
-    const label = (context?.targets || []).find((target) => target.id === id)?.label || id;
-    const row = checkRow(label, hostOf(check.url));
-    if (!check.ok) fail(row, ...reachProblem(check.health?.ok === false ? check.health : check.workspace, /서버$/.test(label) ? label : `${label} 서버`, false));
-    rows.push(row);
-  }
-
-  // The app shows this page, so it is a row only when it is behind this version.
-  const app = checks.get("app");
-  if (app && !app.ok) {
-    const row = checkRow("앱", app.version || "");
-    fail(row, "앱이 옛 판입니다.", app.fix ? FIX : null);
-    rows.push(row);
-  }
-  return rechecked(rows);
-}
-
-/**
- * 점검 for a setup that stores nothing (쌓지 않기): the team login, and the one
- * login every teammate's server takes, from the team's status. `host` is a
- * teammate's server to log in at; with none yet, there is nothing to log in to.
- */
-export function teamCheckRows(status, { host = "" } = {}) {
-  if (!status || status.ok === false) {
-    const row = checkRow("점검");
-    fail(row, "점검하지 못했습니다.");
-    return rechecked([row]);
-  }
-  const hub = checkRow("팀 로그인", status.email || "");
-  const hubEnded = status.hubLogin?.ended;
-  if (!status.hubLogin?.signedIn) {
-    fail(hub, hubEnded ? loginEndedText({ kind: "hub", email: hubEnded.email }) : "팀에 로그인돼 있지 않습니다.", { kind: "login", login: "hub", host: "", label: hubEnded ? "다시 로그인" : "팀 로그인" });
-  }
-  const rows = [hub];
-  const servers = status.serversLogin || {};
-  if (servers.signedIn || host) {
-    const row = checkRow("팀 서버 로그인");
-    if (!servers.signedIn) {
-      fail(row, servers.ended ? loginEndedText({ kind: "servers", email: servers.ended.email }) : "팀원 기억을 읽으려면 팀 서버 로그인이 한 번 필요합니다.", { kind: "login", login: "servers", host, label: servers.ended ? "다시 로그인" : "팀 서버 로그인" });
-    }
-    rows.push(row);
-  }
-  return rechecked(rows);
-}
+// ── First setup's own lines: Docker Desktop's window, and a move to another team ──
 
 /**
  * What to do in Docker Desktop's own window, for a server plan that installs it,

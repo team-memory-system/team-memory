@@ -4,8 +4,10 @@
 // screen, such as computer/collect, which `/team-memory setup` opens: 기억 설정
 // with 대화 수집's 수정 window, first setup's own steps (views/settings.js). `start`
 // opens first setup's window again over the screen on view, unless it is a link to
-// the team this computer is in already, which opens the team screen. Kept apart
-// from app.js, which starts the page as it loads, so the tests can load it.
+// the team this computer is in already, which opens the team screen. A setup kept
+// half way (lib/state.js) opens first setup's window as the app starts, also on a
+// computer set up since. Kept apart from app.js, which starts the page as it loads,
+// so the tests can load it.
 import { joinCase } from "./team.js";
 
 /**
@@ -19,4 +21,17 @@ export function landing(path, { setUp, link = "", team = null } = {}) {
   if (path.split("/")[0] !== "start") return { screen: path };
   if (link && joinCase(team, link) === "in") return { screen: "team" };
   return { setup: { firstRun: false, team: link } };
+}
+
+/**
+ * Whether the app, as it starts on `path`, opens first setup's window for a setup
+ * kept half way (`kept`), where the window shows its rows with 이어서 하기 and
+ * 처음부터: on a computer set up already, such as one whose server that setup has
+ * installed. One not set up opens the window anyway, as `start` does; an address
+ * that opens a window of its own (computer/collect) is left to it, and its 적용
+ * drops what was kept.
+ */
+export function resumeAtBoot(path, { setUp, kept }) {
+  const [name, page] = path.split("/");
+  return Boolean(setUp && kept && name !== "start" && !(name === "computer" && page));
 }

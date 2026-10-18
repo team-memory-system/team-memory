@@ -1,20 +1,21 @@
 // The app shell: the menu, the bell, the theme, the quick-jump palette, and handing
 // the page to one screen at a time. Until this computer is set up, the page stays
 // empty under the first setup window (views/setup.js); where an address lands, before
-// and after, is lib/landing.js's. What this computer runs, and how each part stands,
-// is the 대시보드 screen.
+// and after, and when a setup kept half way opens that window as the app starts, is
+// lib/landing.js's. What this computer runs, and how each part stands, is the
+// 대시보드 screen.
 import { get } from "./lib/api.js";
 import { h, clear, svg, $ } from "./lib/dom.js";
 import { mountBell, refreshBell } from "./lib/bell.js";
 import { requestsLoginRefused, watchRequests } from "./lib/requests.js";
 import { joinedTeam, watchTeamLogin } from "./lib/team.js";
-import { landing } from "./lib/landing.js";
+import { landing, resumeAtBoot } from "./lib/landing.js";
 import { renderMachines } from "./lib/machines.js";
 import { TABS } from "./lib/tabs.js";
 import { icon } from "./lib/icons.js";
-import { app, go, loadContext, me, onChange, refreshStatus, workspace } from "./lib/state.js";
+import { app, go, keptSetup, loadContext, me, onChange, refreshStatus, workspace } from "./lib/state.js";
 import { button, errorNotice, pageHead, toast } from "./lib/ui.js";
-import { openSetup } from "./views/setup.js";
+import { openSetup, resumable } from "./views/setup.js";
 
 import dashboard from "./views/dashboard.js";
 import memory from "./views/memory.js";
@@ -400,6 +401,9 @@ function palette() {
 }
 
 async function boot() {
+  // The address the app starts on, before a screen shown on the way (a change in
+  // status shows one) takes a window's name off it, as 기억 설정 does.
+  const bootPath = movedTo() || hashParts().path;
   renderTheme();
   $("#menu").addEventListener("click", () => $("#rail").classList.toggle("open"));
   document.addEventListener("keydown", (event) => {
@@ -436,6 +440,8 @@ async function boot() {
   await Promise.race([firstStatus, new Promise((resolve) => setTimeout(resolve, 3000))]);
   await probeAudit();
   await show();
+  // A setup kept half way, on a computer set up since (its server installed): its window again.
+  if (resumeAtBoot(bootPath, { setUp: setupDone(), kept: resumable(keptSetup()) }) && !setupWindow) showSetup({ firstRun: false });
   setInterval(() => { refreshStatus(); refreshBell(); }, 60_000);
 }
 
