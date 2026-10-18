@@ -284,6 +284,8 @@ test("the window's rows keep each state, a stopped row the reason as the update 
     ["login", "구독 계정 로그인", "브라우저에서 로그인을 마치세요."],
     ["wait", "기억 서버 다시 만들기", "몇 분에서 10분 넘게 걸립니다."],
   ]);
+  // On a page another computer shows, which has no login panel, it says where the panel is.
+  assert.equal(progressLines(login, { elsewhere: true })[2].sub, "그 컴퓨터의 종에서 열기를 누르면 로그인 칸이 나옵니다.");
   // A 고치기's rows are 고치는 중.
   assert.deepEqual(progressLines({ kind: "fix", rows: [] }), [{ label: "고치는 중" }]);
   // Every state has its look.
@@ -473,21 +475,23 @@ test("업데이트 waits while past conversations go in or the memory is rebuilt
   for (const text of Object.values(LONG_JOBS)) assert.ok(source.includes(`"${text}"`), text);
 });
 
-test("a 고치기 refused while past conversations go in or the memory is rebuilt says the reason in the window as it came", async () => {
-  // doctor --fix's answer then, which /api/doctor/fix relays as it is (scripts/ui.mjs runCli).
-  assert.match(await read("scripts/cli.mjs"), /if \(refused\) return \{ \.\.\.before, ok: false, code: refused\.code, said: refused\.said \};/);
+test("a 고치기 refused while past conversations go in or the memory is rebuilt says the reason in the window, in 업데이트's words", async () => {
+  // doctor --fix's answer then, which /api/doctor/fix relays as it is (scripts/ui.mjs
+  // runCli); tests/update.test.mjs reads it from the CLI ("doctor --fix from the CLI …").
   const said = "지난 대화를 쌓는 중입니다. 다 쌓은 뒤 고치기를 다시 누르세요.";
   assert.ok((await read("scripts/update.mjs")).includes(`"${said}"`), "recordFix's words");
   // The 고치기 before stopped; the one pressed again (다시 시도, or after a login) is refused, and fix.json stays as it was.
   const before = { kind: "fix", state: "failed", startedAt: AT, updatedAt: AT, rows: [{ id: "server", title: "기억 서버", state: "bad" }], todo: [] };
   const calls = serve({
     "GET /api/doctor/fix/status": { ok: true, progress: before },
-    "POST /api/doctor/fix": { ok: false, version: "0.8.14", checks: doctor(["server-version"]).checks, code: "past", said },
+    "POST /api/doctor/fix": { ok: false, version: "0.8.14", checks: doctor(["server-version"]).checks, code: "past", said, updateSaid: LONG_JOBS.past },
   });
   const outcome = await runFix(() => {}, { every: 1 });
-  assert.deepEqual(outcome, { text: said, bad: true });
+  // 점검's 고치기 says it for 고치기; this window, which the bell's 업데이트 opens, for 업데이트.
+  assert.deepEqual(outcome, { text: said, bad: true, update: LONG_JOBS.past });
   assert.equal(calls.filter((call) => call.key === "POST /api/doctor/fix").length, 1);
-  assert.deepEqual(fixShown(outcome, before.startedAt, before), { said: { text: said, bad: true } });
+  assert.deepEqual(fixShown(outcome, before.startedAt, before), { said: { text: LONG_JOBS.past, bad: true } });
+  assert.deepEqual(fixShown({ text: said, bad: true }, before.startedAt, before), { said: { text: said, bad: true } }, "an answer with no words for 업데이트");
   // One that started is followed; with neither, nothing was behind any more, which 점검 says.
   const going = { ...before, state: "running", startedAt: "2026-10-19T09:09:00.000Z" };
   assert.deepEqual(fixShown(null, before.startedAt, going), { progress: going });
@@ -604,6 +608,15 @@ test("an update or a 고치기 that ends takes what doctor found before it off t
   // Until another ends, the minute's reads leave them as they are.
   await refreshUpdate({ now: at + 180_000 });
   assert.equal(doctorReads(), reads + 1);
+  // One of seconds, from 점검 or a terminal, that no minute's read caught going: its new end does the same.
+  behind = ["runtime"];
+  await refreshUpdate({ open: true, now: at + 240_000 });
+  assert.equal(doctorReads(), reads + 2, "the bell opened after 30 s");
+  fix = { ...fix, startedAt: "2026-10-19T09:10:00.000Z", finishedAt: "2026-10-19T09:10:05.000Z" };
+  behind = [];
+  await refreshUpdate({ now: at + 300_000 });
+  assert.equal(doctorReads(), reads + 3);
+  assert.deepEqual(updateLines({ now: NOW }), []);
 });
 
 test("an update that ended while its window was closed stays on the bell until this browser showed its end, a day at most, and 열기 loads the new version's screens first", async () => {

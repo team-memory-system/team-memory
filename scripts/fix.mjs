@@ -65,6 +65,10 @@ export function toVersion(version) {
   return `${version}${/[036]$/.test(String(version)) ? "으로" : "로"}`;
 }
 
+// What a fix says of a memory server it kept off, for a terminal: where 시작 is. The
+// app says to press its 서버 켜기 instead (update.mjs inApp).
+export const KEPT_OFF = "꺼 둔 기억 서버는 새 판으로 준비만 했습니다. 켜려면 팀 메모리 앱의 서버 → 기억 서버에서 시작을 누르세요.";
+
 /**
  * `checks` is doctor's list. `deps`: setupApply, serverStatus, serverStart,
  * serverPrepare and restartApp, the last answering { ok, restarted }, and onStep,
@@ -133,9 +137,7 @@ export async function fixChecks(checks, deps) {
     }
     await told("server", "ok");
     serverOff = !running;
-    done.push(running
-      ? "기억 서버와 구독 게이트웨이를 새 판으로 다시 시작했습니다."
-      : "꺼 둔 기억 서버는 새 판으로 준비만 했습니다. 켜려면 팀 메모리 앱의 서버 → 기억 서버에서 시작을 누르세요.");
+    done.push(running ? "기억 서버와 구독 게이트웨이를 새 판으로 다시 시작했습니다." : KEPT_OFF);
   }
 
   if (behind.has("app")) {

@@ -41,6 +41,8 @@ const PROGRESS = { update: "/api/update/progress", fix: "/api/doctor/fix/status"
 
 /** Why 업데이트 is pressed only in front of its computer (scripts/ui.mjs UPDATE_HERE_ONLY). */
 export const UPDATE_HERE_ONLY = "업데이트는 그 컴퓨터에서 누르세요. 업데이트하는 동안 이 화면으로 오는 길이 끊깁니다.";
+// A login row there: that page has no login panel, as the 다시 시도 after it is the computer's.
+const LOGIN_THERE = "그 컴퓨터의 종에서 열기를 누르면 로그인 칸이 나옵니다.";
 
 /**
  * Why 업데이트 waits, in the update's own words (scripts/update.mjs LONG_JOBS, their
@@ -123,8 +125,8 @@ const nothingElse = (now) => !standing(known.update ?? known.status?.progress, n
  * minute): the update and the 고치기 from their files; the status every time it was
  * light, and once the update moved, but one that asked docker about the server only
  * as the bell opens; and with nothing else on the bell, doctor's checks once, then as
- * it opens and once an update or a 고치기 that went ended, with the long jobs while
- * 기억 서버 is behind, as they hold its 업데이트.
+ * it opens and once an update or a 고치기 ended since the last read, with the long
+ * jobs while 기억 서버 is behind, as they hold its 업데이트.
  */
 export async function refreshUpdate({ open = false, now = Date.now() } = {}) {
   const stale = (at) => open && now - at > FRESH_MS;
@@ -151,8 +153,13 @@ function forgetDoctor() {
   known.doctorAt = 0;
 }
 
-/** A run read going before that no longer goes now: it ended or stopped, or another took its place. */
-const ended = (before, after) => before?.state === "running" && (after?.state !== "running" || after.startedAt !== before.startedAt);
+/**
+ * A run that ended since the last read: one read going that goes no more (it ended or
+ * stopped, or another took its place), or one with a new end, as a 고치기 of seconds
+ * that no minute's read caught going.
+ */
+const ended = (before, after) => (before?.state === "running" && (after?.state !== "running" || after.startedAt !== before.startedAt))
+  || Boolean(after?.finishedAt && after.finishedAt !== before?.finishedAt);
 
 // ── What each shows ──────────────────────────────────────
 
@@ -276,13 +283,14 @@ export function updateNotice() {
  * update.json or fix.json as the window's rows, in the order they go, each in its
  * state (wait, run, ok, bad, login): a stopped one says the reason the update wrote
  * as it is, with docker's output (`detail`) to open, and a plugin that went up its
- * version.
+ * version. On a page another computer shows (`elsewhere`), a login row says where
+ * its panel is.
  */
-export function progressLines(progress) {
+export function progressLines(progress, { elsewhere = false } = {}) {
   const rows = (progress?.rows || []).map((row) => ({
     state: row.state,
     title: row.title,
-    sub: row.state === "bad" ? row.error || row.sub || "" : row.sub || "",
+    sub: row.state === "bad" ? row.error || row.sub || "" : row.state === "login" && elsewhere ? LOGIN_THERE : row.sub || "",
     detail: row.state === "bad" ? row.detail || "" : "",
     version: row.state === "ok" ? row.version || "" : "",
   }));
@@ -325,12 +333,13 @@ export function endHeading(items, rows) {
 /**
  * What the window shows once a 고치기 it started is back: fix.json's run when one
  * started (`after` is not the run from `before`), else what the request said
- * (`outcome`, check.js fixOutcome), a refusal's reason as it came; with neither,
- * nothing was behind any more, and 점검 says how it stands.
+ * (`outcome`, check.js fixOutcome), a refusal's reason as it came, in the words of
+ * 업데이트 when it has them, since the bell's 업데이트 opens this window; with
+ * neither, nothing was behind any more, and 점검 says how it stands.
  */
 export function fixShown(outcome, before, after) {
   if (after && after.startedAt !== before) return { progress: after };
-  if (outcome) return { said: outcome };
+  if (outcome) return { said: outcome.update ? { text: outcome.update, bad: outcome.bad } : outcome };
   return { progress: { kind: "fix", state: "done", rows: [], todo: [] } };
 }
 
@@ -763,7 +772,7 @@ export function openUpdate({ kind = "update", progress = null, fix = false, onCl
     const stray = state === "failed" && current.error && !(current.rows || []).some((row) => row.state === "bad");
     win.body(
       h("h3", {}, titleOf(current || { kind })),
-      progressList(fixing || drawnLines(progressLines(current))),
+      progressList(fixing || drawnLines(progressLines(current, { elsewhere }))),
       stray ? notice("bad", current.error) : null,
       stalled && !elsewhere ? notice("warn", STALLED) : null,
       state === "login" && !elsewhere ? login?.node || null : null,

@@ -34,7 +34,7 @@ import { fileURLToPath } from "node:url";
 
 import { defaultAppHome, installPaths, loadConfig, readJson, userHome } from "./config.mjs";
 import { acquireFileLock, releaseFileLock } from "./file-lock.mjs";
-import { fixable, toVersion } from "./fix.mjs";
+import { fixable, KEPT_OFF, toVersion } from "./fix.mjs";
 import { gatewayDirectory, gatewaySourceProbe } from "./gateway.mjs";
 import { DEFAULT_SOURCE, hostCli, PLUGIN_INSTALL_TIMEOUT_MS, PLUGIN_NAME } from "./host-plugins.mjs";
 import { sanitizeUrlsInText } from "./redact.mjs";
@@ -85,6 +85,10 @@ const SERVER_ROWS = Object.freeze({
 // memory server's, and the subscription gateway beside it goes up with it.
 const GATEWAY_TOO = "게이트웨이도 새 판으로 바꿉니다.";
 const LOGIN_ROW = Object.freeze({ title: "구독 계정 로그인", sub: "브라우저에서 로그인을 마치세요." });
+// A server kept off, said where 서버 켜기 is beside it (the end's 점검 row, or its
+// to-do), as fix.mjs's KEPT_OFF tells a terminal where 시작 is.
+const KEPT_OFF_HERE = "꺼 둔 기억 서버는 새 판으로 준비만 했습니다. 켜려면 서버 켜기를 누르세요.";
+const inApp = (said) => said.replace(KEPT_OFF, KEPT_OFF_HERE);
 // The doctor checks fix.mjs repairs, by the row each one is.
 const FIX_ROWS = Object.freeze({ runtime: "runtime", "server-version": "server", app: "app" });
 
@@ -648,7 +652,7 @@ async function todoOf(ctx, progress, { hub = true } = {}) {
   if (claude && (ran.has("claude") || ran.has("runtime"))) todo.push({ id: "claude", title: "Claude Code", text: SESSIONS });
   if (codex && (ran.has("codex") || ran.has("runtime"))) todo.push({ id: "codex", title: "Codex", text: SESSIONS });
   if (progress.serverOff) {
-    todo.push({ id: "server", title: "기억 서버", text: "꺼 둔 기억 서버는 새 판으로 준비만 했습니다. 켜려면 서버 켜기를 누르세요.", action: "server-start" });
+    todo.push({ id: "server", title: "기억 서버", text: KEPT_OFF_HERE, action: "server-start" });
   }
   // On the computer that made the team, a version whose hub changed: the update does
   // not deploy it, since logins stop for the whole team while it goes up.
@@ -854,7 +858,7 @@ async function continueHere(ctx, progress, save) {
   let fixed;
   for (const part of parts) {
     fixed = await ctx.fix(part, save.step);
-    if (fixed.said) said.push(fixed.said);
+    if (fixed.said) said.push(inApp(fixed.said));
     if (!fixed.ok) break;
   }
   progress.said = clean(said.join(" "));
@@ -936,6 +940,8 @@ export async function updateRetry(options = {}) {
  * it may restart: { fixed } or, while an update or another fix runs, { refused }. One
  * that would make the server again is refused too while a long job runs, by that
  * job's code (past, rederive) and why, as the update is: the restart would cut it.
+ * Why is said for the 고치기 pressed (`said`) and for the bell's 업데이트 that runs
+ * one (`update`). fix.json says the end in the app's words (inApp).
  * `fix(checks, onStep)` is fix.mjs with this copy's steps.
  */
 export async function recordFix(checks, fix, options = {}) {
@@ -959,7 +965,7 @@ export async function recordFix(checks, fix, options = {}) {
     // A long job's hours first, before another update's or fix's minutes.
     if (fixable(checks).has("server-version")) {
       const job = await ctx.longJob(ctx, await ctx.config());
-      if (job) return { refused: { code: job.code, said: job.fix } };
+      if (job) return { refused: { code: job.code, said: job.fix, update: job.update } };
     }
     if (runningIn(ctx, await readJson(ctx.paths.update, null))) return { refused: { code: "updating", said: UPDATING } };
     if (runningIn(ctx, await readJson(ctx.paths.fix, null))) return { refused: { code: "fixing", said: FIXING } };
@@ -972,7 +978,7 @@ export async function recordFix(checks, fix, options = {}) {
   progress.state = fixed.login ? "login" : fixed.ok ? "done" : "failed";
   if (fixed.serverOff) progress.serverOff = true;
   if (fixed.error) progress.error = clean(fixed.error);
-  progress.said = clean(fixed.said || "");
+  progress.said = clean(inApp(fixed.said || ""));
   if (progress.state !== "login") progress.finishedAt = iso(ctx.now());
   if (fixed.ok) progress.todo = await todoOf(ctx, progress, { hub: false });
   await save.write();

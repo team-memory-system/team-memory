@@ -288,11 +288,15 @@ export function fixLines(progress) {
 /**
  * What a 고치기 says after: doctor --fix's own answer, or, when the request had none
  * (it ended with the app starting again on its new version), fix.json's
- * (`progress`). `{ text, bad }`, or null when there was nothing to fix.
+ * (`progress`). `{ text, bad }`, with `update` when a refusal says it for 업데이트
+ * too, or null when there was nothing to fix.
  */
 export function fixOutcome(answer, progress) {
   if (answer) {
-    if (answer.said) return { text: answer.said, bad: answer.fixed ? answer.fixed.ok === false : answer.ok === false };
+    if (answer.said) {
+      const outcome = { text: answer.said, bad: answer.fixed ? answer.fixed.ok === false : answer.ok === false };
+      return answer.updateSaid ? { ...outcome, update: answer.updateSaid } : outcome;
+    }
     if (answer.ok === false && !answer.checks) return { text: problem(answer, "고치지 못했습니다."), bad: true };
     return null;
   }

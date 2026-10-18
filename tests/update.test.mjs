@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test, { after } from "node:test";
 
-import { fixChecks, toVersion } from "../scripts/fix.mjs";
+import { fixChecks, KEPT_OFF, toVersion } from "../scripts/fix.mjs";
 import { VERSION } from "../scripts/version.mjs";
 import {
   compareVersions,
@@ -589,6 +589,7 @@ test("a stopped server is only prepared and stays off, with 서버 켜기 left t
   const done = await updateProgress(b.options);
   assert.equal(done.state, "done");
   assert.equal(done.serverOff, true);
+  assert.match(done.said, /꺼 둔 기억 서버는 새 판으로 준비만 했습니다\. 켜려면 서버 켜기를 누르세요\./);
   assert.deepEqual(done.rows.find((row) => row.id === "server"), {
     id: "server", title: "기억 서버 준비", sub: "게이트웨이도 새 판으로 바꿉니다. 꺼 둔 서버는 켜지 않습니다.", gateway: true, state: "ok",
   });
@@ -862,7 +863,9 @@ test("doctor --fix writes its rows to fix.json as it goes, and waits for an upda
   assert.deepEqual(done.rows.map((row) => [row.id, row.title, row.state]), [["runtime", "대화 모으기", "ok"], ["server", "기억 서버 준비", "ok"]]);
   assert.equal(done.serverOff, true);
   assert.deepEqual(done.todo.map((item) => item.id), ["claude", "server"]);
-  assert.equal(done.said, fixed.said);
+  // fix.json says it where 서버 켜기 is beside it; the terminal, where 시작 is.
+  assert.ok(fixed.said.includes(KEPT_OFF), fixed.said);
+  assert.equal(done.said, fixed.said.replace(KEPT_OFF, "꺼 둔 기억 서버는 새 판으로 준비만 했습니다. 켜려면 서버 켜기를 누르세요."));
 
   // While an update the app started runs, doctor --fix waits for it.
   await updateStart(b.options);
@@ -879,16 +882,16 @@ test("doctor --fix leaves the server alone while past conversations go in or the
     ran.push(checks.filter((check) => !check.ok).map((check) => check.name));
     return { ok: true, changed: true, steps: [], said: "" };
   };
-  // The update's words for the same job, with the button pressed here.
+  // The update's own words for the same job, which the refusal brings for 업데이트 too.
   const asUpdate = async (refused) => {
     const { blocked } = await updateStatus(b.options);
-    assert.deepEqual(blocked, { code: refused.code, reason: refused.said.replace("고치기를 다시 누르세요.", "업데이트를 누르세요.") });
+    assert.deepEqual(blocked, { code: refused.code, reason: refused.update });
   };
 
   await put(path.join(b.appHome, "data", "past", "status.json"), JSON.stringify({ running: { pid: 4321, startedAt: "2026-10-19T08:00:00Z" } }));
   b.live.add(4321);
   const past = await recordFix(server, fix, b.options);
-  assert.deepEqual(past, { refused: { code: "past", said: "지난 대화를 쌓는 중입니다. 다 쌓은 뒤 고치기를 다시 누르세요." } });
+  assert.deepEqual(past, { refused: { code: "past", said: "지난 대화를 쌓는 중입니다. 다 쌓은 뒤 고치기를 다시 누르세요.", update: "지난 대화를 쌓는 중입니다. 다 쌓은 뒤 업데이트를 누르세요." } });
   await asUpdate(past.refused);
   assert.deepEqual(ran, []);
   await assert.rejects(fsp.access(path.join(b.appHome, "update", "fix.json")), "a refused fix writes no rows");
@@ -901,12 +904,12 @@ test("doctor --fix leaves the server alone while past conversations go in or the
   await put(rederive, JSON.stringify({ job: { pid: 4322, kind: "build" } }));
   b.live.add(4322);
   const going = await recordFix(server, fix, b.options);
-  assert.deepEqual(going, { refused: { code: "rederive", said: "기억을 다시 정리하는 중입니다. 다 끝난 뒤 고치기를 다시 누르세요." } });
+  assert.deepEqual(going, { refused: { code: "rederive", said: "기억을 다시 정리하는 중입니다. 다 끝난 뒤 고치기를 다시 누르세요.", update: "기억을 다시 정리하는 중입니다. 다 끝난 뒤 업데이트를 누르세요." } });
   await asUpdate(going.refused);
   // Its process gone, the server's screen carries it on, and it holds the server's fix till then.
   b.live.delete(4322);
   const stopped = await recordFix(server, fix, b.options);
-  assert.deepEqual(stopped, { refused: { code: "rederive", said: "기억 다시 정리가 멈춰 있습니다. 서버 → 기억 서버를 열면 이어서 정리합니다. 다 끝난 뒤 고치기를 다시 누르세요." } });
+  assert.deepEqual(stopped, { refused: { code: "rederive", said: "기억 다시 정리가 멈춰 있습니다. 서버 → 기억 서버를 열면 이어서 정리합니다. 다 끝난 뒤 고치기를 다시 누르세요.", update: "기억 다시 정리가 멈춰 있습니다. 서버 → 기억 서버를 열면 이어서 정리합니다. 다 끝난 뒤 업데이트를 누르세요." } });
   await asUpdate(stopped.refused);
   assert.deepEqual(ran, [["runtime", "app"]]);
   assert.deepEqual(b.ids((await fixProgress(b.options)).rows), ["runtime", "app"], "the rows are still the last fix's");
@@ -945,7 +948,7 @@ test("doctor --fix from the CLI prints the long job's code and why, and fixes no
     },
   }).catch((error) => error);
   const answer = JSON.parse(run.stdout);
-  assert.deepEqual([answer.ok, answer.code, answer.said], [false, "past", "지난 대화를 쌓는 중입니다. 다 쌓은 뒤 고치기를 다시 누르세요."]);
+  assert.deepEqual([answer.ok, answer.code, answer.said, answer.updateSaid], [false, "past", "지난 대화를 쌓는 중입니다. 다 쌓은 뒤 고치기를 다시 누르세요.", "지난 대화를 쌓는 중입니다. 다 쌓은 뒤 업데이트를 누르세요."]);
   assert.deepEqual(answer.checks.filter((check) => check.fix).map((check) => check.name), ["server-version"]);
   assert.deepEqual(await readJson(path.join(b.appHome, "update", "fix.json")), running);
 });

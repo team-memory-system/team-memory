@@ -1080,13 +1080,14 @@ const fixHere = (checks, onStep) => fixChecks(checks, fixSteps(onStep));
  * the app's fix.json as it goes (update.mjs), since the app it restarts is not the
  * one that asked; it waits for an update the app runs, and does not make the server
  * again while past conversations go in or the memory is made again (recordFix): its
- * `code` and `said` say which. Plain `doctor` only looks.
+ * `code` and `said` say which, and `updateSaid` the same for the app's 업데이트.
+ * Plain `doctor` only looks.
  */
 async function doctorAndFix() {
   const before = await doctor();
   if (!fixable(before.checks).size) return before;
   const { fixed, refused } = await recordFix(before.checks, fixHere);
-  if (refused) return { ...before, ok: false, code: refused.code, said: refused.said };
+  if (refused) return { ...before, ok: false, code: refused.code, said: refused.said, ...(refused.update ? { updateSaid: refused.update } : {}) };
   const after = await doctor();
   return {
     ...after,
