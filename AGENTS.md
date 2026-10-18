@@ -1168,7 +1168,7 @@ node scripts/cli.mjs server share token     # the gate token, to copy to the oth
 ```
 
 `server share token` prints the secret itself, so the person runs it in their own
-terminal, or presses "서버 token 복사" on 서버 → 공유; an agent does not run it.
+terminal, or presses "복사" beside 서버 token on 서버 → 공유; an agent does not run it.
 
 `enable --cloudflare` needs an installed personal server and a user peer (`setup apply --user-peer <id>` first: teammates' questions run as that peer). `--email` is needed the first time, `--zone` only when the token sees more than one zone, and `--idp` only when Zero Trust has more than one Google login. Through the API it makes the following, or keeps each one that is already right:
 
