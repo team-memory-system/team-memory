@@ -155,13 +155,13 @@ export function teamLogin({ kind, hub, host, tab = null, signal }) {
 }
 
 /**
- * Before logging in as someone else: this computer forgets its team login, and `tab`
- * (opened in the click) signs the browser out of Access at each of `logouts`, the
- * application's own domain and the team domain, one after the other. Google still
+ * Before logging in as someone else: this computer forgets its team login (leaveTeam),
+ * and `tab` (opened in the click) signs the browser out of Access at each of `logouts`,
+ * the application's own domain and the team domain, one after the other. Google still
  * picks the only account a browser is signed in to (GOOGLE_ADD_ACCOUNT adds one).
  */
 export async function switchAccount(tab, logouts, { pause = LOGOUT_PAUSE_MS } = {}) {
-  await teamCall("/api/team/logout", {}).catch(() => null);
+  await leaveTeam().catch(() => null);
   for (const address of logouts || []) {
     if (!tab || tab.closed) break;
     tab.location.href = address;
@@ -170,10 +170,10 @@ export async function switchAccount(tab, logouts, { pause = LOGOUT_PAUSE_MS } = 
 }
 
 /**
- * 옮기고 로그인 (joinCase "move"): this computer leaves the team it is in, its
- * logins and device keys there with it, before the login to another. Still in the
- * old team, the app would drop the new team's login with the old ones when it asks
- * the new hub who this is.
+ * This computer forgets its team login, its device keys there with it: before a login
+ * as someone else (switchAccount), and before 옮기고 로그인's login to another team
+ * (joinCase "move"). Still in the old team, the app would drop the new team's login
+ * with the old ones when it asks the new hub who this is.
  */
 export function leaveTeam() {
   return teamCall("/api/team/logout", {});

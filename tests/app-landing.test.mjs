@@ -79,9 +79,14 @@ test("a team link on a computer set up already: the team screen in that team, le
   // Not set up yet: first setup over every address, a link's at that team.
   assert.deepEqual(landing("start", { setUp: false, link: HUB, team: inHub }), { setup: { firstRun: true, team: HUB } });
 
-  // The shell lands every address this way, with whether this computer is set up and the team it is in.
+  // The shell lands every address this way, with whether this computer is set up and the team it is in,
+  // and shows what landing() answers: first setup's window, or the screen it names in the address.
   const shell = await read("app.js");
   assert.match(shell, /const lands = landing\(path, \{ setUp: setupDone\(\), link: query\.get\("team"\) \|\| "", team: app\.context\?\.team \}\);/);
+  assert.equal(shell.split("showSetup(lands.setup);").length - 1, 2, "first setup's window, before setup and after");
+  assert.match(shell, /\} else if \(lands\.screen !== path\) \{\n\s*history\.replaceState\(null, "", `#\/\$\{lands\.screen\}`\);\n\s*\}\n\s*const \{ name, params \} = route\(\);/);
+  // A window closed half way, after it left this computer's team, leaves nothing set up: first setup opens again.
+  assert.match(shell, /onCancel: async \(\) => \{\n\s*setupWindow = null;\n\s*await loadContext\(\)\.catch\(\(\) => \{\}\);\n\s*if \(!setupDone\(\)\) show\(\{ force: true \}\);\n\s*\},/);
 });
 
 test("leaving another team is said with both teams before the login, and done before the login starts", async () => {
@@ -92,6 +97,10 @@ test("leaving another team is said with both teams before the login, and done be
   };
   await leaveTeam();
   assert.deepEqual(posts, [{ url: "/api/team/logout", body: {} }], "this computer's team login and device keys go");
+  // The one way out of a team: a login as someone else leaves it the same way.
+  const team = await read("lib/team.js");
+  assert.equal(team.split('"/api/team/logout"').length - 1, 1);
+  assert.match(team, /export async function switchAccount\([^)]*\) \{\n\s*await leaveTeam\(\)\.catch\(\(\) => null\);/);
 
   const setup = await read("views/setup.js");
   // Only a login to a team's address (a link, or 팀에 들어가기) leaves one, and only another team's.

@@ -266,7 +266,13 @@ function showSetup({ firstRun, team = "" }) {
       await refreshStatus().catch(() => {});
       show({ force: true });
     },
-    onCancel: () => { setupWindow = null; },
+    // Closed half way after 옮기고 로그인 left this computer's team, which its own reload
+    // of the context may not show yet: with nothing set up any more, first setup opens again.
+    onCancel: async () => {
+      setupWindow = null;
+      await loadContext().catch(() => {});
+      if (!setupDone()) show({ force: true });
+    },
   });
 }
 
