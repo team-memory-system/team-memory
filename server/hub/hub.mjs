@@ -83,8 +83,10 @@ const GUARD_TOKEN = /^bearer +([0-9a-f]{64})$/i;
 // A guard token is a server's, so a busy or broken server cannot spend the team's
 // Jev budget alone. Counted in memory: a restarted object starts again from zero.
 // A teammate's question costs one call for it and one for each message of the
-// answer (ten or so, up to fifty); Jev itself takes 1,200 a minute on one key.
-const GUARD_CALLS_PER_MINUTE = 600;
+// answer (ten or so, up to fifty), so one agent's turn of a few searches and reads
+// is 100 to 300 calls, and a team of six to ten reading one owner at once needs
+// the whole budget of the team's one Jev key, which takes 1,200 calls a minute.
+const GUARD_CALLS_PER_MINUTE = 1_200;
 const GUARD_WINDOW_MS = 60_000;
 const GUARD_TEXT_LENGTH = 16_000;
 const GUARD_FIELD_LENGTH = 320;

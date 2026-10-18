@@ -1543,16 +1543,16 @@ test("a guard token stops with its server: removed, moved to another computer, o
   assert.equal(f.blocks.threw, 0);
 });
 
-test("a server asks /guard at most 600 times in any minute; others are not held back", async (t) => {
+test("a server asks /guard at most 1,200 times in any minute; others are not held back", async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   const f = await guardFixture(t, { key: null });
   await f.as("carol@example.com").post("/api/servers", { workspace: WORKSPACE });
   const carolToken = (await issueGuard(f, "carol@example.com")).json.token;
 
-  for (let index = 0; index < 600; index += 1) {
+  for (let index = 0; index < 1200; index += 1) {
     const answer = await f.ask(index % 2 ? { query: `q${index}`, answer: `a${index}` } : { query: `q${index}` });
     assert.equal(answer.status, 200, `call ${index + 1}`);
-    if (index === 299) t.mock.timers.tick(30_000);
+    if (index === 599) t.mock.timers.tick(30_000);
   }
   const limited = await f.ask({ query: "one more" });
   assert.deepEqual([limited.status, limited.json.error], [429, "rate_limited"]);
@@ -1561,9 +1561,9 @@ test("a server asks /guard at most 600 times in any minute; others are not held 
   const renewed = (await issueGuard(f, "bob@example.com")).json.token;
   assert.equal((await f.ask({ query: "x" }, { token: renewed })).status, 429);
 
-  // Rolling: the first 300 calls leave the window a minute after they were made.
+  // Rolling: the first 600 calls leave the window a minute after they were made.
   t.mock.timers.tick(30_001);
-  for (let index = 0; index < 300; index += 1) assert.equal((await f.ask({ query: "x" }, { token: renewed })).status, 200);
+  for (let index = 0; index < 600; index += 1) assert.equal((await f.ask({ query: "x" }, { token: renewed })).status, 200);
   assert.equal((await f.ask({ query: "x" }, { token: renewed })).status, 429);
   t.mock.timers.tick(30_000);
   assert.equal((await f.ask({ query: "x" }, { token: renewed })).status, 200);
