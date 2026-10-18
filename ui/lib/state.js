@@ -3,9 +3,27 @@
 import { get, gateway, honcho } from "./api.js";
 
 const PREFS_KEY = "tm.prefs";
+const SETUP_KEY = "tm.setup";
 
 function readPrefs() {
   try { return JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}; } catch { return {}; }
+}
+
+/**
+ * First setup as far as it got (views/setup.js): the choices and the rows of 적용,
+ * with no secret in them, so a window closed half way, or a computer restarted on
+ * the way, opens at 적용 again. Kept in this browser until the window reaches its end.
+ */
+export function keepSetup(kept) {
+  try { localStorage.setItem(SETUP_KEY, JSON.stringify(kept)); } catch {}
+}
+
+export function keptSetup() {
+  try { return JSON.parse(localStorage.getItem(SETUP_KEY) || "null"); } catch { return null; }
+}
+
+export function dropSetup() {
+  try { localStorage.removeItem(SETUP_KEY); } catch {}
 }
 
 export const app = {
