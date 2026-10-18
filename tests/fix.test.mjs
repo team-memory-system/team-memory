@@ -116,6 +116,22 @@ test("a server that does not come back, or an app that cannot restart, says why"
   const late = await fixChecks(behind("app"), stuck.deps);
   assert.equal(late.ok, false);
   assert.equal(late.said, "팀 메모리 앱을 새 판으로 다시 켜지 못했습니다: The older Team Memory app did not stop");
+
+  // Its containers came up and Honcho never answered: server start says why in `health` alone.
+  for (const [error, reason] of [["HTTP 502", "Honcho /health: HTTP 502"], ["health check timed out", "Honcho /health: health check timed out"]]) {
+    const silent = bench({ started: { ok: false, mode: "local-docker", health: { ok: false, error, elapsedMs: 120_000 } } });
+    const quiet = await fixChecks(behind("server-version"), silent.deps);
+    assert.deepEqual([quiet.ok, quiet.error], [false, reason]);
+    assert.equal(quiet.said, `기억 서버를 새 판으로 다시 시작하지 못했습니다: ${reason}`);
+    assert.deepEqual(silent.told.at(-1), ["server", "bad", { error: reason, detail: null }], "its row says it too");
+  }
+
+  // An address in a reason a step gave keeps no secret, as one in what it threw.
+  const secret = "https://agent:hunter2@memory.example.com/v3?key=abc123";
+  const leaky = bench({ started: { ok: false, error: `Honcho at ${secret} did not answer`, detail: `GET ${secret}` } });
+  const cleaned = await fixChecks(behind("server-version"), leaky.deps);
+  assert.deepEqual([cleaned.error, cleaned.detail], ["Honcho at https://memory.example.com/v3 did not answer", "GET https://memory.example.com/v3"]);
+  assert.doesNotMatch(JSON.stringify([cleaned, leaky.told]), /hunter2|abc123/);
 });
 
 test("each step is told as it goes, the server's with whether it runs", async () => {

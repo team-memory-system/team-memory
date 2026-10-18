@@ -350,14 +350,29 @@ const TEAM_ROUTES = {
 };
 
 /**
+ * What the bell showed when 업데이트 was pressed, { latest, warning }: main's version
+ * and whether it warned that teammates' reading stops (status.warning, or a boolean),
+ * as `update start` takes it. The CLI reads main again and starts nothing when either
+ * is no longer so.
+ */
+function seenArgs(seen) {
+  if (typeof seen?.latest !== "string" || !/^\d+\.\d+\.\d+$/.test(seen.latest)) return null;
+  return ["--seen-latest", seen.latest, ...(seen.warning ? ["--seen-warning"] : [])];
+}
+
+/**
  * 업데이트 (update.mjs): start and 다시 시도 only start the CLI's own processes,
  * which outlive this app; the update stops it and starts the new version's. Once the
  * update reached the new plugin's folder, 다시 시도 runs that copy. 고치기 is
  * doctor --fix, which may restart this app before it answers: its rows stay in
- * fix.json (/api/doctor/fix/status).
+ * fix.json (/api/doctor/fix/status). start takes { seen } (seenArgs).
  */
 const UPDATE_ROUTES = {
-  "/api/update/start": async () => runCli(["update", "start"], { timeout: 120_000 }),
+  "/api/update/start": async (body) => {
+    const seen = seenArgs(body?.seen);
+    if (!seen) return { ok: false, code: "seen", error: "화면이 본 새 판이 함께 오지 않았습니다. 화면을 새로 고치고 업데이트를 다시 누르세요." };
+    return runCli(["update", "start", ...seen], { timeout: 120_000 });
+  },
   "/api/update/retry": async () => runCli(["update", "retry"], { timeout: 120_000, cli: await retryCli(CLI) }),
   "/api/doctor/fix": async () => runCli(["doctor", "--fix"]),
 };

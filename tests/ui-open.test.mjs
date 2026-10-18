@@ -1,8 +1,11 @@
-// `ui open` starts the app's screen once, detached, and reuses it; it tells it apart
-// from another program on the same port by the page's marker. `bridge disconnect`
-// clears what the shared bridge of 0.3.28 and before left in the configuration.
+// `ui open` starts the app's screen once, detached, in the app home, and reuses it; it
+// tells it apart from another program on the same port by the page's marker, or by
+// what an app whose pages went with its plugin folder says of itself, and replaces
+// that one. `bridge disconnect` clears what the shared bridge of 0.3.28 and before
+// left in the configuration.
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import fs from "node:fs";
 import fsp from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
@@ -23,8 +26,27 @@ async function workspace(t) {
   await fsp.mkdir(home, { recursive: true });
   const env = { HONCHO_AGENT_BRIDGE_HOME: appHome, HONCHO_AGENT_BRIDGE_USER_HOME: home, HOME: home, USERPROFILE: home };
   for (const name of ["HONCHO_MCP_BEARER_TOKEN", "CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET", "HONCHO_AGENT_BRIDGE_CONFIG"]) env[name] = "";
-  return { appHome, configPath: path.join(appHome, "config.json"), env };
+  return { root, appHome, configPath: path.join(appHome, "config.json"), env };
 }
+
+async function freePort() {
+  const probe = http.createServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const { port } = probe.address();
+  await new Promise((resolve) => probe.close(() => resolve()));
+  return port;
+}
+
+// The app of an older copy whose plugin folder an update took away: its page is not
+// found, and it still says what it is.
+const PAGELESS_APP = `import http from "node:http";
+http.createServer((request, response) => {
+  response.setHeader("content-type", "application/json");
+  if (request.url === "/api/app/context") return response.end(JSON.stringify({ ok: true, version: "0.0.1", configured: true, workspace: "memory", agents: { codex: true, claude: false } }));
+  response.statusCode = 404;
+  response.end(JSON.stringify({ error: "Not found" }));
+}).listen(Number(process.env.PAGELESS_PORT), "127.0.0.1", () => process.stdout.write("ready\\n"));
+`;
 
 async function cli(args, env) {
   const merged = { ...process.env, ...env };
@@ -105,6 +127,7 @@ test("ui open writes the login autostart for the app it started, with a PATH tha
   assert.deepEqual(opened.body.autostart, { registered: true, kind: "launchd", path: plistPath, changed: true });
   const plist = await fsp.readFile(plistPath, "utf8");
   assert.ok(plist.includes(`<string>${path.join(ROOT, "scripts", "ui.mjs")}</string>`), plist);
+  assert.ok(plist.includes(`<key>WorkingDirectory</key>\n\t<string>${path.join(home, "Library", "Application Support", "HonchoAgentBridge")}</string>`), plist);
   assert.ok(plist.includes(`<key>HONCHO_AGENT_BRIDGE_UI_PORT</key>\n\t\t<string>${port}</string>`), plist);
   assert.doesNotMatch(plist, /cmux/);
 
@@ -122,4 +145,30 @@ test("ui open does not mistake another program on its port for the setup screen"
   const { body } = await cli(["ui", "open", "--no-browser"], { ...env, HONCHO_AGENT_BRIDGE_UI_PORT: String(other.address().port) });
   assert.equal(body.ok, false);
   assert.match(body.error, /Something else is answering/);
+});
+
+// listeningPid finds the old app with lsof; the old app is a process of its own, as it is on a computer.
+test("ui open replaces an app of ours whose pages went with its plugin folder, and starts the new one in the app home", { skip: !["/usr/sbin/lsof", "/usr/bin/lsof"].some((file) => fs.existsSync(file)) }, async (t) => {
+  const { root, appHome, env } = await workspace(t);
+  const port = await freePort();
+  const script = path.join(root, "pageless-app.mjs");
+  await fsp.writeFile(script, PAGELESS_APP);
+  const old = spawn(process.execPath, [script], { env: { ...process.env, PAGELESS_PORT: String(port) }, stdio: ["ignore", "pipe", "ignore"] });
+  const gone = new Promise((resolve) => old.once("exit", resolve));
+  t.after(() => { try { process.kill(old.pid); } catch {} });
+  await new Promise((resolve, reject) => { old.stdout.once("data", resolve); old.once("exit", reject); });
+
+  // Plain ui open, as /team-memory setup runs it: not only doctor --fix replaces it.
+  const opened = await cli(["ui", "open", "--no-browser"], { ...env, HONCHO_AGENT_BRIDGE_UI_PORT: String(port) });
+  t.after(() => { try { process.kill(opened.body.pid); } catch {} });
+  assert.equal(opened.body.ok, true, opened.stdout);
+  assert.deepEqual([opened.body.started, opened.body.replaced], [true, "0.0.1"]);
+  await gone;
+  const page = await fetch(`http://127.0.0.1:${port}/`);
+  assert.match(await page.text(), /id="team-memory-app"/, "this copy's app answers in its place");
+  if (process.platform === "darwin") {
+    // The working folder of the app it started, by its pid.
+    const { stdout } = await execFileAsync("/usr/sbin/lsof", ["-a", "-p", String(opened.body.pid), "-d", "cwd", "-Fn"]);
+    assert.equal(stdout.split("\n").find((line) => line.startsWith("n"))?.slice(1), await fsp.realpath(appHome));
+  }
 });

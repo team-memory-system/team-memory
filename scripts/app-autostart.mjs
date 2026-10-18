@@ -14,6 +14,8 @@
 // since the app `ui open` started is running already; the next login starts the copy
 // `ui open` started last. Nothing starts the app again after it exits either, so
 // `doctor` can swap it for a newer copy without the old one coming back on its port.
+// It runs in the app home, as `ui open` starts it: not in the plugin's folder, which a
+// plugin update replaces (and which Windows cannot remove while a process is in it).
 //
 // launchd needs no call: it reads the file at the next login. reg and systemctl go
 // through `ctx.run` (autostart.mjs), which refuses them under `node --test`.
@@ -83,7 +85,7 @@ export function stableNode(execPath, pathValue, { platform = process.platform, r
 }
 
 /** The app's login autostart on this platform, or null where there is none. */
-export function appAutostartSpec(ctx, { nodePath, scriptDir, environment, runtimeDir }) {
+export function appAutostartSpec(ctx, { nodePath, scriptDir, workingDirectory, environment, runtimeDir }) {
   const programArguments = [nodePath, path.join(scriptDir, "ui.mjs")];
   // What node prints when it cannot run the app at all (its copy gone, say).
   const errorLog = path.join(runtimeDir, "app.error.log");
@@ -94,7 +96,7 @@ export function appAutostartSpec(ctx, { nodePath, scriptDir, environment, runtim
       homeDir: ctx.homeDir,
       uid: ctx.uid,
       programArguments,
-      workingDirectory: scriptDir,
+      workingDirectory,
       stderrPath: errorLog,
       keepAlive: null,
       // What the app started (a server start it ran, say) outlives it, as it does
@@ -109,7 +111,7 @@ export function appAutostartSpec(ctx, { nodePath, scriptDir, environment, runtim
       subject: "app",
       valueName: APP_RUN_VALUE,
       vbsPath: path.join(runtimeDir, "app.vbs"),
-      workingDirectory: scriptDir,
+      workingDirectory,
       commandLine: programArguments,
       environment,
       comments: ["Team Memory: starts this computer's Team Memory app at logon, with no window.", written],
@@ -123,7 +125,7 @@ export function appAutostartSpec(ctx, { nodePath, scriptDir, environment, runtim
       unitName: APP_SYSTEMD_UNIT,
       comment: written,
       description: "Team Memory app",
-      workingDirectory: scriptDir,
+      workingDirectory,
       execStart: programArguments,
       environment,
       stderrPath: errorLog,
@@ -150,10 +152,11 @@ export async function registerAppAutostart({ scriptDir, nodePath = process.execP
     uid: options.uid ?? (typeof process.getuid === "function" ? process.getuid() : 0),
     run: options.run || runCommand,
   };
-  const runtimeDir = path.join(appHome || defaultAppHome(), "runtime", "app");
+  const home = appHome || defaultAppHome();
+  const runtimeDir = path.join(home, "runtime", "app");
   const environment = appEnvironment(env, { platform: ctx.platform, homeDir: ctx.homeDir, ...(options.tmpdir ? { tmpdir: options.tmpdir } : {}) });
   const node = stableNode(nodePath, ctx.platform === "win32" ? env.Path || env.PATH : environment.PATH, { platform: ctx.platform, ...(options.realpath ? { realpath: options.realpath } : {}) });
-  const spec = appAutostartSpec(ctx, { nodePath: node, scriptDir, environment, runtimeDir });
+  const spec = appAutostartSpec(ctx, { nodePath: node, scriptDir, workingDirectory: home, environment, runtimeDir });
   if (!spec) return { registered: false, error: `There is no login autostart for ${ctx.platform}` };
   try {
     if (spec.kind === "launchd") {

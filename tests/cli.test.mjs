@@ -303,14 +303,20 @@ test("doctor verifies runtime version, host plugins, Honcho access, and MCP hand
     CLAUDE_PLUGIN_ROOT: ROOT,
   };
   // An app still running from an older copy of the plugin, at a port of the test's own
-  // (the computer's own app at 4180 is never asked).
+  // (the computer's own app at 4180 is never asked); then the same app once its copy's
+  // folder is gone, whose page is not found, and last another program on that port.
+  const answers = {
+    old: { page: '<div id="team-memory-app"></div>', context: { ok: true, version: "0.0.1", configured: true, workspace: "memory", agents: { codex: true, claude: true } } },
+    gone: { page: null, context: { ok: true, version: VERSION, configured: true, workspace: "memory", agents: { codex: true, claude: false } } },
+    other: { page: null, context: { ok: true, version: "1.2.3" } },
+  };
+  let answering = answers.old;
   const oldApp = http.createServer((request, response) => {
-    if (request.url === "/api/app/context") {
-      response.setHeader("Content-Type", "application/json");
-      return response.end(JSON.stringify({ ok: true, version: "0.0.1" }));
-    }
-    response.setHeader("Content-Type", "text/html");
-    response.end('<div id="team-memory-app"></div>');
+    response.setHeader("Content-Type", request.url === "/" && answering.page ? "text/html" : "application/json");
+    if (request.url === "/api/app/context") return response.end(JSON.stringify(answering.context));
+    if (request.url === "/" && answering.page) return response.end(answering.page);
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: "Not found" }));
   });
   await new Promise((resolve) => oldApp.listen(0, "127.0.0.1", resolve));
   t.after(() => oldApp.close());
@@ -328,11 +334,14 @@ test("doctor verifies runtime version, host plugins, Honcho access, and MCP hand
     ],
     env,
   );
-  const stale = await runCli(["doctor"], env).catch((error) => JSON.parse(String(error.stdout || "{}")));
-  assert.equal(stale.ok, false);
-  assert.deepEqual(stale.checks.find((check) => check.name === "app"), {
-    name: "app", ok: false, url: `http://127.0.0.1:${oldApp.address().port}`, version: "0.0.1", fix: "팀 메모리 앱의 고치기를 누르세요. Claude Code에서는 /team-memory doctor",
-  });
+  const fix = "팀 메모리 앱 오른쪽 위 종에서 업데이트를 누르세요. Claude Code에서는 /team-memory doctor";
+  const appCheck = async () => (await runCli(["doctor"], env).catch((error) => JSON.parse(String(error.stdout || "{}")))).checks.find((check) => check.name === "app");
+  assert.deepEqual(await appCheck(), { name: "app", ok: false, url: `http://127.0.0.1:${oldApp.address().port}`, version: "0.0.1", fix });
+  // Its pages gone with its folder, at this very version: still ours by what it says of itself, and behind.
+  answering = answers.gone;
+  assert.deepEqual(await appCheck(), { name: "app", ok: false, url: `http://127.0.0.1:${oldApp.address().port}`, version: VERSION, pages: false, fix });
+  answering = answers.other;
+  assert.equal(await appCheck(), undefined, "a program that is not the app is not checked as one");
   await new Promise((resolve) => oldApp.close(resolve));
 
   const result = await runCli(["doctor"], env);

@@ -172,7 +172,7 @@ test("a refusal reaches the agent in the member's name and the bridge's words", 
   // A server from before the owner's tools could be opened.
   await assert.rejects(
     team.call("get_peer_card", { member: "bob", question: "q", peer_id: "bob" }),
-    { message: "밥's server runs an older Team Memory without get_peer_card. Ask them to update it with 업데이트 under the bell at the top right of their Team Memory app." },
+    { message: "밥's server runs an older Team Memory without get_peer_card. Ask them to update Team Memory on their computer as the 업데이트 section of the Team Memory README says." },
   );
   await assert.rejects(
     team.call("search", { member: "carol", question: "q", query: "x" }),

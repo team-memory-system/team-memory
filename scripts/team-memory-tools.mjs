@@ -419,9 +419,10 @@ export function teamMemory({ paths = null, fetchImpl = globalThis.fetch, now = (
     try {
       return answerText(member, name, await remote(member, name, sent));
     } catch (error) {
-      // A bridge from before the owner's tools could be opened knows only its four.
+      // A bridge from before the owner's tools could be opened knows only its four. Its
+      // app has no 업데이트 yet; the README's 업데이트 section also gives the commands.
       if (/unknown tool/i.test(String(error?.message))) {
-        throw new Error(`${member.name}'s server runs an older Team Memory without ${name}. Ask them to update it with 업데이트 under the bell at the top right of their Team Memory app.`);
+        throw new Error(`${member.name}'s server runs an older Team Memory without ${name}. Ask them to update Team Memory on their computer as the 업데이트 section of the Team Memory README says.`);
       }
       throw error;
     }

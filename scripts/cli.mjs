@@ -945,9 +945,10 @@ async function probeMcpServer(serverPath, timeoutMs = 2500, env = process.env) {
   });
 }
 
-// What a check that doctor --fix repairs says to do, in the app (its end check and
-// update) and in Claude Code; Codex has no /team-memory.
-const FIX = "팀 메모리 앱의 고치기를 누르세요. Claude Code에서는 /team-memory doctor";
+// What a check that doctor --fix repairs says to do: the app's 업데이트, which runs it
+// from the new plugin's folder (update.mjs), and in Claude Code /team-memory doctor;
+// Codex has no /team-memory.
+const FIX = "팀 메모리 앱 오른쪽 위 종에서 업데이트를 누르세요. Claude Code에서는 /team-memory doctor";
 
 /**
  * A memory server on this computer against this version: the Honcho source it was
@@ -1045,11 +1046,13 @@ async function doctor() {
     }
   }
   // The app serves its pages from the plugin folder it was started in, so one
-  // started before an update shows the old screens.
+  // started before an update shows the old screens, or none once that folder is gone.
   const appUrl = `http://${UI_HOST}:${uiPort()}/`;
-  if ((await uiState(appUrl)) === "ours") {
-    const running = await uiVersion(appUrl);
-    checks.push({ name: "app", ok: running === VERSION, url: appUrl, version: running || null, ...(running === VERSION ? {} : { fix: FIX }) });
+  const app = await uiAnswer(appUrl);
+  if (app.state === "ours") {
+    const running = app.version ?? (await uiVersion(appUrl));
+    const ok = running === VERSION && app.pages;
+    checks.push({ name: "app", ok, url: appUrl, version: running || null, ...(app.pages ? {} : { pages: false }), ...(ok ? {} : { fix: FIX }) });
   }
   return { ok: checks.every((check) => check.ok), version: VERSION, checks };
 }
@@ -1686,41 +1689,62 @@ const UI_HOST = "127.0.0.1";
 // so one of those still running is not mistaken for this one.
 const UI_MARKER = 'id="team-memory-app"';
 
-async function uiState(url) {
+/** What the app answering at `url` says of itself (its /api/app/context), or null. */
+async function uiContext(url) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 1500);
+  const timeout = setTimeout(() => controller.abort(), 3000);
   try {
-    const response = await fetch(url, { signal: controller.signal });
-    const text = await response.text();
-    return response.ok && text.includes(UI_MARKER) ? "ours" : "other";
+    const response = await fetch(new URL("api/app/context", url), { signal: controller.signal });
+    return await response.json();
   } catch {
-    return "down";
+    return null;
   } finally {
     clearTimeout(timeout);
   }
 }
+
+/**
+ * What answers at `url`: { state, pages, version? }, state "ours", "other" or "down".
+ * This app by its page's marker, or, once the plugin folder it serves its pages from
+ * is gone (a plugin update took it) and its page is not found, by its
+ * /api/app/context, whose fields only this app answers with: then `pages` is false,
+ * and `version` is what it gave.
+ */
+async function uiAnswer(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1500);
+  let status;
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    const text = await response.text();
+    if (response.ok && text.includes(UI_MARKER)) return { state: "ours", pages: true };
+    status = response.status;
+  } catch {
+    return { state: "down", pages: false };
+  } finally {
+    clearTimeout(timeout);
+  }
+  const context = status === 404 ? await uiContext(url) : null;
+  const ours = context?.ok === true && typeof context.version === "string" && /^\d+\.\d+\.\d+$/.test(context.version)
+    && typeof context.workspace === "string" && typeof context.agents?.claude === "boolean" && typeof context.agents?.codex === "boolean";
+  return ours ? { state: "ours", pages: false, version: context.version } : { state: "other", pages: false };
+}
+
+const uiState = async (url) => (await uiAnswer(url)).state;
 
 const uiPort = () => Number(process.env.HONCHO_AGENT_BRIDGE_UI_PORT || 4180);
 
 /** The version the app answering at `url` gives, or "" when it gives none. */
 async function uiVersion(url) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3000);
-  try {
-    const response = await fetch(new URL("api/app/context", url), { signal: controller.signal });
-    const context = await response.json();
-    return typeof context?.version === "string" ? context.version : "";
-  } catch {
-    return "";
-  } finally {
-    clearTimeout(timeout);
-  }
+  const context = await uiContext(url);
+  return typeof context?.version === "string" ? context.version : "";
 }
 
 /** The version of the app answering on this computer, or null when none of ours does. */
 async function runningAppVersion() {
   const url = `http://${UI_HOST}:${uiPort()}/`;
-  return (await uiState(url)) === "ours" ? (await uiVersion(url)) || null : null;
+  const app = await uiAnswer(url);
+  return app.state === "ours" ? (app.version ?? (await uiVersion(url))) || null : null;
 }
 
 /** The process listening on `port` on this machine, found with the system's own tool, or null. */
@@ -1770,17 +1794,19 @@ async function uiOpen(options = {}) {
   const screen = typeof options.screen === "string" ? options.screen.replace(/^[#/]+/, "") : "";
   if (screen && !/^[a-z0-9/_-]+(?:\?team=[a-z0-9.-]+)?$/i.test(screen)) return { ok: false, url, error: `Not a screen name: ${screen}` };
   const pageUrl = screen ? `${url}#/${screen}` : url;
-  let state = await uiState(url);
+  const answer = await uiAnswer(url);
+  let state = answer.state;
   if (state === "other") {
     return { ok: false, url, error: `Something else is answering at ${url}. Close it, or set HONCHO_AGENT_BRIDGE_UI_PORT.` };
   }
   let pid = null;
   let replaced = null;
   // doctor --fix: an app started from an older copy of the plugin serves that copy's
-  // pages, so it is stopped and this one started in its place.
-  if (state === "ours" && options.replaceOlder) {
-    const running = await uiVersion(url);
-    if (running !== VERSION) {
+  // pages, so it is stopped and this one started in its place. One whose pages are
+  // gone with its folder shows nothing, so it is replaced whenever the app is opened.
+  if (state === "ours" && (options.replaceOlder || !answer.pages)) {
+    const running = answer.version ?? (await uiVersion(url));
+    if (running !== VERSION || !answer.pages) {
       const old = listeningPid(port);
       if (!old) return { ok: false, url, error: `An older Team Memory app (${running || "unknown version"}) is running at ${url} and could not be found to stop` };
       try { process.kill(old); } catch (error) { return { ok: false, url, error: `The older Team Memory app could not be stopped: ${error.message}` }; }
@@ -1794,8 +1820,12 @@ async function uiOpen(options = {}) {
   }
   const appEnv = { ...process.env, HONCHO_AGENT_BRIDGE_UI_HOST: UI_HOST, HONCHO_AGENT_BRIDGE_UI_PORT: String(port) };
   if (state === "down") {
+    // In the app home rather than this copy's folder, which the next plugin update
+    // replaces: Windows cannot remove a folder a process runs in.
+    const { appHome } = installPaths();
+    await fsp.mkdir(appHome, { recursive: true });
     const child = spawn(process.execPath, [path.join(SCRIPT_DIR, "ui.mjs")], {
-      cwd: SCRIPT_DIR,
+      cwd: appHome,
       detached: true,
       stdio: "ignore",
       windowsHide: true,
@@ -1855,7 +1885,7 @@ function usage() {
       "team devices",
       "team redeploy (on the computer that made the team: the hub deployed again with the Cloudflare API token saved then, as 팀 주소 다시 올리기 does)",
       "doctor [--fix] (--fix: what the checks mark with fix, which a plugin update leaves behind, is repaired: setup apply with the saved settings, then this computer's memory server and subscription gateway restarted at this version, or only prepared when stopped, and an older running app started again from here; its rows go to the app's update/fix.json)",
-      "update status [--check] | start | retry (a newer version on GitHub's main, read once a day or now with --check; start brings the plugins, the collector, the server and the app up to it in processes of their own, with their rows in the app's update/update.json; retry starts again at the row that stopped)",
+      "update status [--check] | start [--seen-latest <version> [--seen-warning]] | retry (a newer version on GitHub's main, read once a day or now with --check; start reads main again and brings the plugins, the collector, the server and the app up to it in processes of their own, with their rows in the app's update/update.json, and with --seen-latest only when main's version and the warning are still what the screen showed; retry starts again at the row that stopped)",
       "switch [off|on|shared-off|shared-on] [<teammate's team name or email>] (/team-memory: what is on; off|on the memory server; shared-off|shared-on sharing, or what one teammate may read)",
       "teammates list",
       "teammates add <email> [--share <name> --invite-out <file>] (the Cloudflare API token in CLOUDFLARE_API_TOKEN, else the saved one)",
@@ -2042,8 +2072,12 @@ async function main() {
   if (command === "doctor" || command === "status") return parseOptions(args).fix === true ? doctorAndFix() : doctor();
   if (command === "update") {
     const action = args[0] && !args[0].startsWith("--") ? args.shift() : "status";
+    const options = parseOptions(args);
+    // What the bell showed when 업데이트 was pressed: main's version and whether it warned.
+    const seen = typeof options.seenLatest === "string" ? { latest: options.seenLatest, warning: options.seenWarning === true } : null;
     return updateCommand(action, {
-      force: parseOptions(args).check === true,
+      force: options.check === true,
+      seen,
       scriptDir: SCRIPT_DIR,
       // The rows say whether the app answering here is behind.
       appVersion: action === "status" || action === "start" ? await runningAppVersion() : null,

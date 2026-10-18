@@ -12,9 +12,11 @@
 // The button runs three processes one after another, each detached so it outlives
 // the one that started it, each writing how far it got to update.json in the app's
 // folder, which every copy of the app reads:
-//   update start     the app's own copy: refuses while a long job runs, writes the rows
+//   update start     the app's own copy: reads main again, refuses while a long job runs
+//                    or when main's version or the warning is not what the bell showed,
+//                    writes the rows
 //   update run       the same copy: updates the plugin of Claude Code (else Codex), then
-//                    starts the new plugin folder's
+//                    starts the new plugin folder's, whose version the rest goes up to
 //   update continue  doctor and fix.mjs there for the collector, the server and the app,
 //                    which restarts the app from that folder (with Codex only, the app
 //                    first); then the Codex plugin, last, since Codex keeps only its
@@ -35,6 +37,7 @@ import { acquireFileLock, releaseFileLock } from "./file-lock.mjs";
 import { fixable } from "./fix.mjs";
 import { gatewayDirectory, gatewaySourceProbe } from "./gateway.mjs";
 import { DEFAULT_SOURCE, hostCli, PLUGIN_INSTALL_TIMEOUT_MS, PLUGIN_NAME } from "./host-plugins.mjs";
+import { sanitizeUrlsInText } from "./redact.mjs";
 import { rederivePaths } from "./rederive.mjs";
 import { honchoSourcePin, installedServerDir, serverStatus } from "./server-manager.mjs";
 import { CLIENT_NAMES, clientFailure, runClient } from "./team-access.mjs";
@@ -78,6 +81,9 @@ const SERVER_ROWS = Object.freeze({
   running: { title: "기억 서버 다시 만들기", sub: "몇 분에서 10분 넘게 걸립니다." },
   stopped: { title: "기억 서버 준비", sub: "꺼 둔 서버는 켜지 않습니다." },
 });
+// Before the server's line, when the version's gateway pin moved: the row is the
+// memory server's, and the subscription gateway beside it goes up with it.
+const GATEWAY_TOO = "게이트웨이도 새 판으로 바꿉니다.";
 const LOGIN_ROW = Object.freeze({ title: "구독 계정 로그인", sub: "브라우저에서 로그인을 마치세요." });
 // The doctor checks fix.mjs repairs, by the row each one is.
 const FIX_ROWS = Object.freeze({ runtime: "runtime", "server-version": "server", app: "app" });
@@ -94,6 +100,12 @@ const BLOCKED = Object.freeze({
 const UPDATING = "팀 메모리 앱에서 업데이트가 도는 중입니다. 업데이트가 끝나기를 기다리세요.";
 const FIXING = "고치기가 이미 도는 중입니다. 끝나기를 기다리세요.";
 const STARTING = "업데이트나 고치기를 시작하는 중입니다. 끝나기를 기다리세요.";
+const CHANGED = "새 판이 바뀌었습니다. 바뀐 내용을 보고 업데이트를 다시 누르세요.";
+const UNREAD = "GitHub에서 새 판을 읽지 못했습니다. 인터넷 연결을 확인하고 업데이트를 다시 누르세요.";
+
+// What is written to update.json and fix.json, which the app shows: addresses in a
+// reason lose what is secret in them, as the CLI's own output does.
+const clean = (text) => sanitizeUrlsInText(String(text));
 
 export function updatePaths(appHome = defaultAppHome()) {
   const dir = path.join(appHome, "update");
@@ -323,7 +335,8 @@ const evenLines = (text) => text.replace(/\r\n/g, "\n");
 /**
  * Whether main's version rebuilds the memory server here, by what doctor's
  * server-version check compares: the Honcho pin, the gateway's pin, and the files the
- * containers run. { rebuild, running }, or null on a computer with no server.
+ * containers run. { rebuild, running, gateway }, or null on a computer with no server;
+ * `running` is asked only for a rebuild, and is null otherwise.
  */
 async function serverChange(ctx, config) {
   const serverDir = installedServerDir(config);
@@ -337,15 +350,19 @@ async function serverChange(ctx, config) {
     const [want, have] = await Promise.all([readText(path.join(main, ...name.split("/"))), readText(path.join(serverDir, ...name.split("/")))]);
     if (want !== null && (have === null || evenLines(want) !== evenLines(have))) files = true;
   }
-  const rebuild = honcho || Boolean(gateway?.present && gateway.state === "stale") || files;
-  if (!rebuild) return { rebuild: false, running: false };
+  const moved = Boolean(gateway?.present && gateway.state === "stale");
+  const rebuild = honcho || moved || files;
+  if (!rebuild) return { rebuild: false, running: null, gateway: false };
   const status = await ctx.serverStatus({ profile: "personal" }).catch(() => null);
-  return { rebuild: true, running: Boolean(status?.running) };
+  return { rebuild: true, running: Boolean(status?.running), gateway: moved };
 }
 
-/** A row as the app shows it; the server's by whether it runs. */
-function row(id, running = true) {
-  if (id === "server") return { id, ...(running === false ? SERVER_ROWS.stopped : SERVER_ROWS.running) };
+/** A row as the app shows it; the server's by whether it runs, and with the gateway when it moves too. */
+function row(id, running = true, gateway = false) {
+  if (id === "server") {
+    const { title, sub } = running === false ? SERVER_ROWS.stopped : SERVER_ROWS.running;
+    return gateway ? { id, title, sub: `${GATEWAY_TOO} ${sub}`, gateway: true } : { id, title, sub };
+  }
   if (id === "login") return { id, ...LOGIN_ROW };
   return { id, title: TITLES[id] };
 }
@@ -387,12 +404,17 @@ function summaryOf(rows) {
   return has("app") ? "앱을 새 판으로 다시 켭니다." : null;
 }
 
-/** 지난 대화 쌓기 or 기억 다시 정리 going now, from their status files only (as rederive.mjs reads them). */
+/**
+ * 지난 대화 쌓기 or 기억 다시 정리 going now, from their status files only (as
+ * rederive.mjs reads them). A rebuild of the memory is going until it ends or stops
+ * with an error, whether or not its process runs: the app carries one on whose
+ * process stopped.
+ */
 async function longJob(ctx, config) {
   const paths = rederivePaths(config);
   const [past, rederive] = await Promise.all([readJson(paths.pastStatus, null), readJson(paths.status, null)]);
   if (past?.running && ctx.alive(Number(past.running.pid))) return "past";
-  if (rederive?.job && ctx.alive(Number(rederive.job.pid))) return "rederive";
+  if (rederive?.job && !rederive.job.error) return "rederive";
   return null;
 }
 
@@ -429,7 +451,7 @@ async function assess(ctx, options) {
     if (here.claude && (!here.claude.version || behind(here.claude.version))) progress.rows.push(row("claude"));
     if (here.codex && (!here.codex.version || behind(here.codex.version))) progress.rows.push(row("codex"));
     if (here.runtime && behind(here.runtime)) progress.rows.push(row("runtime"));
-    if (server?.rebuild) progress.rows.push(row("server", server.running));
+    if (server?.rebuild) progress.rows.push(row("server", server.running, server.gateway));
     if (here.app && behind(here.app)) progress.rows.push(row("app"));
     sortRows(progress);
   }
@@ -508,7 +530,8 @@ export async function retryCli(own, options = {}) {
 /**
  * fix.mjs's onStep on a progress's rows: the row of `step` in `state`. A login that
  * ended puts the login row before the server's, and the server's next run takes it
- * as done; the server's run names the row by whether the server runs.
+ * as done; the server's run names the row by whether the server runs. A reason is
+ * kept with its addresses cleaned.
  */
 export function stepRow(progress, step, state, info = {}) {
   let at = progress.rows.find((item) => item.id === step);
@@ -525,15 +548,15 @@ export function stepRow(progress, step, state, info = {}) {
     return;
   }
   if (step === "server" && state === "run") {
-    Object.assign(at, row("server", info.running));
+    Object.assign(at, row("server", info.running, at.gateway));
     if (login()) login().state = "ok";
   }
   at.state = state;
   delete at.error;
   delete at.detail;
   if (state === "bad") {
-    if (info.error) at.error = info.error;
-    if (info.detail) at.detail = info.detail;
+    if (info.error) at.error = clean(info.error);
+    if (info.detail) at.detail = clean(info.detail);
   }
   sortRows(progress);
 }
@@ -553,27 +576,44 @@ function recorder(ctx, file, progress) {
     fail: async (id, result) => {
       stepRow(progress, id, "bad", { error: result.error, detail: result.detail });
       progress.state = "failed";
-      progress.error = result.error || null;
+      progress.error = result.error ? clean(result.error) : null;
       progress.finishedAt = iso(ctx.now());
       await write();
-      return { ok: false, error: result.error };
+      return { ok: false, error: progress.error };
     },
   };
 }
 
-/** The rows doctor's checks ask fix.mjs for, as doctor sees them in this copy: ones it no longer marks are done. */
+/**
+ * The rows doctor's checks ask fix.mjs for, as doctor sees them in this copy: ones it
+ * no longer marks are done. The app's row is not done just because doctor has no
+ * check of it: doctor checks only an app it knows answering, and the update was
+ * started from one (see checksFor).
+ */
 function reconcile(progress, checks) {
   const behind = fixable(checks);
   for (const [check, id] of Object.entries(FIX_ROWS)) {
     const at = progress.rows.find((item) => item.id === id);
+    const unseen = check === "app" && !checks.some((item) => item.name === "app");
     if (behind.has(check) && !at) progress.rows.push({ ...row(id), state: "wait" });
-    else if (!behind.has(check) && at && at.state !== "ok") {
+    else if (!behind.has(check) && !unseen && at && at.state !== "ok") {
       at.state = "ok";
       delete at.error;
       delete at.detail;
     }
   }
   sortRows(progress);
+}
+
+/**
+ * The checks fix.mjs gets in the new folder: doctor's, and the app's when the app's
+ * row is left and doctor saw no app of ours (none answering, or one it did not know):
+ * restartApp then starts this copy's app, or says what answers in its place.
+ */
+function checksFor(progress, checks) {
+  const app = progress.rows.find((item) => item.id === "app");
+  if (!app || app.state === "ok" || checks.some((item) => item.name === "app")) return checks;
+  return [...checks, { name: "app", ok: false, fix: "update" }];
 }
 
 /** What is left to do once it went through: new sessions in the agents, the server kept off, the team hub. */
@@ -634,14 +674,10 @@ async function updatePlugin(ctx, host, to) {
 
 // ------------------------------------------------------------------ the steps
 
-/**
- * The bell's view: main's version and when it was read, the versions here, the rows
- * 업데이트 would run, the line saying what it brings up, the warning when it rebuilds
- * a running server, why it cannot be pressed now, and the update going or last done.
- */
-export async function updateStatus(options = {}) {
-  const ctx = context(options);
-  const seen = await assess(ctx, options);
+const warningOf = (server) => (server?.rebuild && server.running ? WARNING : null);
+
+/** The bell's view of what `assess` found. */
+async function statusOf(ctx, seen) {
   return {
     ok: true,
     latest: seen.latest,
@@ -657,19 +693,40 @@ export async function updateStatus(options = {}) {
     rows: seen.rows,
     summary: summaryOf(seen.rows),
     server: seen.server,
-    warning: seen.server?.rebuild && seen.server.running ? WARNING : null,
+    warning: warningOf(seen.server),
     blocked: seen.blocked,
     progress: await progressView(ctx, ctx.paths.update),
   };
 }
 
-/** 업데이트: the rows written, and `update run` started in a process of its own. */
+/**
+ * The bell's view: main's version and when it was read, the versions here, the rows
+ * 업데이트 would run, the line saying what it brings up, the warning when it rebuilds
+ * a running server, why it cannot be pressed now, and the update going or last done.
+ */
+export async function updateStatus(options = {}) {
+  const ctx = context(options);
+  return statusOf(ctx, await assess(ctx, options));
+}
+
+/**
+ * 업데이트: main read again, the rows written, and `update run` started in a process
+ * of its own. `options.seen` is what the screen showed, { latest, warning }: main's
+ * version and whether it warned that teammates' reading stops. When either is no
+ * longer so, nothing starts: { ok: false, code: "changed", status } has the status as
+ * it is now, for the screen to show before the button is pressed again. Nor does it
+ * when main cannot be read now (code "unread"): what it would bring is not known.
+ */
 export async function updateStart(options = {}) {
   const ctx = context(options);
   return withLock(ctx, async () => {
-    const seen = await assess(ctx, options);
+    const seen = await assess(ctx, { ...options, force: true });
     if (seen.going) return { ok: false, code: "running", error: "업데이트가 이미 도는 중입니다." };
+    if (seen.check?.error) return { ok: false, code: "unread", error: UNREAD, detail: clean(seen.check.error) };
     if (!seen.newer) return { ok: false, code: "current", error: "이 컴퓨터는 새 판입니다." };
+    if (options.seen && (seen.latest !== options.seen.latest || Boolean(warningOf(seen.server)) !== Boolean(options.seen.warning))) {
+      return { ok: false, code: "changed", error: CHANGED, status: await statusOf(ctx, seen) };
+    }
     if (seen.blocked) return { ok: false, code: seen.blocked.code, error: seen.blocked.reason };
     const now = iso(ctx.now());
     const progress = {
@@ -677,6 +734,7 @@ export async function updateStart(options = {}) {
       kind: "update",
       state: "running",
       from: seen.lowest,
+      // main's version until the plugin the rest runs from went up: then the version it went to.
       to: seen.latest,
       host: seen.host,
       folder: null,
@@ -734,12 +792,15 @@ async function runPlugin(ctx, progress, save) {
     const updated = await updatePlugin(ctx, host, progress.to);
     if (!updated.ok) return save.fail(host, updated);
     record = updated.record;
+    own.version = record.version;
     await save.step(host, "ok");
   }
   const cli = record?.folder ? path.join(record.folder, "scripts", "cli.mjs") : null;
   if (!cli || !(await exists(cli))) return save.fail(host, { error: `새 ${CLIENT_NAMES[host]} 플러그인 폴더에 scripts/cli.mjs가 없습니다.` });
-  // Written before that folder's process starts, which reads it at once.
+  // Written before that folder's process starts, which reads it at once: the rest
+  // goes up to the version that folder is.
   progress.folder = record.folder;
+  if (record.version) progress.to = record.version;
   await save.write();
   return start(ctx, progress, cli, "continue");
 }
@@ -759,17 +820,18 @@ async function continueHere(ctx, progress, save) {
   const before = await ctx.doctor();
   reconcile(progress, before.checks);
   await save.write();
+  const checks = checksFor(progress, before.checks);
   const parts = progress.host === "codex"
-    ? [before.checks.filter((check) => check.name === "app"), before.checks.filter((check) => check.name !== "app")]
-    : [before.checks];
+    ? [checks.filter((check) => check.name === "app"), checks.filter((check) => check.name !== "app")]
+    : [checks];
   const said = [];
   let fixed;
-  for (const checks of parts) {
-    fixed = await ctx.fix(checks, save.step);
+  for (const part of parts) {
+    fixed = await ctx.fix(part, save.step);
     if (fixed.said) said.push(fixed.said);
     if (!fixed.ok) break;
   }
-  progress.said = said.join(" ");
+  progress.said = clean(said.join(" "));
   if (fixed.login) {
     progress.state = "login";
     await save.write();
@@ -778,21 +840,22 @@ async function continueHere(ctx, progress, save) {
   if (fixed.serverOff) progress.serverOff = true;
   if (!fixed.ok) {
     progress.state = "failed";
-    progress.error = fixed.error || null;
+    progress.error = fixed.error ? clean(fixed.error) : null;
     progress.finishedAt = iso(ctx.now());
     await save.write();
-    return { ok: false, error: fixed.error, said: progress.said };
+    return { ok: false, error: progress.error, said: progress.said };
   }
   const codex = progress.rows.find((item) => item.id === "codex");
   if (codex && codex.state !== "ok" && progress.host !== "codex") {
     await save.step("codex", "run");
     const updated = await updatePlugin(ctx, "codex", progress.to);
     if (!updated.ok) return save.fail("codex", updated);
+    codex.version = updated.record.version;
     await save.step("codex", "ok");
   }
   const plugins = progress.rows.filter((item) => item.id === "claude" || item.id === "codex")
-    .map((item) => `${CLIENT_NAMES[item.id]} 플러그인을 ${progress.to}로 올렸습니다.`);
-  progress.said = [...plugins, ...said].join(" ");
+    .map((item) => `${CLIENT_NAMES[item.id]} 플러그인을 ${item.version || progress.to}로 올렸습니다.`);
+  progress.said = clean([...plugins, ...said].join(" "));
   progress.todo = await todoOf(ctx, progress);
   progress.state = "done";
   progress.finishedAt = iso(ctx.now());
@@ -825,7 +888,8 @@ export async function updateRetry(options = {}) {
     Object.assign(progress, { state: "running", pid: process.pid, finishedAt: null, todo: [] });
     delete progress.error;
     delete progress.said;
-    delete progress.serverOff;
+    // A server prepared only, as it was off, stays so: its row does not run again.
+    if (progress.rows.find((item) => item.id === "server")?.state !== "ok") delete progress.serverOff;
     let cli = path.join(ctx.scriptDir, "cli.mjs");
     if (again) progress.folder = null;
     else {
@@ -874,8 +938,8 @@ export async function recordFix(checks, fix, options = {}) {
   const fixed = await fix(checks, save.step);
   progress.state = fixed.login ? "login" : fixed.ok ? "done" : "failed";
   if (fixed.serverOff) progress.serverOff = true;
-  if (fixed.error) progress.error = fixed.error;
-  progress.said = fixed.said;
+  if (fixed.error) progress.error = clean(fixed.error);
+  progress.said = clean(fixed.said || "");
   if (progress.state !== "login") progress.finishedAt = iso(ctx.now());
   if (fixed.ok) progress.todo = await todoOf(ctx, progress, { hub: false });
   await save.write();

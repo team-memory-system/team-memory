@@ -287,7 +287,7 @@ test("every row says what it brings up, in the order it runs, and a running serv
   ]);
   assert.equal(status.summary, "플러그인과 대화 모으기, 기억 서버를 올립니다.");
   assert.equal(status.warning, "기억 서버를 다시 만드는 동안 팀원 열람이 멈춥니다.");
-  assert.deepEqual(status.server, { rebuild: true, running: true });
+  assert.deepEqual(status.server, { rebuild: true, running: true, gateway: false });
 
   const two = await bench(t, { claude: "0.9.0", runtime: "0.9.1", app: "0.9.1", server: "gateway" });
   assert.equal((await updateStatus(two.options)).summary, "플러그인과 기억 서버를 올립니다.");
@@ -307,13 +307,22 @@ test("the server is rebuilt only when main runs another Honcho, gateway or conta
     assert.equal(status.server.rebuild, rebuild, server);
     assert.equal(status.rows.some((row) => row.id === "server"), rebuild, server);
     assert.equal(status.warning !== null, rebuild, server);
+    // Whether it runs is asked only for a rebuild.
+    if (!rebuild) assert.deepEqual(status.server, { rebuild: false, running: null, gateway: false }, server);
   }
+
+  // A version whose gateway pin moved says so on the server's row.
+  const gateway = await updateStatus((await bench(t, { server: "gateway" })).options);
+  assert.deepEqual(gateway.rows.find((row) => row.id === "server"), {
+    id: "server", title: "기억 서버 다시 만들기", sub: "게이트웨이도 새 판으로 바꿉니다. 몇 분에서 10분 넘게 걸립니다.", gateway: true,
+  });
+  assert.deepEqual(gateway.server, { rebuild: true, running: true, gateway: true });
 
   // A stopped server is prepared only: its row says so, and no teammate's reading stops.
   const stopped = await bench(t, { server: "honcho", running: false });
   const status = await updateStatus(stopped.options);
   assert.deepEqual(status.rows.find((row) => row.id === "server"), { id: "server", title: "기억 서버 준비", sub: "꺼 둔 서버는 켜지 않습니다." });
-  assert.deepEqual([status.server, status.warning], [{ rebuild: true, running: false }, null]);
+  assert.deepEqual([status.server, status.warning], [{ rebuild: true, running: false, gateway: false }, null]);
 
   // A computer with no server of its own (쌓지 않기, 다른 컴퓨터의 내 서버) has no server row.
   const none = await bench(t, { server: null });
@@ -383,10 +392,16 @@ test("while past conversations go in, the memory is made again, or a fix runs, t
   b.live.delete(4321);
   assert.equal((await updateStatus(b.options)).blocked, null, "a run whose process is gone holds nothing up");
 
-  await put(path.join(b.appHome, "data", "rederive", "status.json"), JSON.stringify({ job: { pid: 4322, kind: "build" } }));
+  const rederive = path.join(b.appHome, "data", "rederive", "status.json");
+  await put(rederive, JSON.stringify({ job: { pid: 4322, kind: "build" } }));
   b.live.add(4322);
   assert.deepEqual((await updateStatus(b.options)).blocked, { code: "rederive", reason: "기억을 다시 정리하는 중입니다. 다 끝난 뒤 업데이트를 누르세요." });
+  // Its process gone, the app carries it on: it is going until it ends or stops with an error.
   b.live.delete(4322);
+  assert.equal((await updateStatus(b.options)).blocked?.code, "rederive");
+  assert.equal((await updateStart(b.options)).code, "rederive");
+  await put(rederive, JSON.stringify({ job: { pid: 4322, kind: "build", error: "Honcho answered 500" } }));
+  assert.equal((await updateStatus(b.options)).blocked, null, "one that stopped with an error holds nothing up");
 
   await put(path.join(b.appHome, "update", "fix.json"), JSON.stringify({ version: 1, kind: "fix", state: "running", pid: process.pid, rows: [] }));
   assert.equal((await updateStatus(b.options)).blocked.code, "fixing");
@@ -571,10 +586,147 @@ test("a stopped server is only prepared and stays off, with 서버 켜기 left t
   const done = await updateProgress(b.options);
   assert.equal(done.state, "done");
   assert.equal(done.serverOff, true);
-  assert.deepEqual(done.rows.find((row) => row.id === "server"), { id: "server", title: "기억 서버 준비", sub: "꺼 둔 서버는 켜지 않습니다.", state: "ok" });
+  assert.deepEqual(done.rows.find((row) => row.id === "server"), {
+    id: "server", title: "기억 서버 준비", sub: "게이트웨이도 새 판으로 바꿉니다. 꺼 둔 서버는 켜지 않습니다.", gateway: true, state: "ok",
+  });
   assert.deepEqual(done.todo.at(-1), {
     id: "server", title: "기억 서버", text: "꺼 둔 기억 서버는 새 판으로 준비만 했습니다. 켜려면 서버 켜기를 누르세요.", action: "server-start",
   });
+});
+
+test("a server kept off stays so through 다시 시도, with 서버 켜기 left to do at the end", async (t) => {
+  const b = await bench(t, { server: "honcho", running: false });
+  b.answers.app = { ok: false, error: "The setup screen did not start." };
+  await updateStart(b.options);
+  await drive(b);
+  const failed = await updateProgress(b.options);
+  assert.deepEqual(b.states(failed.rows), { claude: "ok", runtime: "ok", server: "ok", app: "bad" });
+  assert.equal(failed.serverOff, true);
+
+  b.answers.app = { ok: true };
+  b.doctor = ["app"];
+  const from = b.spawned.length;
+  assert.equal((await updateRetry(b.options)).ok, true);
+  assert.equal((await b.progress()).serverOff, true, "the server's row, done, does not run again");
+  await drive(b, from);
+  const done = await updateProgress(b.options);
+  assert.deepEqual([done.state, done.serverOff, done.todo.at(-1).action], ["done", true, "server-start"]);
+  assert.deepEqual(b.calls.filter((call) => call.startsWith("server")), ["server prepare"]);
+});
+
+test("the app's row starts the app again even when the new folder's doctor checks no app, as when its pages went with the old folder", async (t) => {
+  // doctor checks only an app it knows answering; with Codex only, the update took the
+  // folder the app served its pages from.
+  const codex = await bench(t, { claude: null, codex: "0.9.0", runtime: "0.9.0", app: "0.9.0", server: "same", doctor: ["runtime"] });
+  assert.deepEqual(codex.ids((await updateStatus(codex.options)).rows), ["codex", "app", "runtime"]);
+  await updateStart(codex.options);
+  await drive(codex);
+  assert.deepEqual(codex.calls, ["codex plugin marketplace upgrade team-memory", "codex plugin add team-memory@team-memory", "app restart", "setup apply"]);
+  const done = await updateProgress(codex.options);
+  assert.deepEqual([done.state, codex.states(done.rows)], ["done", { codex: "ok", app: "ok", runtime: "ok" }]);
+
+  const claude = await bench(t, { claude: "0.9.0", runtime: "0.9.1", app: "0.9.0", server: "same", doctor: [] });
+  await updateStart(claude.options);
+  await drive(claude);
+  assert.deepEqual(claude.calls.slice(2), ["app restart"]);
+  assert.equal((await updateProgress(claude.options)).state, "done");
+
+  // What answers in the app's place stops its row with that reason.
+  const other = await bench(t, { claude: "0.9.0", runtime: "0.9.1", app: "0.9.0", server: "same", doctor: [] });
+  other.answers.app = { ok: false, error: "Something else is answering at http://127.0.0.1:4180/. Close it, or set HONCHO_AGENT_BRIDGE_UI_PORT." };
+  await updateStart(other.options);
+  await drive(other);
+  const failed = await updateProgress(other.options);
+  assert.deepEqual([failed.state, other.states(failed.rows)], ["failed", { claude: "ok", app: "bad" }]);
+  assert.match(failed.rows.find((row) => row.id === "app").error, /^Something else is answering at http:\/\/127\.0\.0\.1:4180\./);
+
+  // An app the new folder's doctor sees at its version was started again already.
+  const current = await bench(t, { claude: "0.9.0", runtime: "0.9.1", app: "0.9.0", server: "same" });
+  current.options.doctor = async () => ({ ok: true, checks: [{ name: "configuration", ok: true }, { name: "app", ok: true, version: "0.9.1" }] });
+  await updateStart(current.options);
+  await drive(current);
+  assert.deepEqual(current.calls.slice(2), []);
+  assert.deepEqual(current.states((await updateProgress(current.options)).rows), { claude: "ok", app: "ok" });
+});
+
+test("업데이트 reads main again, and starts nothing when main's version or the warning is not what the bell showed", async (t) => {
+  const b = await bench(t, { server: "honcho", running: false });
+  const shown = await updateStatus(b.options);
+  assert.deepEqual([shown.latest, shown.warning], ["0.9.1", null]);
+  const read = b.fetched.length;
+
+  // main moved on after the bell read it.
+  b.main[".claude-plugin/plugin.json"] = JSON.stringify({ version: "0.9.2" });
+  const moved = await updateStart({ ...b.options, seen: { latest: "0.9.1", warning: false } });
+  assert.deepEqual([moved.ok, moved.code, moved.error], [false, "changed", "새 판이 바뀌었습니다. 바뀐 내용을 보고 업데이트를 다시 누르세요."]);
+  assert.equal(b.fetched.length, read + 5, "read again at once, within the day");
+  assert.deepEqual([moved.status.latest, moved.status.newer], ["0.9.2", true], "the status as it is now, for the bell to show");
+
+  // The server was started since: its rebuild now stops teammates' reading.
+  b.running = true;
+  const warned = await updateStart({ ...b.options, seen: { latest: "0.9.2", warning: false } });
+  assert.deepEqual([warned.code, warned.status.warning], ["changed", "기억 서버를 다시 만드는 동안 팀원 열람이 멈춥니다."]);
+
+  // main cannot be read now: what it would bring is not known.
+  b.offline = true;
+  const unread = await updateStart({ ...b.options, seen: { latest: "0.9.2", warning: true } });
+  assert.deepEqual([unread.ok, unread.code, unread.error], [false, "unread", "GitHub에서 새 판을 읽지 못했습니다. 인터넷 연결을 확인하고 업데이트를 다시 누르세요."]);
+  assert.match(unread.detail, /fetch failed/);
+  assert.equal(b.spawned.length, 0, "none of them started anything");
+  assert.equal(await fsp.access(b.update).then(() => true, () => false), false);
+
+  b.offline = false;
+  const started = await updateStart({ ...b.options, seen: { latest: "0.9.2", warning: true } });
+  assert.equal(started.ok, true, started.error);
+  assert.equal(started.progress.to, "0.9.2");
+});
+
+test("the versions said are the ones the plugins went to, when main moved on after 업데이트 was pressed", async (t) => {
+  const b = await bench(t, { claude: "0.9.0", codex: "0.9.0", runtime: "0.9.1", app: "0.9.1", server: "same", doctor: [] });
+  const started = await updateStart(b.options);
+  assert.equal(started.progress.to, "0.9.1");
+  b.main[".claude-plugin/plugin.json"] = JSON.stringify({ version: "0.9.2" });
+  await drive(b);
+  const done = await updateProgress(b.options);
+  assert.deepEqual([done.state, done.to], ["done", "0.9.2"]);
+  assert.deepEqual(done.rows.map((row) => [row.id, row.state, row.version]), [["claude", "ok", "0.9.2"], ["codex", "ok", "0.9.2"]]);
+  assert.equal(done.said, "Claude Code 플러그인을 0.9.2로 올렸습니다. Codex 플러그인을 0.9.2로 올렸습니다.");
+});
+
+test("an address in a reason keeps none of its secrets in update.json or fix.json", async (t) => {
+  const secret = "https://agent:hunter2@memory.example.com/v3/health?key=abc123";
+  const failing = { ok: false, error: `Honcho at ${secret} did not answer`, detail: `GET ${secret}\n502` };
+  const b = await bench(t, { server: "honcho" });
+  b.answers.started = failing;
+  await updateStart(b.options);
+  await drive(b);
+  const written = await fsp.readFile(b.update, "utf8");
+  const failed = JSON.parse(written);
+  assert.equal(failed.error, "Honcho at https://memory.example.com/v3/health did not answer");
+  assert.equal(failed.rows.find((row) => row.id === "server").detail, "GET https://memory.example.com/v3/health\n502");
+  assert.match(failed.said, /기억 서버를 새 판으로 다시 시작하지 못했습니다: Honcho at https:\/\/memory\.example\.com\/v3\/health did not answer$/);
+  assert.doesNotMatch(written, /hunter2|abc123|agent:/);
+
+  // 고치기's rows the same.
+  const checks = [{ name: "server-version", ok: false, fix: "고치기" }];
+  const fix = (list, onStep) => fixChecks(list, {
+    serverStatus: async () => ({ running: true }),
+    serverStart: async () => failing,
+    onStep,
+  });
+  await recordFix(checks, fix, b.options);
+  const fixed = await fsp.readFile(path.join(b.appHome, "update", "fix.json"), "utf8");
+  assert.match(fixed, /https:\/\/memory\.example\.com\/v3\/health/);
+  assert.doesNotMatch(fixed, /hunter2|abc123|agent:/);
+
+  // A plugin's CLI that names its source with a login in it.
+  const plugin = await bench(t);
+  plugin.options.clientRunner = async () => ({ code: 1, stdout: "", stderr: `fatal: could not read from ${secret}\n` });
+  await updateStart(plugin.options);
+  await drive(plugin);
+  const refused = await fsp.readFile(plugin.update, "utf8");
+  assert.match(refused, /could not read from https:\/\/memory\.example\.com\/v3\/health/);
+  assert.doesNotMatch(refused, /hunter2|abc123/);
 });
 
 test("a computer with no server of its own runs no server step, whatever main's pins are", async (t) => {
@@ -720,6 +872,10 @@ test("the app answers the bell from its own folder, and another computer's scree
   assert.deepEqual(there.body.blocked, { code: "here-only", reason: `업데이트는 그 컴퓨터에서 누르세요. ${HERE_ONLY.get("/api/update/start")}` });
   const pressed = await call("/api/update/start", { method: "POST", viewer: true });
   assert.deepEqual([pressed.status, pressed.body.hereOnly], [403, true]);
+  // Without what the bell showed, nothing is started (and no CLI runs).
+  const unseen = await call("/api/update/start", { method: "POST" });
+  assert.deepEqual([unseen.status, unseen.body.ok, unseen.body.code], [200, false, "seen"]);
+  assert.equal(await fsp.access(b.update).then(() => true, () => false), false);
   assert.deepEqual((await call("/api/update/progress")).body, { ok: true, progress: null });
   assert.deepEqual((await call("/api/doctor/fix/status")).body, { ok: true, progress: null });
   assert.equal((await call("/api/update/start")).status, 405, "a GET changes nothing");

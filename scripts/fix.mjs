@@ -21,9 +21,13 @@
 import { sanitizeUrlsInText } from "./redact.mjs";
 import { VERSION } from "./version.mjs";
 
-/** The first reason a result gives for not working, on one line. */
+/**
+ * The first reason a result gives for not working, on one line. A server start whose
+ * containers came up but whose Honcho never answered says why in `health` alone.
+ */
 function reasonOf(result) {
-  return String(result?.error || result?.issues?.[0] || result?.next || "").trim().split(/\r?\n/)[0];
+  const health = result?.health?.error ? `Honcho /health: ${result.health.error}` : "";
+  return String(result?.error || result?.issues?.[0] || health || result?.next || "").trim().split(/\r?\n/)[0];
 }
 
 /**
@@ -72,15 +76,17 @@ export async function fixChecks(checks, deps) {
   const told = async (step, state, info) => {
     try { await deps.onStep?.(step, state, info); } catch {}
   };
+  // A reason keeps no secret in an address it names, as attempt's do.
   const stop = async (step, what, result, extra = {}) => {
-    const reason = reasonOf(result);
-    await told(step, "bad", { error: reason || null, detail: result?.detail || null });
+    const reason = sanitizeUrlsInText(reasonOf(result));
+    const detail = result?.detail ? sanitizeUrlsInText(result.detail) : null;
+    await told(step, "bad", { error: reason || null, detail });
     return {
       ok: false,
       steps,
       failed: step,
       ...(reason ? { error: reason } : {}),
-      ...(result?.detail ? { detail: result.detail } : {}),
+      ...(detail ? { detail } : {}),
       ...extra,
       said: [...done, reason ? `${what}: ${reason}` : `${what}.`].join(" "),
     };

@@ -1,6 +1,7 @@
 // The app comes back after a reboot: `ui open` writes a login autostart for the app it
 // started, which starts nothing now (the app is running) and is never restarted (so
-// doctor can swap the app), with a PATH that works outside the terminal it came from.
+// doctor can swap the app), with a PATH that works outside the terminal it came from,
+// in the app home rather than the plugin folder a plugin update replaces.
 import assert from "node:assert/strict";
 import fsp from "node:fs/promises";
 import os from "node:os";
@@ -92,7 +93,7 @@ test("macOS: a LaunchAgent that starts this copy at login, written only, never r
     `<key>ProgramArguments</key>\n\t<array>\n\t\t<string>/opt/homebrew/bin/node</string>\n\t\t<string>${SCRIPT_DIR}/ui.mjs</string>\n\t</array>`,
     "<key>RunAtLoad</key>\n\t<true/>",
     "<key>AbandonProcessGroup</key>\n\t<true/>",
-    `<key>WorkingDirectory</key>\n\t<string>${SCRIPT_DIR}</string>`,
+    `<key>WorkingDirectory</key>\n\t<string>${f.appHome}</string>`,
     "<key>PATH</key>\n\t\t<string>/Users/ana/.local/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>",
     "<key>HONCHO_AGENT_BRIDGE_UI_PORT</key>\n\t\t<string>4180</string>",
     `<key>StandardErrorPath</key>\n\t<string>${path.join(f.appHome, "runtime", "app", "app.error.log")}</string>`,
@@ -114,6 +115,7 @@ test("Windows: a Run value whose script starts this copy hidden, with the app's 
   const vbs = (await fsp.readFile(vbsPath)).subarray(2).toString("utf16le");
   assert.ok(vbs.includes('shell.Environment("PROCESS")("HONCHO_AGENT_BRIDGE_UI_PORT") = "4180"'), vbs);
   assert.ok(vbs.includes(`shell.Run "${CELLAR_NODE} ${SCRIPT_DIR}/ui.mjs", 0, False`), vbs);
+  assert.ok(vbs.includes(`shell.CurrentDirectory = "${f.appHome}"`), vbs);
   assert.doesNotMatch(vbs, /secret|PATH/);
 });
 
@@ -123,7 +125,7 @@ test("Linux: a user unit enabled for the next login, not started now and not res
   assert.deepEqual(await f.register(), { registered: true, kind: "systemd", path: unitPath, changed: true });
   assert.deepEqual(f.calls, [["systemctl", "--user", "daemon-reload"], ["systemctl", "--user", "enable", APP_SYSTEMD_UNIT]]);
   const unit = await fsp.readFile(unitPath, "utf8");
-  for (const line of ["Restart=no", "KillMode=process", `ExecStart="/opt/homebrew/bin/node" "${SCRIPT_DIR}/ui.mjs"`]) assert.ok(unit.includes(line), unit);
+  for (const line of ["Restart=no", "KillMode=process", `ExecStart="/opt/homebrew/bin/node" "${SCRIPT_DIR}/ui.mjs"`, `WorkingDirectory=${f.appHome}\n`]) assert.ok(unit.includes(line), unit);
   f.calls.length = 0;
   await f.register();
   assert.deepEqual(f.calls, [["systemctl", "--user", "enable", APP_SYSTEMD_UNIT]]);
