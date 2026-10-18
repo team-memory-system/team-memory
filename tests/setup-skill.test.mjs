@@ -1,9 +1,11 @@
 // The setup skill (skills/setup-memory) opens the Team Memory app at a screen and says
 // one line; the app asks and does the rest. What matters: an agent reaches for the
 // skill unasked in Claude Code and in Codex, so "민준 기억 열람 요청해 줘" in any session
-// opens 팀; every screen the skill opens is one the app serves; and README, where an
-// agent without the plugin reads how to install, starts with the sentence to say and
-// gives the install commands setup itself runs for the other host.
+// opens 팀; every screen the skill opens is one the app serves, and every window,
+// screen and button its lines name is one the app shows; README, where an agent
+// without the plugin reads how to install, starts with the sentence to say and gives
+// the install commands setup itself runs for the other host; and an SSH forward the
+// docs give ends when its port is taken instead of reaching the front computer's app.
 import assert from "node:assert/strict";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -20,6 +22,17 @@ async function frontMatter() {
   const skill = await read("skills/setup-memory/SKILL.md");
   const head = skill.match(/^---\n([\s\S]*?)\n---\n/)[1];
   return { head, description: head.match(/^description: (.+)$/m)[1] };
+}
+
+/** Every script of the app (ui/), as one text. */
+async function appSources(directory = "ui") {
+  const texts = [];
+  for (const entry of await fsp.readdir(path.join(ROOT, directory), { withFileTypes: true })) {
+    const relativePath = path.join(directory, entry.name);
+    if (entry.isDirectory()) texts.push(await appSources(relativePath));
+    else if (entry.name.endsWith(".js")) texts.push(await read(relativePath));
+  }
+  return texts.join("\n");
 }
 
 test("the setup skill is reached without being named, in Claude Code and in Codex", async () => {
@@ -61,6 +74,23 @@ test("every screen the setup skill opens is one the app serves", async () => {
   }
 });
 
+test("every window, screen and button the setup skill's lines name is one the app shows", async () => {
+  const skill = await read("skills/setup-memory/SKILL.md");
+  const app = await appSources();
+  // As the app writes it: a string of its own, or one a value follows ("내 서버 ", host).
+  const shown = (text) => app.includes(`"${text}"`) || app.includes(`"${text} `);
+  // The last cell of every table row that says something in Korean: the lines.
+  const lines = [...skill.matchAll(/^\|.*\| ([^|\n]*[가-힣][^|\n]*) \|$/gm)].map((match) => match[1]);
+  assert.ok(lines.length >= 20, `only ${lines.length} lines`);
+  for (const line of lines) {
+    // "대화 수집 설정 창을 열었습니다", "팀 화면을 열었습니다": the window's title or the menu's name.
+    const opened = line.match(/^(.+?) (창|화면)을 열었습니다\./);
+    if (opened && !opened[1].includes("<")) assert.ok(shown(opened[1]), `the app has no ${opened[1]} ${opened[2]}: ${line}`);
+    // A quoted word is a button, step or option as the app writes it.
+    for (const [, label] of line.matchAll(/"([^"]+)"/g)) assert.ok(shown(label), `the app has no "${label}": ${line}`);
+  }
+});
+
 test("README starts installing with the sentence to say, and gives an agent the commands setup runs", async () => {
   const readme = await read("README.md");
   const install = readme.slice(readme.indexOf("## 설치\n"));
@@ -78,5 +108,19 @@ test("README starts installing with the sentence to say, and gives an agent the 
     "ui open --screen dashboard",
     "start?team=",
     "SSH_CONNECTION",
+    // A winget install is not on the open session's PATH, which the app inherits.
+    "C:\\Program Files\\Git\\cmd",
+    "C:\\Program Files\\nodejs",
   ]) assert.ok(agent.includes(command), `README's 에이전트에게 does not say ${command}`);
+});
+
+test("every SSH forward the docs give ends when its port is taken, rather than opening the front computer's own app", async () => {
+  for (const file of ["README.md", "skills/setup-memory/SKILL.md", "AGENTS.md"]) {
+    const text = await read(file);
+    const forwards = [...text.matchAll(/`ssh [^`]*-L [^`]*`/g)].map((match) => match[0]);
+    assert.ok(forwards.length, `${file} gives no SSH forward`);
+    for (const command of forwards) assert.match(command, /-o ExitOnForwardFailure=yes /, `${file}: ${command}`);
+    // The other port, for a computer in front whose own app holds 4180.
+    assert.ok(text.includes("-L 14180:127.0.0.1:"), `${file} gives no other port`);
+  }
 });

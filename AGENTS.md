@@ -419,7 +419,7 @@ With `--profile personal` on macOS (Apple Silicon or Intel) or Windows 11, a mis
 - Docker publishes no checksum for these unversioned downloads, which is why the signature is what is checked.
 - Docker Desktop is free for personal use, education, non-commercial open source projects and small businesses (fewer than 250 employees and less than $10 million in annual revenue); larger companies and government entities need a paid Docker subscription. The plan repeats this as a warning.
 
-Node.js and git come before the plugin: its marketplace add clones with git, and everything it runs is Node. The agent asked to install (README's 에이전트에게) checks both, asks once, and installs what is missing the official way, the one `prereqs` reports under `install` (winget on Windows; Homebrew, the nodejs.org installer and `xcode-select --install` on macOS). A winget install is not on the open session's `PATH`, so that session goes on with the program's full path (`C:\Program Files\nodejs\node.exe`) and puts `C:\Program Files\Git\cmd` in front of `PATH` for the marketplace add. An install a person has to finish (the Command Line Tools window, the nodejs.org installer) ends the agent's turn with one line asking them to say the same words again once it is done. System software installation is never hidden inside the release archive.
+Node.js and git come before the plugin: its marketplace add clones with git, and everything it runs is Node. The agent asked to install (README's 에이전트에게) checks both, asks once, and installs what is missing the official way, the one `prereqs` reports under `install` (winget on Windows; Homebrew, the nodejs.org installer and `xcode-select --install` on macOS). It never pipes a downloaded script into a shell or swaps in an unofficial package: a piped script runs before anyone has read it, and an unofficial package is not what the publisher ships. A winget install is not on the open session's `PATH`, and `ui open` hands that `PATH` to the app it starts (`scripts/cli.mjs`), whose first setup fetches sources with the git on it (`scripts/source-pin.mjs`). So every command of that session, `ui open` included, runs with `C:\Program Files\Git\cmd` and `C:\Program Files\nodejs` put in front of `PATH`. An install a person has to finish (the Command Line Tools window, the nodejs.org installer) ends the agent's turn with one line asking them to say the same words again once it is done. System software installation is never hidden inside the release archive.
 
 One setup run can enable conversation collection for every detected agent, and it puts the plugin into each of those hosts that does not have it yet (see [Plugin installation](#plugin-installation)).
 
@@ -523,31 +523,43 @@ and the app asks the rest and does it.
   skill yet, so it follows README's 에이전트에게: Node.js 18 or newer and git (see
   [Prerequisites](#prerequisites)), the plugin into itself unless it is there already,
   `ui open --screen dashboard` from the plugin folder, and one fixed line with the app's
-  address. Words that carry a team address (the invite line an admin copies does) open
-  `start?team=<team address>` instead. A computer not set up yet shows the first setup
-  window over every screen; one that is set up shows its dashboard.
+  address. A computer not set up yet shows the first setup window (팀 메모리 시작하기)
+  over every screen; one that is set up shows its dashboard. Words that carry a team
+  address (the invite line an admin copies does) open `start?team=<team address>`
+  instead (`ui/lib/landing.js`): on a computer not set up yet, first setup at that
+  team's Google login; on one set up already, the team screen when it is in that team,
+  that team's login when it is in none, and when it is in another team both teams with
+  옮기고 로그인, which leaves the team it is in before the login, since a computer is in
+  one team only.
 - **The setup skill** (`skills/setup-memory`) does the same once the plugin is in: it
-  finds what the user asked in its table, runs `ui open --screen <screen>` and says
-  that request's line, the app's address in it. `/team-memory setup` in Claude Code and
-  `$setup-memory` in Codex open `computer/collect`, which is the first setup window on a
-  computer not set up yet and its 수정 on one that is. The agent also reaches for the
-  skill unasked: its `SKILL.md` has no `disable-model-invocation` and its
-  `agents/openai.yaml` allows implicit invocation, so "민준 기억 열람 요청해 줘" in any
-  session opens 팀. It only opens screens, which is why being reached for unasked is
-  safe. `tests/setup-skill.test.mjs` keeps it reachable and checks that every screen it
-  names is one the app serves.
+  finds what the user asked in its table, sees without asking whether the app counts
+  this computer as set up (`detect`) and, for a few screens the app leaves out where
+  they mean nothing, whether it is in a team or has a memory server (`team status`,
+  `server status`), runs `ui open --screen <screen>` and says that request's line, the
+  app's address in it. `/team-memory setup` in Claude Code and `$setup-memory` in Codex
+  open `computer/collect`: 대화 수집 설정 on a computer set up already, 팀 메모리
+  시작하기 on one that is not. The agent also reaches for the skill unasked: its
+  `SKILL.md` has no `disable-model-invocation` and its `agents/openai.yaml` allows
+  implicit invocation, so "민준 기억 열람 요청해 줘" in any session opens 팀. It only
+  opens screens, which is why being reached for unasked is safe.
+  `tests/setup-skill.test.mjs` keeps it reachable and checks that every screen, window
+  and quoted button its lines name is one the app has.
 - **One line and errors, nothing else.** The first setup window asks where the server
   goes, the subscription and models, the agents, past conversations and project
   folders, and its 적용 installs Docker Desktop, Ollama and the subscription gateway,
-  logs in, starts the server and puts the plugin into the other agents. When the chat
-  asked and installed as well, the user answered the same questions twice and finished
-  the app only to type "했어" in chat, so the agent says nothing between opening the app
-  and its line, and waits for nothing. A server token or a Cloudflare API token goes
-  from the person into the app, never through chat.
+  logs in, starts the server and puts the plugin into the other agents; every screen
+  after it says what to press next. A chat that asked as well would have the person
+  answer the same things twice, so the agent says nothing between opening the app and
+  its line, and waits for nothing. A server token or a Cloudflare API token goes from
+  the person into the app, never through chat.
 - **Over SSH** (`SSH_CONNECTION` set), the browser window `ui open` asks for opens on
   that computer's own screen and the app answers only on its 127.0.0.1, so the line
-  adds `ssh -L 4180:127.0.0.1:4180 <user>@<host>` for the computer in front of the
-  person, whose browser then opens the same address.
+  adds `ssh -o ExitOnForwardFailure=yes -L 4180:127.0.0.1:4180 <user>@<host>` for the
+  computer in front of the person, whose browser then opens the same address (`<user>`
+  from `whoami`, on Windows the part after `\`). Without the option, a computer in
+  front that holds 4180 itself, with its own Team Memory app, only warns and connects,
+  and its browser opens its own app. With it the command ends instead, and the person
+  gets the same command with `-L 14180:127.0.0.1:4180` and the address with 14180.
 
 The app's windows run the same CLI a terminal would:
 

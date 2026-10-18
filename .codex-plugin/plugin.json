@@ -18,7 +18,7 @@
     "capabilities": ["Interactive", "Read", "Write"],
     "defaultPrompt": [
       "Set up my personal agent memory.",
-      "Diagnose my local agent memory installation.",
+      "Ask a teammate to open their memory to me.",
       "Recall relevant context from Honcho memory."
     ],
     "brandColor": "#B5412A",
