@@ -331,7 +331,7 @@ test("doctor verifies runtime version, host plugins, Honcho access, and MCP hand
   const stale = await runCli(["doctor"], env).catch((error) => JSON.parse(String(error.stdout || "{}")));
   assert.equal(stale.ok, false);
   assert.deepEqual(stale.checks.find((check) => check.name === "app"), {
-    name: "app", ok: false, url: `http://127.0.0.1:${oldApp.address().port}`, version: "0.0.1", fix: "/team-memory doctor",
+    name: "app", ok: false, url: `http://127.0.0.1:${oldApp.address().port}`, version: "0.0.1", fix: "팀 메모리 앱의 고치기를 누르세요. Claude Code에서는 /team-memory doctor",
   });
   await new Promise((resolve) => oldApp.close(resolve));
 

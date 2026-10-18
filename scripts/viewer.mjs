@@ -11,9 +11,9 @@
 //
 // A page shown on another computer cannot do everything there. The gate names the
 // computer it came from (X-Team-Memory-Viewer), and the app refuses what would cut
-// the way the page came for good, log the server computer in or out through a browser that
-// comes back to this one, open a window on its screen, or send an upload past the
-// gate's limit (HERE_ONLY).
+// the way the page came for good or for a long while (an update), log the server
+// computer in or out through a browser that comes back to this one, open a window on
+// its screen, or send an upload past the gate's limit (HERE_ONLY).
 import { execFile } from "node:child_process";
 import http from "node:http";
 import { promisify } from "node:util";
@@ -38,8 +38,9 @@ const PROBE_TIMEOUT_MS = 6_000;
 /**
  * What an app does only for a page on its own computer, by path (all POST). Each
  * would cut the way a page on another computer came for good (stopping the server,
- * turning sharing off: neither comes back from afar; 다시 시작 does), send a login's browser back to the wrong
- * computer, open a window on this computer's screen, or upload past the gate.
+ * turning sharing off: neither comes back from afar; 다시 시작 does) or for the
+ * minutes an update restarts the app and the server, send a login's browser back to
+ * the wrong computer, open a window on this computer's screen, or upload past the gate.
  */
 export const HERE_ONLY = new Map([
   ["/api/server/stop", "기억 서버를 멈추면 이 화면으로 오는 길도 같이 끊깁니다."],
@@ -48,6 +49,8 @@ export const HERE_ONLY = new Map([
   ["/api/team/logout", "그 컴퓨터의 팀 로그인을 끊으면 이 화면도 쓸 수 없습니다."],
   ["/api/gateway/open", "그 창은 그 컴퓨터의 화면에 뜹니다."],
   ["/api/past/chatgpt", "큰 파일은 그 컴퓨터에서 올리세요."],
+  ["/api/update/start", "업데이트하는 동안 이 화면으로 오는 길이 끊깁니다."],
+  ["/api/update/retry", "업데이트하는 동안 이 화면으로 오는 길이 끊깁니다."],
 ]);
 
 /** The page's computer when another computer shows it, or null on its own computer. */

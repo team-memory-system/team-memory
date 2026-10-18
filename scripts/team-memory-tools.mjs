@@ -33,9 +33,12 @@ const DIRECTORY_MS = 60_000;
 // A search over many conversations, a chat, or the answer check, can take a while.
 const CALL_MS = 180_000;
 
+// What the user is told to do names the app's screens and buttons, which Claude Code
+// and Codex both have; Codex has no /team-memory. The setup-memory skill opens a
+// screen of the app.
 /** How to log in when a team server turned this computer's login down. */
-const LOGIN_NEEDED = "This computer is not logged in to the team's servers, or its login ended. Tell the user to open the Team Memory app (/team-memory), go to 팀 and press 팀 서버 로그인, then ask again.";
-const NO_TEAM = "This computer has not joined a team. Tell the user to run /team-memory setup and join their team first.";
+const LOGIN_NEEDED = "This computer is not logged in to the team's servers, or its login ended. Tell the user to press 팀 서버 로그인 on the Team Memory app's 팀 screen (the setup-memory skill opens it, screen team), then ask again.";
+const NO_TEAM = "This computer has not joined a team. Tell the user to paste the invite line their team's admin sent into Claude Code or Codex, or to press 팀에 들어가기 on the Team Memory app's start screen (the setup-memory skill opens it, screen start) and enter the team address from the admin.";
 
 const STRING = { type: "string" };
 const INTEGER = (minimum, maximum, more = {}) => ({ type: "integer", minimum, ...(maximum ? { maximum } : {}), ...more });
@@ -418,7 +421,7 @@ export function teamMemory({ paths = null, fetchImpl = globalThis.fetch, now = (
     } catch (error) {
       // A bridge from before the owner's tools could be opened knows only its four.
       if (/unknown tool/i.test(String(error?.message))) {
-        throw new Error(`${member.name}'s server runs an older Team Memory without ${name}. Ask them to update (/team-memory doctor).`);
+        throw new Error(`${member.name}'s server runs an older Team Memory without ${name}. Ask them to update it with 업데이트 under the bell at the top right of their Team Memory app.`);
       }
       throw error;
     }

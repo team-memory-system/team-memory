@@ -4,7 +4,8 @@
 // brought up to them (setup apply alone left the server and gateway on the old
 // version), that a stopped one stays off, that a lost gateway login says what to do,
 // and that the answer is one line, which names the app's screens and no command Codex
-// lacks.
+// lacks. The app's update shows each step as a row (onStep), with the reason a
+// failing step gave, docker's own when compose throws.
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -20,19 +21,24 @@ const behind = (...names) => [
 function bench({
   setup = { ok: true },
   server = { installed: true, running: true },
+  after = server,
   started = { ok: true, ready: true },
   prepared = { ok: true, ready: true },
   app = { ok: true },
 } = {}) {
   const calls = [];
+  const told = [];
+  const answer = (value) => (typeof value === "function" ? value() : value);
+  let statuses = 0;
   const deps = {
-    setupApply: async (options) => { calls.push(["setupApply", options]); return setup; },
-    serverStatus: async (options) => { calls.push(["serverStatus", options]); return server; },
-    serverStart: async (options) => { calls.push(["serverStart", options]); return started; },
-    serverPrepare: async (options) => { calls.push(["serverPrepare", options]); return prepared; },
-    restartApp: async () => { calls.push(["restartApp"]); return app; },
+    setupApply: async (options) => { calls.push(["setupApply", options]); return answer(setup); },
+    serverStatus: async (options) => { calls.push(["serverStatus", options]); statuses += 1; return statuses > 1 ? after : server; },
+    serverStart: async (options) => { calls.push(["serverStart", options]); return answer(started); },
+    serverPrepare: async (options) => { calls.push(["serverPrepare", options]); return answer(prepared); },
+    restartApp: async () => { calls.push(["restartApp"]); return answer(app); },
+    onStep: async (...step) => { told.push(step); },
   };
-  return { deps, calls, names: () => calls.map(([name]) => name) };
+  return { deps, calls, told, names: () => calls.map(([name]) => name) };
 }
 
 test("only the checks marked fix count, and nothing is done when none is behind", async () => {
@@ -83,7 +89,11 @@ test("a gateway whose login ended says where to log in, after what was already d
   assert.equal(answer.ok, false);
   assert.deepEqual(names(), ["setupApply", "serverStatus", "serverStart"]);
   assert.match(answer.said, new RegExp(`^대화 모으기를 ${VERSION.replaceAll(".", "\\.")}로 바꿨습니다\\. 구독 계정의 로그인이 풀려 있습니다\\.`));
-  assert.match(answer.said, /팀 메모리 앱의 서버 → 모델에서 로그인한 뒤 다시 하세요\.$/);
+  // It ends at the login: the chat runs /team-memory doctor again, the app has 다시 시도.
+  assert.match(answer.said, /팀 메모리 앱의 서버 → 모델에서 로그인하세요\.$/);
+  assert.equal(answer.login, true);
+  assert.equal(answer.failed, "server");
+  assert.equal(answer.serverOff, undefined, "a login stops prepare before the running server is touched");
 });
 
 test("no answer sends a Codex user to /team-memory, which only Claude Code has", async () => {
@@ -106,4 +116,63 @@ test("a server that does not come back, or an app that cannot restart, says why"
   const late = await fixChecks(behind("app"), stuck.deps);
   assert.equal(late.ok, false);
   assert.equal(late.said, "팀 메모리 앱을 새 판으로 다시 켜지 못했습니다: The older Team Memory app did not stop");
+});
+
+test("each step is told as it goes, the server's with whether it runs", async () => {
+  const { deps, told } = bench();
+  const answer = await fixChecks(behind("runtime", "server-version", "app"), deps);
+  assert.equal(answer.ok, true);
+  assert.deepEqual(told, [
+    ["runtime", "run", undefined], ["runtime", "ok", undefined],
+    ["server", "run", { running: true }], ["server", "ok", undefined],
+    ["app", "run", undefined], ["app", "ok", undefined],
+  ]);
+
+  const login = bench({ server: { installed: true, running: false }, prepared: { ok: true, ready: false, nextAction: { kind: "gateway-login" } } });
+  await fixChecks(behind("server-version"), login.deps);
+  assert.deepEqual(login.told, [["server", "run", { running: false }], ["server", "login", undefined]]);
+});
+
+test("a stopped server prepared only, or one a failed start left down, is off at the end", async () => {
+  const stopped = await fixChecks(behind("server-version", "app"), bench({ server: { installed: true, running: false } }).deps);
+  assert.equal(stopped.ok, true);
+  assert.equal(stopped.serverOff, true);
+
+  const down = bench({ started: { ok: false, issues: ["The host services did not become ready"] }, after: { installed: true, running: false } });
+  const failed = await fixChecks(behind("server-version", "app"), down.deps);
+  assert.equal(failed.ok, false);
+  assert.equal(failed.failed, "server");
+  assert.equal(failed.serverOff, true);
+  assert.deepEqual(down.names(), ["serverStatus", "serverStart", "serverStatus"], "asked again after the failure, and the app is not restarted");
+  assert.deepEqual(down.told.at(-1), ["server", "bad", { error: "The host services did not become ready", detail: null }]);
+
+  const running = await fixChecks(behind("server-version"), bench({ started: { ok: false, issues: ["The gate still runs the old files"] } }).deps);
+  assert.equal(running.serverOff, undefined, "still running after the failure");
+});
+
+test("a compose that throws fails the server's step with docker's own last line, and the lines before it", async () => {
+  const thrown = Object.assign(new Error("Command failed: docker compose --project-directory /x/server up -d --remove-orphans --build"), {
+    stderr: " Container honcho-api  Recreate\n Container honcho-api  Error\nError response from daemon: driver failed programming external connectivity\n",
+  });
+  const broken = bench({ started: () => { throw thrown; }, after: { installed: true, running: false } });
+  const answer = await fixChecks(behind("runtime", "server-version"), broken.deps);
+  assert.equal(answer.ok, false);
+  assert.equal(answer.error, "Error response from daemon: driver failed programming external connectivity");
+  assert.equal(answer.detail, "Container honcho-api  Recreate\nContainer honcho-api  Error");
+  assert.equal(answer.serverOff, true);
+  assert.equal(answer.said, `대화 모으기를 ${VERSION}로 바꿨습니다. 기억 서버를 새 판으로 다시 시작하지 못했습니다: Error response from daemon: driver failed programming external connectivity`);
+  assert.deepEqual(broken.told.at(-1), ["server", "bad", { error: answer.error, detail: answer.detail }]);
+
+  const setup = bench({ setup: () => { throw new Error("Setup failed: EACCES: permission denied; changes were rolled back"); } });
+  const stopped = await fixChecks(behind("runtime", "server-version"), setup.deps);
+  assert.equal(stopped.said, "대화 모으기를 새 판으로 바꾸지 못했습니다: Setup failed: EACCES: permission denied; changes were rolled back");
+  assert.deepEqual(setup.names(), ["setupApply"]);
+});
+
+test("a progress file that cannot be written stops no step", async () => {
+  const { deps, names } = bench();
+  deps.onStep = async () => { throw new Error("ENOSPC"); };
+  const answer = await fixChecks(behind("runtime", "app"), deps);
+  assert.equal(answer.ok, true);
+  assert.deepEqual(names(), ["setupApply", "restartApp"]);
 });

@@ -192,20 +192,23 @@ test("a server computer that cannot be shown gets a page that says why, and its 
   assert.equal((await call(lone, "/api/app/context")).json.reason, "owner");
 });
 
-test("a page shown on another computer cannot stop the server, turn sharing off or open a window on its screen", () => {
+test("a page shown on another computer cannot stop the server, turn sharing off, update or open a window on its screen", () => {
   const from = (method, headers = {}) => ({ method, headers });
   const elsewhere = { "x-team-memory-viewer": encodeURIComponent("chenjing의 MacBook Pro") };
   assert.equal(viewerOf(from("GET", elsewhere)), "chenjing의 MacBook Pro");
   assert.equal(viewerOf(from("GET")), null);
   assert.equal(viewerOf(from("GET", { "x-team-memory-viewer": "%E0%A4%A" })), null);
-  for (const pathname of ["/api/server/stop", "/api/server/share/disable", "/api/team/login", "/api/team/logout", "/api/gateway/open", "/api/past/chatgpt"]) {
+  for (const pathname of ["/api/server/stop", "/api/server/share/disable", "/api/team/login", "/api/team/logout", "/api/gateway/open", "/api/past/chatgpt", "/api/update/start", "/api/update/retry"]) {
     const refused = hereOnly(from("POST", elsewhere), pathname);
     assert.equal(refused?.status, 403, pathname);
     assert.equal(refused.body.hereOnly, true);
     assert.match(refused.body.error, /그 컴퓨터 앞에서/);
     assert.equal(hereOnly(from("POST"), pathname), null, `${pathname} on its own computer`);
   }
-  for (const pathname of ["/api/server/start", "/api/server/restart", "/api/server/share/rotate"]) {
+  assert.equal(hereOnly(from("POST", elsewhere), "/api/update/start").body.error, "이 일은 그 컴퓨터 앞에서 하세요. 업데이트하는 동안 이 화면으로 오는 길이 끊깁니다.");
+  // 고치기 restarts what 다시 시작 does, and the way comes back the same way; 팀 주소 다시
+  // 올리기 deploys the hub, not this computer's way.
+  for (const pathname of ["/api/server/start", "/api/server/restart", "/api/server/share/rotate", "/api/doctor/fix", "/api/team/redeploy"]) {
     assert.equal(hereOnly(from("POST", elsewhere), pathname), null, `${pathname}: the way comes back by itself`);
   }
   assert.equal(hereOnly(from("GET", elsewhere), "/api/server/stop"), null);

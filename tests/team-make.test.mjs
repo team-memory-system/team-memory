@@ -1,7 +1,9 @@
 // `team make` against a local fake of Cloudflare, the Workers calls of the deploy
 // answered by a stand-in: beside the hub's Access app it opens <hub>/guard alone
 // behind the bypass policy, keeps both ids in team-access.json, and a second run
-// finds the same apps again instead of making new ones.
+// finds the same apps again instead of making new ones. It keeps the hash of the
+// hub's code it deployed, so an update can tell the admin that the hub changed, and
+// 팀 주소 다시 올리기 (team redeploy) deploys it again with the token saved then.
 import assert from "node:assert/strict";
 import fsp from "node:fs/promises";
 import os from "node:os";
@@ -9,7 +11,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { BYPASS_POLICY_NAME, EVERYONE_POLICY_NAME, hubAppBody, hubGuardAppBody } from "../scripts/cloudflare-api.mjs";
-import { teamMake } from "../scripts/team-hub.mjs";
+import { hubBehind, hubCodeHash, teamMake, teamRedeploy } from "../scripts/team-hub.mjs";
 import { ACCOUNT_ID, API_TOKEN, startFakeCloudflare, ZONE, ZONE_ID } from "./fake-cloudflare.mjs";
 
 const HUB_HOST = `team.${ZONE}`;
@@ -145,4 +147,53 @@ test("the app says team make's refusals in Korean, with the token screen's own p
   );
   assert.match(explainWarning("Zero Trust has no Google login yet; add one under Settings > Authentication > Login methods, then run this again"), /^Cloudflare Zero Trust에 Google 로그인이 없습니다/);
   assert.equal(explainWarning("The Cloudflare API token is needed: put it in CLOUDFLARE_API_TOKEN (never on the command line)"), "Cloudflare API token을 넣으세요.");
+});
+
+test("team make keeps the hash of the hub it deployed, and a hub of another version reads as behind", async (t) => {
+  const f = await makeFixture(t);
+  const at = { serverDirectory: f.options.serverDirectory, runtimeDirectory: f.options.runtimeDirectory };
+  const same = async () => [{ name: "hub.mjs", content: "export default {};" }];
+  const changed = async () => [{ name: "hub.mjs", content: "export default { changed: true };" }];
+  assert.equal(await hubBehind({ ...at, hubModules: same }), null, "no team made on this computer");
+
+  assert.equal((await teamMake(f.options)).ok, true);
+  const state = await f.state();
+  assert.equal(state.hub.codeHash, hubCodeHash(await same()));
+  assert.match(state.hub.codeHash, /^[0-9a-f]{64}$/);
+  assert.deepEqual(await hubBehind({ ...at, hubModules: same }), { behind: false, canDeploy: true });
+  assert.deepEqual(await hubBehind({ ...at, hubModules: changed }), { behind: true, canDeploy: true });
+  assert.notEqual(hubCodeHash([{ name: "a.mjs", content: "bc" }]), hubCodeHash([{ name: "ab.mjs", content: "c" }]));
+
+  // Deployed before the hash was kept: counted as behind, so the admin is told once.
+  const file = path.join(f.options.runtimeDirectory, "team-access.json");
+  delete state.hub.codeHash;
+  await fsp.writeFile(file, JSON.stringify(state));
+  assert.equal((await hubBehind({ ...at, hubModules: same })).behind, true);
+});
+
+test("team redeploy deploys the hub again with the saved token, never one from the environment", async (t) => {
+  const f = await makeFixture(t);
+  const at = { serverDirectory: f.options.serverDirectory, runtimeDirectory: f.options.runtimeDirectory, apiBaseUrl: f.options.apiBaseUrl, cloudflareFetch: f.options.cloudflareFetch };
+  assert.equal((await teamRedeploy({ ...at, env: {} })).code, "no_team");
+
+  assert.equal((await teamMake(f.options)).ok, true);
+  const first = await f.state();
+  const deploys = () => f.workers.filter((call) => call.startsWith("PUT ") && call.endsWith("/workers/scripts/team-memory-hub")).length;
+  const before = deploys();
+  const changed = async () => [{ name: "hub.mjs", content: "export default { changed: true };" }];
+  // A token the fake would refuse: used, it would fail the run.
+  const again = await teamRedeploy({ ...at, env: { CLOUDFLARE_API_TOKEN: "another-token-0123456789abcdef" }, hubModules: changed });
+  assert.equal(again.ok, true, again.error);
+  assert.equal(deploys(), before + 1);
+  const state = await f.state();
+  assert.equal(state.hub.codeHash, hubCodeHash(await changed()));
+  assert.deepEqual([state.teamName, state.ownerEmail, state.zone, state.hub.host], [first.teamName, first.ownerEmail, first.zone, first.hub.host]);
+  assert.equal((await fsp.readFile(path.join(f.options.runtimeDirectory, "cloudflare", "api-token"), "utf8")).trim(), API_TOKEN, "the saved token stays");
+  assert.deepEqual(await hubBehind({ ...at, hubModules: changed }), { behind: false, canDeploy: true });
+
+  await fsp.rm(path.join(f.options.runtimeDirectory, "cloudflare", "api-token"));
+  const none = await teamRedeploy({ ...at, env: { CLOUDFLARE_API_TOKEN: API_TOKEN } });
+  assert.equal(none.ok, false);
+  assert.equal(none.code, "no_token");
+  assert.equal((await hubBehind({ ...at, hubModules: changed })).canDeploy, false);
 });

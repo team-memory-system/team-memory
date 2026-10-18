@@ -56,9 +56,10 @@ import {
 } from "./share-manager.mjs";
 import { gateDevices, gateGrants, gateStatePaths } from "./gate-access.mjs";
 import { TEAM_AUTH_ENV, teamAuthPaths, teamLoginStatus } from "./team-auth.mjs";
-import { madeTeam, teamMake, teamShare } from "./team-hub.mjs";
+import { madeTeam, teamMake, teamRedeploy, teamShare } from "./team-hub.mjs";
 import { switchCommand } from "./switch.mjs";
 import { fixable, fixChecks } from "./fix.mjs";
+import { recordFix, scriptVersion, updateCommand } from "./update.mjs";
 import {
   API_TOKEN_ENV,
   INVITE_ENV,
@@ -879,15 +880,6 @@ async function applySetupPlan(plan, paths) {
   }
 }
 
-async function installedRuntimeVersion(runtimeDir) {
-  try {
-    const source = await fsp.readFile(path.join(runtimeDir, "version.mjs"), "utf8");
-    return source.match(/VERSION\s*=\s*["']([^"']+)["']/)?.[1] || "";
-  } catch {
-    return "";
-  }
-}
-
 async function probeMcpServer(serverPath, timeoutMs = 2500, env = process.env) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [serverPath, "--provider", "doctor"], {
@@ -953,6 +945,10 @@ async function probeMcpServer(serverPath, timeoutMs = 2500, env = process.env) {
   });
 }
 
+// What a check that doctor --fix repairs says to do, in the app (its end check and
+// update) and in Claude Code; Codex has no /team-memory.
+const FIX = "팀 메모리 앱의 고치기를 누르세요. Claude Code에서는 /team-memory doctor";
+
 /**
  * A memory server on this computer against this version: the Honcho source it was
  * prepared from, the subscription gateway beside it, and the bundle's own files the
@@ -974,7 +970,7 @@ async function serverSourceCheck(config) {
     honcho: { installed: installed.commit || null, expected: wanted.commit || null },
     gateway: gateway?.present ? { installed: gateway.commit || null, expected: gateway.pin?.commit || null } : null,
     ...(files.length ? { staleFiles: files } : {}),
-    ...(ok ? {} : { fix: "/team-memory doctor" }),
+    ...(ok ? {} : { fix: FIX }),
   };
 }
 
@@ -1003,7 +999,7 @@ async function doctor() {
   for (const file of requiredRuntimeFiles) {
     if (!(await pathExists(path.join(paths.runtimeDir, file)))) missingRuntimeFiles.push(file);
   }
-  const runtimeVersion = await installedRuntimeVersion(paths.runtimeDir);
+  const runtimeVersion = await scriptVersion(paths.runtimeDir);
   const runtimeOk = missingRuntimeFiles.length === 0 && runtimeVersion === VERSION && config?.installedVersion === VERSION;
   checks.push({
     name: "runtime",
@@ -1013,7 +1009,7 @@ async function doctor() {
     actualVersion: runtimeVersion || null,
     configuredVersion: config?.installedVersion || null,
     missingFiles: missingRuntimeFiles,
-    ...(runtimeOk || !config ? {} : { fix: "/team-memory doctor" }),
+    ...(runtimeOk || !config ? {} : { fix: FIX }),
   });
   const serverSource = await serverSourceCheck(config);
   if (serverSource) checks.push(serverSource);
@@ -1053,19 +1049,14 @@ async function doctor() {
   const appUrl = `http://${UI_HOST}:${uiPort()}/`;
   if ((await uiState(appUrl)) === "ours") {
     const running = await uiVersion(appUrl);
-    checks.push({ name: "app", ok: running === VERSION, url: appUrl, version: running || null, ...(running === VERSION ? {} : { fix: "/team-memory doctor" }) });
+    checks.push({ name: "app", ok: running === VERSION, url: appUrl, version: running || null, ...(running === VERSION ? {} : { fix: FIX }) });
   }
   return { ok: checks.every((check) => check.ok), version: VERSION, checks };
 }
 
-/**
- * /team-memory doctor: the checks, and what they mark with `fix` repaired at once
- * (scripts/fix.mjs), then the checks again. Plain `doctor` only looks.
- */
-async function doctorAndFix() {
-  const before = await doctor();
-  if (!fixable(before.checks).size) return before;
-  const fixed = await fixChecks(before.checks, {
+/** What fix.mjs runs on this computer, from this copy, with `onStep` told as it goes. */
+function fixSteps(onStep) {
+  return {
     setupApply,
     serverStatus,
     serverStart,
@@ -1074,9 +1065,29 @@ async function doctorAndFix() {
       const opened = await uiOpen({ noBrowser: true, replaceOlder: true });
       return { ok: opened.ok, ...(opened.error ? { error: opened.error } : {}) };
     },
-  });
+    onStep,
+  };
+}
+
+const fixHere = (checks, onStep) => fixChecks(checks, fixSteps(onStep));
+
+/**
+ * /team-memory doctor and the app's 고치기: the checks, and what they mark with
+ * `fix` repaired at once (scripts/fix.mjs), then the checks again. Its rows go to
+ * the app's fix.json as it goes (update.mjs), since the app it restarts is not the
+ * one that asked; it waits for an update the app runs. Plain `doctor` only looks.
+ */
+async function doctorAndFix() {
+  const before = await doctor();
+  if (!fixable(before.checks).size) return before;
+  const { fixed, refused } = await recordFix(before.checks, fixHere);
+  if (refused) return { ...before, ok: false, code: refused.code, said: refused.said };
   const after = await doctor();
-  return { ...after, fixed: { ok: fixed.ok, steps: fixed.steps }, said: fixed.said };
+  return {
+    ...after,
+    fixed: { ok: fixed.ok, steps: fixed.steps, ...(fixed.login ? { login: true } : {}), ...(fixed.serverOff ? { serverOff: true } : {}) },
+    said: fixed.said,
+  };
 }
 
 // ------------------------------------------------------- the old shared bridge
@@ -1706,6 +1717,12 @@ async function uiVersion(url) {
   }
 }
 
+/** The version of the app answering on this computer, or null when none of ours does. */
+async function runningAppVersion() {
+  const url = `http://${UI_HOST}:${uiPort()}/`;
+  return (await uiState(url)) === "ours" ? (await uiVersion(url)) || null : null;
+}
+
 /** The process listening on `port` on this machine, found with the system's own tool, or null. */
 function listeningPid(port) {
   try {
@@ -1836,7 +1853,9 @@ function usage() {
       "team share [--label <name>] [--replace] (after logging in to the team in the app)",
       "team grants",
       "team devices",
-      "doctor [--fix] (--fix: what the checks mark with fix, which a plugin update leaves behind, is repaired: setup apply with the saved settings, then this computer's memory server and subscription gateway restarted at this version, or only prepared when stopped, and an older running app started again from here)",
+      "team redeploy (on the computer that made the team: the hub deployed again with the Cloudflare API token saved then, as 팀 주소 다시 올리기 does)",
+      "doctor [--fix] (--fix: what the checks mark with fix, which a plugin update leaves behind, is repaired: setup apply with the saved settings, then this computer's memory server and subscription gateway restarted at this version, or only prepared when stopped, and an older running app started again from here; its rows go to the app's update/fix.json)",
+      "update status [--check] | start | retry (a newer version on GitHub's main, read once a day or now with --check; start brings the plugins, the collector, the server and the app up to it in processes of their own, with their rows in the app's update/update.json; retry starts again at the row that stopped)",
       "switch [off|on|shared-off|shared-on] [<teammate's team name or email>] (/team-memory: what is on; off|on the memory server; shared-off|shared-on sharing, or what one teammate may read)",
       "teammates list",
       "teammates add <email> [--share <name> --invite-out <file>] (the Cloudflare API token in CLOUDFLARE_API_TOKEN, else the saved one)",
@@ -1961,6 +1980,7 @@ async function teammatesCommand(args) {
  *   share    this computer's server at the address the team makes for it; the
  *            tunnel token goes from the hub to this process and nowhere else
  *   grants, devices   what this server opened to whom, and the computers writing to it
+ *   redeploy  on the computer that made it: the hub again, with the token saved then
  * Logging in needs a browser coming back to the app, so it is the app's (team-app.mjs).
  */
 async function teamCommand(args) {
@@ -1991,7 +2011,8 @@ async function teamCommand(args) {
   }
   if (action === "grants") return { ok: true, grants: await gateGrants(gate) };
   if (action === "devices") return { ok: true, devices: await gateDevices(gate) };
-  return { ok: false, error: `Unknown team action: ${action}. Expected make, status, share, grants or devices.` };
+  if (action === "redeploy") return teamRedeploy();
+  return { ok: false, error: `Unknown team action: ${action}. Expected make, status, share, grants, devices or redeploy.` };
 }
 
 /**
@@ -2019,6 +2040,17 @@ async function main() {
   if (command === "detect") return detect();
   if (command === "prereqs") return prereqs(parseOptions(args));
   if (command === "doctor" || command === "status") return parseOptions(args).fix === true ? doctorAndFix() : doctor();
+  if (command === "update") {
+    const action = args[0] && !args[0].startsWith("--") ? args.shift() : "status";
+    return updateCommand(action, {
+      force: parseOptions(args).check === true,
+      scriptDir: SCRIPT_DIR,
+      // The rows say whether the app answering here is behind.
+      appVersion: action === "status" || action === "start" ? await runningAppVersion() : null,
+      doctor,
+      fix: fixHere,
+    });
+  }
   if (command === "hook") return runHook((args.shift() || "").trim().toLowerCase());
   if (command === "server") {
     const subcommand = args.shift() || "status";

@@ -30,7 +30,9 @@ import { TARGET_ID, TARGET_SECRET_ENV } from "./targets.mjs";
 import { API_TOKEN_ENV, dropTeamEntries, INVITE_ENV, teammateAdd, teamName } from "./team-access.mjs";
 import { handleLoginCallback, runTeamRoute, TEAM_READ_ROUTES, teamRoute } from "./team-app.mjs";
 import { CALLBACK_PATH, TEAM_AUTH_ENV, teamAuthPaths } from "./team-auth.mjs";
-import { createViewServer, displayName, hereOnly, serverOrigin, viewerDeviceOf, viewerInfo, viewerOf } from "./viewer.mjs";
+import { fixProgress, retryCli, updateProgress, updateStatus } from "./update.mjs";
+import { VERSION } from "./version.mjs";
+import { createViewServer, displayName, HERE_ONLY, hereOnly, serverOrigin, viewerDeviceOf, viewerInfo, viewerOf } from "./viewer.mjs";
 
 const execFileAsync = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -157,10 +159,10 @@ async function readJsonBody(req, limit = 1024 * 1024) {
   return JSON.parse(raw);
 }
 
-/** Run one CLI subcommand and return its JSON result. */
-export async function runCli(args, { timeout = 1_800_000, env = process.env } = {}) {
+/** Run one CLI subcommand and return its JSON result; `cli` is another copy's cli.mjs. */
+export async function runCli(args, { timeout = 1_800_000, env = process.env, cli = CLI } = {}) {
   try {
-    const { stdout } = await execFileAsync(process.execPath, [CLI, ...args], { timeout, env, maxBuffer: 32 * 1024 * 1024 });
+    const { stdout } = await execFileAsync(process.execPath, [cli, ...args], { timeout, env, maxBuffer: 32 * 1024 * 1024 });
     return parseCliOutput(stdout);
   } catch (error) {
     const parsed = error?.stdout ? parseCliOutput(error.stdout) : null;
@@ -342,7 +344,26 @@ const TEAM_ROUTES = {
   // This computer's server at the address the team makes for it; the tunnel token
   // goes from the hub to the CLI's own process and nowhere else.
   "/api/team/share": async (body) => runCli(["team", "share", ...inlineOption("label", body?.label), ...(body?.replace === true ? ["--replace"] : [])], { timeout: 900_000 }),
+  // 팀 주소 다시 올리기, after an update whose hub changed: the token saved when the
+  // team was made, never one from this app's environment.
+  "/api/team/redeploy": async () => runCli(["team", "redeploy"], { timeout: 600_000, env: teamEnvironment() }),
 };
+
+/**
+ * 업데이트 (update.mjs): start and 다시 시도 only start the CLI's own processes,
+ * which outlive this app; the update stops it and starts the new version's. Once the
+ * update reached the new plugin's folder, 다시 시도 runs that copy. 고치기 is
+ * doctor --fix, which may restart this app before it answers: its rows stay in
+ * fix.json (/api/doctor/fix/status).
+ */
+const UPDATE_ROUTES = {
+  "/api/update/start": async () => runCli(["update", "start"], { timeout: 120_000 }),
+  "/api/update/retry": async () => runCli(["update", "retry"], { timeout: 120_000, cli: await retryCli(CLI) }),
+  "/api/doctor/fix": async () => runCli(["doctor", "--fix"]),
+};
+
+// What the bell shows on another computer's screen: the button is that computer's.
+const UPDATE_HERE_ONLY = { code: "here-only", reason: `업데이트는 그 컴퓨터에서 누르세요. ${HERE_ONLY.get("/api/update/start")}` };
 
 /**
  * Other servers that also receive the conversations from chosen folders
@@ -582,6 +603,7 @@ const ROUTES = {
   ...BACKUP_ROUTES,
   ...PAST_ROUTES,
   ...REDERIVE_ROUTES,
+  ...UPDATE_ROUTES,
 };
 
 const restart = { running: null, last: null };
@@ -807,6 +829,19 @@ export function createUiServer() {
       if (req.method !== "GET") return json(res, 405, { ok: false, error: "Method not allowed" });
       try {
         return json(res, 200, { ok: true, ...(await appFlow(await loadConfig().catch(() => null))) });
+      } catch (error) {
+        return json(res, 500, { ok: false, error: String(error?.message || error) });
+      }
+    }
+    // The update's state and how it and 고치기 go: read here, so they answer while a
+    // Codex plugin update takes away the folder this app runs from.
+    if (url.pathname === "/api/update/status" || url.pathname === "/api/update/progress" || url.pathname === "/api/doctor/fix/status") {
+      if (req.method !== "GET") return json(res, 405, { ok: false, error: "Method not allowed" });
+      try {
+        if (url.pathname === "/api/update/progress") return json(res, 200, { ok: true, progress: await updateProgress() });
+        if (url.pathname === "/api/doctor/fix/status") return json(res, 200, { ok: true, progress: await fixProgress() });
+        const status = await updateStatus({ appVersion: VERSION });
+        return json(res, 200, viewerOf(req) ? { ...status, blocked: UPDATE_HERE_ONLY } : status);
       } catch (error) {
         return json(res, 500, { ok: false, error: String(error?.message || error) });
       }

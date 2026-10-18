@@ -12,10 +12,15 @@
 // in <runtime>/cloudflare/api-token and, as a secret, in the hub, which uses it to
 // make each member's server address.
 //
+// The hash of the hub's code is kept with what was deployed, so after an update the
+// app can tell the admin that this version's hub is not the one running (hubBehind),
+// and 팀 주소 다시 올리기 deploys it again with the saved token (teamRedeploy).
+//
 // Everything else is a request to the hub over HTTPS with this computer's team login
 // (team-auth.mjs): who this is, the team's people and servers, a server address for
 // this computer, requests between members and their answers, and the admin's roster.
 // The hub decides who may do what; nothing here is trusted for that.
+import crypto from "node:crypto";
 import os from "node:os";
 
 import {
@@ -33,6 +38,8 @@ import { chooseIdp, chooseZone, shareEnableTeam, TUNNEL_TOKEN_ENV } from "./shar
 import { readTeamAuth, setTeam, teamAuthPaths, teamHost, teamJson, teamLoginStatus } from "./team-auth.mjs";
 import {
   API_BASE_ENV,
+  API_TOKEN_ENV,
+  apiTokenSaved,
   ownerClient,
   privateFileOptionsFrom,
   readTeamState,
@@ -62,6 +69,13 @@ function apiBase(options) {
     if (fromEnv && ["127.0.0.1", "localhost", "[::1]"].includes(new URL(fromEnv).hostname)) return fromEnv;
   } catch {}
   return undefined;
+}
+
+/** One hash over the hub's modules as they are deployed: a version whose hub changed has another. */
+export function hubCodeHash(modules) {
+  const hash = crypto.createHash("sha256");
+  for (const { name, content } of modules) hash.update(`${name}\0${content}\0`);
+  return hash.digest("hex");
 }
 
 /** This computer's name as the team sees it: what the hub and a gate call it. */
@@ -114,13 +128,14 @@ async function teamMakeUnlocked(paths, options) {
       admins: [email],
     };
     const workers = workersClient({ token: owner.token, baseUrl: apiBase(options), fetchImpl: options.cloudflareFetch || globalThis.fetch });
+    const modules = await (options.hubModules || hubModules)();
     const deployed = await deployHub(workers, {
       accountId: zone.accountId,
       zoneId: zone.id,
       hubHost,
       team,
       token: owner.token,
-      modules: await (options.hubModules || hubModules)(),
+      modules,
     });
     // The token worked all the way, so it is worth keeping.
     if (owner.source === "env") await saveApiToken(paths, owner.token, privateFileOptionsFrom(options));
@@ -137,7 +152,15 @@ async function teamMakeUnlocked(paths, options) {
       everyonePolicyId: everyone.id,
       bypassPolicyId: bypass.id,
       teamName: name,
-      hub: { host: hubHost, appId: hubApp.id, guardAppId: guardApp.id, aud: hubApp.aud, script: HUB_SCRIPT, deployedAt: new Date().toISOString() },
+      hub: {
+        host: hubHost,
+        appId: hubApp.id,
+        guardAppId: guardApp.id,
+        aud: hubApp.aud,
+        script: HUB_SCRIPT,
+        codeHash: hubCodeHash(modules),
+        deployedAt: new Date().toISOString(),
+      },
       ...(same ? {} : { owner: undefined, sharers: {} }),
     }, privateFileOptionsFrom(options));
     return {
@@ -163,6 +186,44 @@ export async function teamMake(options = {}) {
   } catch (error) {
     return failure(error);
   }
+}
+
+/**
+ * 팀 주소 다시 올리기: the hub deployed again as `team make` does, for the team made
+ * here and with the token saved then. A token in the environment is not used, so
+ * this never saves another one.
+ */
+export async function teamRedeploy(options = {}) {
+  const paths = teamAccessPaths(options);
+  const state = await readTeamState(paths);
+  if (!state?.hub?.host || !state.teamName || !state.ownerEmail) return { ok: false, code: "no_team", error: "This computer did not make a team" };
+  if (!(await apiTokenSaved(paths))) {
+    return { ok: false, code: "no_token", error: "No Cloudflare API token is saved here: change it in the app's admin tab (token 바꾸기)" };
+  }
+  const env = { ...(options.env || process.env) };
+  delete env[API_TOKEN_ENV];
+  return teamMake({
+    ...options,
+    env,
+    name: state.teamName,
+    email: state.ownerEmail,
+    zone: state.zone || "",
+    hubLabel: state.hub.host.split(".")[0],
+    idp: "",
+  });
+}
+
+/**
+ * On the computer that made the team: whether the hub deployed is not this version's
+ * (one deployed before its hash was kept counts as not), and whether a saved token
+ * can deploy it. Null on every other computer.
+ */
+export async function hubBehind(options = {}) {
+  const paths = teamAccessPaths(options);
+  const state = await readTeamState(paths);
+  if (!state?.hub?.host) return null;
+  const hash = hubCodeHash(await (options.hubModules || hubModules)());
+  return { behind: state.hub.codeHash !== hash, canDeploy: await apiTokenSaved(paths) };
 }
 
 /** The team this computer made, if it did: names only, never the token. */

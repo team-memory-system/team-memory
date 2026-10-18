@@ -1,7 +1,9 @@
-// What `doctor --fix` (/team-memory doctor) repairs on its own: the checks doctor
-// marks with `fix`, each something an update of the plugin leaves behind. Updating
-// the plugin, by hand or by Claude Code on its own, changes only the plugin files;
-// what this computer runs stays on the old version until this runs.
+// What `doctor --fix` (/team-memory doctor, and the app's 고치기) repairs on its own:
+// the checks doctor marks with `fix`, each something an update of the plugin leaves
+// behind. Updating the plugin, by hand or by Claude Code on its own, changes only the
+// plugin files; what this computer runs stays on the old version until this runs.
+// The app's 업데이트 runs it too, from the new plugin's folder (update.mjs), and
+// shows its steps as rows through `onStep`.
 //
 //   runtime          setup apply with the saved settings: the collector and hooks
 //   server-version   the memory server's Honcho source or its subscription gateway is
@@ -14,7 +16,9 @@
 //
 // Only what is behind is touched, so a current server is never restarted. `setup
 // apply` alone did none of the server's part: the gateway moved only with `server
-// prepare`. Every answer carries `said`, one line on what was repaired.
+// prepare`. Every answer carries `said`, one line on what was repaired; one that
+// stops names the step and keeps its reason as the step gave it.
+import { sanitizeUrlsInText } from "./redact.mjs";
 import { VERSION } from "./version.mjs";
 
 /** The first reason a result gives for not working, on one line. */
@@ -22,8 +26,26 @@ function reasonOf(result) {
   return String(result?.error || result?.issues?.[0] || result?.next || "").trim().split(/\r?\n/)[0];
 }
 
-// What is said names the app's screens rather than a command: Codex has no /team-memory.
-const LOGIN_NEEDED = "구독 계정의 로그인이 풀려 있습니다. 팀 메모리 앱의 서버 → 모델에서 로그인한 뒤 다시 하세요.";
+/**
+ * A step's result, or what it threw as one. A command that failed (docker compose
+ * in `server start`) throws a message that only names the command: its reason is the
+ * last line it wrote, kept with up to 20 lines before it in `detail`.
+ */
+async function attempt(run) {
+  try {
+    return await run();
+  } catch (error) {
+    const lines = String(error?.stderr || "").split(/\r?\n/).map((line) => sanitizeUrlsInText(line.trim())).filter(Boolean);
+    const reason = lines.at(-1) || sanitizeUrlsInText(String(error?.message || error).trim().split(/\r?\n/)[0]);
+    return { ok: false, error: reason, ...(lines.length > 1 ? { detail: lines.slice(-21, -1).join("\n") } : {}) };
+  }
+}
+
+// What is said names the app's screens rather than a command: Codex has no
+// /team-memory. The login line ends at the login, since what comes after it is not
+// the same everywhere: Claude Code runs /team-memory doctor again, the app's rows
+// have 다시 시도.
+const LOGIN_NEEDED = "구독 계정의 로그인이 풀려 있습니다. 팀 메모리 앱의 서버 → 모델에서 로그인하세요.";
 
 /** The names of the checks doctor marked as repaired here. */
 export function fixable(checks) {
@@ -32,48 +54,84 @@ export function fixable(checks) {
 
 /**
  * `checks` is doctor's list. `deps`: setupApply, serverStatus, serverStart,
- * serverPrepare and restartApp, the last answering { ok, restarted }.
+ * serverPrepare and restartApp, the last answering { ok, restarted }, and onStep,
+ * told (step, state, info) as each step goes: step runtime, server or app, state
+ * run, ok, bad (info: { error, detail }) or login. The server's run says in
+ * `info.running` whether the server was running.
+ *
+ * The answer: { ok, changed, steps, said }; one that stops also has `failed` (the
+ * step), `error` and `detail`, and `login` when the subscription login ended.
+ * `serverOff` says the memory server is off at the end: prepared only, as it was
+ * off, or down after a start that failed.
  */
 export async function fixChecks(checks, deps) {
   const behind = fixable(checks);
   const steps = [];
   const done = [];
-  const stop = (what, result) => {
+  // The rows are a view: a progress file that cannot be written stops nothing.
+  const told = async (step, state, info) => {
+    try { await deps.onStep?.(step, state, info); } catch {}
+  };
+  const stop = async (step, what, result, extra = {}) => {
     const reason = reasonOf(result);
-    return { ok: false, steps, ...(reason ? { error: reason } : {}), said: [...done, reason ? `${what}: ${reason}` : `${what}.`].join(" ") };
+    await told(step, "bad", { error: reason || null, detail: result?.detail || null });
+    return {
+      ok: false,
+      steps,
+      failed: step,
+      ...(reason ? { error: reason } : {}),
+      ...(result?.detail ? { detail: result.detail } : {}),
+      ...extra,
+      said: [...done, reason ? `${what}: ${reason}` : `${what}.`].join(" "),
+    };
   };
   if (!behind.size) return { ok: true, changed: false, steps, said: "" };
 
   if (behind.has("runtime")) {
-    const setup = await deps.setupApply({});
+    await told("runtime", "run");
+    const setup = await attempt(() => deps.setupApply({}));
     steps.push({ step: "setup", ok: Boolean(setup?.ok) });
-    if (!setup?.ok) return stop("대화 모으기를 새 판으로 바꾸지 못했습니다", setup);
+    if (!setup?.ok) return stop("runtime", "대화 모으기를 새 판으로 바꾸지 못했습니다", setup);
+    await told("runtime", "ok");
     done.push(`대화 모으기를 ${VERSION}로 바꿨습니다.`);
   }
 
+  let serverOff = false;
   if (behind.has("server-version")) {
-    const now = await deps.serverStatus({ profile: "personal" });
+    const now = await attempt(() => deps.serverStatus({ profile: "personal" }));
     const running = Boolean(now?.running);
-    const result = running
-      ? await deps.serverStart({ profile: "personal", build: true })
-      : await deps.serverPrepare({ profile: "personal" });
+    await told("server", "run", { running });
+    const result = await attempt(() => (running
+      ? deps.serverStart({ profile: "personal", build: true })
+      : deps.serverPrepare({ profile: "personal" })));
     steps.push({ step: running ? "server-start" : "server-prepare", ok: Boolean(result?.ok && result.ready !== false) });
-    if (result?.nextAction?.kind === "gateway-login") return { ok: false, steps, said: [...done, LOGIN_NEEDED].join(" ") };
-    if (!result?.ok || result.ready === false) {
-      return stop(running ? "기억 서버를 새 판으로 다시 시작하지 못했습니다" : "기억 서버를 새 판으로 준비하지 못했습니다", result);
+    // A gateway with no login stops prepare before anything installed is touched.
+    if (result?.nextAction?.kind === "gateway-login") {
+      await told("server", "login");
+      return { ok: false, steps, failed: "server", login: true, said: [...done, LOGIN_NEEDED].join(" ") };
     }
+    if (!result?.ok || result.ready === false) {
+      // A start that failed half way stops the host services with it.
+      const after = running ? await attempt(() => deps.serverStatus({ profile: "personal" })) : null;
+      return stop("server", running ? "기억 서버를 새 판으로 다시 시작하지 못했습니다" : "기억 서버를 새 판으로 준비하지 못했습니다", result,
+        after?.running ? {} : { serverOff: true });
+    }
+    await told("server", "ok");
+    serverOff = !running;
     done.push(running
       ? "기억 서버와 구독 게이트웨이를 새 판으로 다시 시작했습니다."
       : "꺼 둔 기억 서버는 새 판으로 준비만 했습니다. 켜려면 팀 메모리 앱의 서버 → 기억 서버에서 시작을 누르세요.");
   }
 
   if (behind.has("app")) {
-    const app = await deps.restartApp().catch((error) => ({ ok: false, error: error?.message || String(error) }));
+    await told("app", "run");
+    const app = await attempt(() => deps.restartApp());
     steps.push({ step: "app", ok: app?.ok !== false });
-    if (app?.ok === false) return stop("팀 메모리 앱을 새 판으로 다시 켜지 못했습니다", app);
+    if (app?.ok === false) return stop("app", "팀 메모리 앱을 새 판으로 다시 켜지 못했습니다", app, serverOff ? { serverOff } : {});
+    await told("app", "ok");
     done.push("팀 메모리 앱을 새 판으로 다시 켰습니다.");
   }
 
   if (behind.has("runtime")) done.push("열려 있는 Claude Code와 Codex 창은 새로 시작해야 새 판을 씁니다.");
-  return { ok: true, changed: true, steps, said: done.join(" ") };
+  return { ok: true, changed: true, steps, ...(serverOff ? { serverOff } : {}), said: done.join(" ") };
 }
