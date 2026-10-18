@@ -3,16 +3,18 @@
 // up and, only when the server's pins differ, that teammates' reading stops; with no
 // new version, a row for what doctor finds behind that 고치기 repairs, warning first
 // when that rebuilds the server; and a row for an update or a 고치기 going or stopped,
-// which opens its window. 업데이트 starts with what the row showed, and a version or a
-// warning that moved since redraws the row with why. The dashboard says where to
-// press while the bell has 업데이트. The window keeps each row's state (wait, run, ok,
-// bad, login), a stopped row the update's reason as it wrote it; it waits through the
-// app starting again and then loads the new version's screens, which open it again as
-// the app starts, before a setup kept half way. A stopped one offers 다시 시도, and
-// 서버 켜기 for a server it left off; the end, 서버 켜기 for the server kept off and 팀
-// 주소 다시 올리기 only when the hub changed. 업데이트 waits while past conversations go
-// in or the memory is rebuilt, saying why in the update's words; on a page another
-// computer shows, every button is that computer's.
+// or an update that ended unseen, which opens its window. 업데이트 starts with what
+// the row showed, and a version or a warning that moved since redraws the row with
+// why. The dashboard says where to press while the bell has 업데이트. The window
+// keeps each row's state (wait, run, ok, bad, login), a stopped row the update's
+// reason as it wrote it; it waits through the app starting again and then loads the
+// new version's screens, which open it again as the app starts, before a setup kept
+// half way. A stopped one offers 다시 시도, and 서버 켜기 for a server it left off;
+// the end, 서버 켜기 once for the server kept off (점검's row when it checks the
+// server) and 팀 주소 다시 올리기 only when the hub changed. 업데이트 waits while past
+// conversations go in or the memory is rebuilt, saying why in the update's words, as
+// a 고치기 refused then does; on a page another computer shows, what the way there
+// refuses is locked, and the rest is pressed as here.
 import assert from "node:assert/strict";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -20,10 +22,10 @@ import test, { afterEach } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { HERE_ONLY } from "../scripts/viewer.mjs";
-import { REBUILD_NOTE } from "../ui/lib/check.js";
+import { checkRows, REBUILD_NOTE, runFix } from "../ui/lib/check.js";
 import {
-  bellLines, bootWindow, dashboardLine, endHeading, endItems, endKey, follow, LONG_JOBS, loginAccount, pressUpdate, progressLines,
-  redeployHub, refreshUpdate, retryUpdate, standing, UPDATE_HERE_ONLY, updateLines, windowActions,
+  bellLines, bootWindow, dashboardLine, endHeading, endItems, endKey, fixShown, follow, LONG_JOBS, loginAccount, openEnded, pressUpdate,
+  progressLines, redeployHub, refreshUpdate, retryUpdate, standing, UPDATE_HERE_ONLY, updateLines, windowActions,
 } from "../ui/lib/update.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -179,8 +181,9 @@ test("an update or a 고치기 going or stopped keeps a row that opens its windo
   // A day after it stopped, the new version's 업데이트 again.
   assert.equal(standing(failed, NOW + DAY), false);
   assert.deepEqual(lines(failed, { at: NOW + DAY }).map(([kind]) => kind), ["new"]);
-  // One that went through leaves nothing on the bell (its hub aside, below).
-  assert.deepEqual(bellLines({ status: CURRENT, update: progress("done", ALL_OK) }, { now: NOW }), []);
+  // One that went through leaves nothing once this browser showed its end (below; its hub aside).
+  const done = progress("done", ALL_OK);
+  assert.deepEqual(bellLines({ status: CURRENT, update: done }, { now: NOW, seen: endKey(done) }), []);
   // A 고치기 going sits beside the new version; one stopped stands in for what doctor finds.
   const fix = { ...progress("running"), kind: "fix", from: undefined, to: undefined, rows: [{ id: "runtime", title: "대화 모으기", state: "run" }] };
   assert.deepEqual(lines(null, { fix }), [["new", "새 판 0.8.14", "플러그인과 대화 모으기, 기억 서버를 올립니다. 기억 서버를 다시 만드는 동안 팀원 열람이 멈춥니다."], ["going", "새 판에 맞추기", "고치는 중입니다."]]);
@@ -230,6 +233,18 @@ test("업데이트 sends what the bell showed, and a version or a warning that m
   serve({});
   assert.equal(await pressUpdate(status(), { now: NOW }), null);
   assert.equal(updateLines({ now: NOW })[0].said.text, "이 앱의 서버에 연결할 수 없습니다. 창을 닫았다가 다시 열어 주세요.");
+
+  // A refusal goes once a status read later shows another version, or the same one warned otherwise.
+  const later = (answer, day) => {
+    serve({ "GET /api/update/progress": { ok: true, progress: null }, "GET /api/doctor/fix/status": { ok: true, progress: null }, "GET /api/update/status": answer });
+    return refreshUpdate({ open: true, now: NOW + day * DAY });
+  };
+  await later(status({ warning: null }), 102);
+  assert.deepEqual(updateLines({ now: NOW }).map((line) => [line.title, line.said]), [["새 판 0.8.14", null]]);
+  serve({ "POST /api/update/start": { ok: false, code: "unread", error: unread, detail: "HTTP 503" } });
+  assert.equal(await pressUpdate(status({ warning: null }), { now: NOW }), null);
+  await later(status({ latest: "0.8.15", warning: null }), 103);
+  assert.deepEqual(updateLines({ now: NOW }).map((line) => [line.title, line.said]), [["새 판 0.8.15", null]]);
 });
 
 test("the dashboard says a new version is there and where to press, while the bell has its 업데이트", async () => {
@@ -362,6 +377,7 @@ test("a stopped update shows its row's reason with 다시 시도, and 서버 켜
   assert.deepEqual(progressLines(failed)[3].sub, "Docker Desktop is not running");
   assert.deepEqual(windowActions(failed), [{ run: "retry", label: "다시 시도", primary: true }]);
   assert.deepEqual(windowActions({ ...failed, serverOff: true }).map((action) => action.label), ["서버 켜기", "다시 시도"]);
+  assert.deepEqual(windowActions({ ...failed, serverOff: true }, { started: true }).map((action) => action.label), ["다시 시도"], "once started from the window");
   assert.deepEqual(windowActions(progress("login")).map((action) => action.label), ["다시 시도"], "after a login that did not finish");
   assert.deepEqual(windowActions(progress("running")), []);
   assert.deepEqual(windowActions(progress("done", ALL_OK, { serverOff: true })), [], "the end has its own 서버 켜기");
@@ -401,11 +417,11 @@ test("the end shows what is left, 서버 켜기 for the server kept off and 팀 
   assert.deepEqual(items({ ...done, todo: [{ id: "hub", title: "팀 주소", text: "관리자 탭의 Cloudflare에서 token 바꾸기를 누르세요." }] }), [["팀 주소", null]]);
   // The heading counts what is left with what 점검 found, as first setup's end does.
   assert.equal(endHeading(endItems(done), null), "점검하는 중입니다");
-  assert.equal(endHeading(endItems(done), [{ name: "대화 모으기", ok: true }, { name: "기억 서버", ok: false }]), "할 일 4개");
+  assert.equal(endHeading(endItems(done), [{ name: "대화 모으기", ok: false }, { name: "기억 서버", ok: true }]), "할 일 4개");
   assert.equal(endHeading([], [{ name: "대화 모으기", ok: true }]), "다 됐습니다");
   // Closed before it was pressed, the hub's to-do stays on the bell until the hub runs this version.
   assert.deepEqual(bellLines({ status: CURRENT, update: done }, { now: NOW + 30 * DAY }).map((line) => [line.kind, line.title, line.action]), [["hub", "팀 주소", true]]);
-  assert.deepEqual(bellLines({ status: CURRENT, update: { ...done, todo: todo.slice(0, 2) } }, { now: NOW }), []);
+  assert.deepEqual(bellLines({ status: CURRENT, update: { ...done, todo: todo.slice(0, 2) } }, { now: NOW + 30 * DAY }), []);
   // 팀 주소 다시 올리기 goes up with the token kept here.
   const calls = serve({ "POST /api/team/redeploy": { ok: true, team: { name: "우리 팀", host: "team.example.com" }, created: false } });
   assert.deepEqual(await redeployHub(), { text: "팀 주소를 다시 올렸습니다.", bad: false });
@@ -415,38 +431,89 @@ test("the end shows what is left, 서버 켜기 for the server kept off and 팀 
   assert.ok((await read("scripts/update.mjs")).includes('"관리자 탭의 Cloudflare에서 token 바꾸기를 누르세요."'), "in the to-do's own words");
 });
 
+test("the end of an update that kept the server off counts it once: 점검's 기억 서버 row has 서버 켜기 when it checks the server here", () => {
+  const todo = [
+    { id: "claude", title: "Claude Code", text: SESSIONS },
+    { id: "server", title: "기억 서버", text: "꺼 둔 기억 서버는 새 판으로 준비만 했습니다. 켜려면 서버 켜기를 누르세요.", action: "server-start" },
+  ];
+  const done = progress("done", ALL_OK, { todo, serverOff: true });
+  // 점검 of the server here (server verify), which is off.
+  const context = { localServer: { apiUrl: "http://127.0.0.1:8001" } };
+  const doctorHere = { checks: [{ name: "runtime", ok: true, actualVersion: "0.8.14" }, { name: "honcho-health", ok: false, url: "http://127.0.0.1:8001" }] };
+  const verified = { ok: false, checks: { status: { ok: false, installed: true, running: false, docker: { installed: true, running: true }, host: {} }, embedding: { ok: true, status: 200 } } };
+  const rows = checkRows(doctorHere, verified, { context });
+  assert.deepEqual(rows.filter((row) => !row.ok).map((row) => [row.name, row.problems, row.actions.map((action) => action.label)]), [["기억 서버", ["기억 서버가 꺼져 있습니다."], ["서버 켜기", "다시 점검"]]]);
+  // The to-do goes before 점검 answers, so the count does not move.
+  const items = endItems(done, { verify: true });
+  assert.deepEqual(items.map((item) => item.title), ["Claude Code"]);
+  assert.equal(endHeading(items, null), "점검하는 중입니다");
+  assert.equal(endHeading(items, rows), "할 일 2개");
+  // An end that checks no server here keeps the to-do and its button.
+  assert.deepEqual(endItems(done).map((item) => [item.title, item.action?.label || null]), [["Claude Code", null], ["기억 서버", "서버 켜기"]]);
+});
+
 test("업데이트 waits while past conversations go in or the memory is rebuilt, and says why in the update's words", async () => {
   // The update's status holds its own button.
   assert.deepEqual(bellLines({ status: status({ blocked: { code: "past", reason: LONG_JOBS.past } }) }, { now: NOW }).map((line) => line.blocked), [LONG_JOBS.past]);
   const fixing = "고치기가 도는 중입니다. 끝난 뒤 업데이트를 누르세요.";
   assert.deepEqual(bellLines({ status: status({ blocked: { code: "fixing", reason: fixing } }) }, { now: NOW }).map((line) => line.blocked), [fixing]);
-  // doctor --fix does not wait for them, so the bell holds the 업데이트 that runs it.
-  const behind = (flow) => bellLines({ status: CURRENT, doctor: doctor(["server-version"]), flow }, { now: NOW })[0].blocked;
-  assert.equal(behind({ past: { running: { done: 3, total: 10 } }, rederive: null }), LONG_JOBS.past);
+  // A 고치기 that makes the server again is refused while they go (recordFix), so the
+  // bell holds the 업데이트 that runs one: while 기억 서버 is behind, and only then.
+  const behind = (flow, names = ["server-version"]) => bellLines({ status: CURRENT, doctor: doctor(names), flow }, { now: NOW })[0].blocked;
+  const past = { past: { running: { done: 3, total: 10 } }, rederive: null };
+  assert.equal(behind(past), LONG_JOBS.past);
   assert.equal(behind({ past: null, rederive: { job: { kind: "rebuild", error: null }, running: true } }), LONG_JOBS.rederive);
   assert.equal(behind({ past: null, rederive: { job: { kind: "rebuild", error: null }, running: false } }), LONG_JOBS.stopped, "one whose process stopped");
   assert.equal(behind({ past: { running: null, last: { finishedAt: AT } }, rederive: { job: { kind: "rebuild", error: "boom" }, running: false } }), "", "one stopped on an error holds nothing");
   assert.equal(behind(null), "");
+  assert.equal(behind(past, ["runtime"]), "", "대화 모으기 alone does not make the server again");
+  assert.equal(behind(past, ["runtime", "app"]), "");
+  assert.equal(behind(past, ["runtime", "server-version"]), LONG_JOBS.past);
   const source = await read("scripts/update.mjs");
   for (const text of Object.values(LONG_JOBS)) assert.ok(source.includes(`"${text}"`), text);
 });
 
-test("on a page another computer shows, every button is that computer's", async () => {
+test("a 고치기 refused while past conversations go in or the memory is rebuilt says the reason in the window as it came", async () => {
+  // doctor --fix's answer then, which /api/doctor/fix relays as it is (scripts/ui.mjs runCli).
+  assert.match(await read("scripts/cli.mjs"), /if \(refused\) return \{ \.\.\.before, ok: false, code: refused\.code, said: refused\.said \};/);
+  const said = "지난 대화를 쌓는 중입니다. 다 쌓은 뒤 고치기를 다시 누르세요.";
+  assert.ok((await read("scripts/update.mjs")).includes(`"${said}"`), "recordFix's words");
+  // The 고치기 before stopped; the one pressed again (다시 시도, or after a login) is refused, and fix.json stays as it was.
+  const before = { kind: "fix", state: "failed", startedAt: AT, updatedAt: AT, rows: [{ id: "server", title: "기억 서버", state: "bad" }], todo: [] };
+  const calls = serve({
+    "GET /api/doctor/fix/status": { ok: true, progress: before },
+    "POST /api/doctor/fix": { ok: false, version: "0.8.14", checks: doctor(["server-version"]).checks, code: "past", said },
+  });
+  const outcome = await runFix(() => {}, { every: 1 });
+  assert.deepEqual(outcome, { text: said, bad: true });
+  assert.equal(calls.filter((call) => call.key === "POST /api/doctor/fix").length, 1);
+  assert.deepEqual(fixShown(outcome, before.startedAt, before), { said: { text: said, bad: true } });
+  // One that started is followed; with neither, nothing was behind any more, which 점검 says.
+  const going = { ...before, state: "running", startedAt: "2026-10-19T09:09:00.000Z" };
+  assert.deepEqual(fixShown(null, before.startedAt, going), { progress: going });
+  assert.deepEqual(fixShown(null, before.startedAt, before), { progress: { kind: "fix", state: "done", rows: [], todo: [] } });
+});
+
+test("on a page another computer shows, what the way there refuses is locked, 업데이트 and 다시 시도, and 서버 켜기 and 팀 주소 다시 올리기 are pressed", async () => {
   assert.equal(UPDATE_HERE_ONLY, `업데이트는 그 컴퓨터에서 누르세요. ${HERE_ONLY.get("/api/update/start")}`);
   assert.ok((await read("scripts/ui.mjs")).includes("reason: `업데이트는 그 컴퓨터에서 누르세요. ${HERE_ONLY.get(\"/api/update/start\")}`"));
+  for (const route of ["/api/update/start", "/api/update/retry", "/api/doctor/fix"]) assert.ok(HERE_ONLY.has(route), route);
+  for (const route of ["/api/server/start", "/api/team/redeploy"]) assert.equal(HERE_ONLY.has(route), false, route);
   const there = { code: "here-only", reason: UPDATE_HERE_ONLY };
   // The status says so itself there; a long job held here is that computer's to say.
   assert.deepEqual(bellLines({ status: status({ blocked: there }) }, { elsewhere: true, now: NOW }).map((line) => [line.hereOnly, line.blocked]), [[UPDATE_HERE_ONLY, ""]]);
-  const behind = bellLines({ status: { ...CURRENT, blocked: there }, doctor: doctor(["runtime"]), flow: { past: { running: {} } } }, { elsewhere: true, now: NOW });
+  const behind = bellLines({ status: { ...CURRENT, blocked: there }, doctor: doctor(["server-version"]), flow: { past: { running: {} } } }, { elsewhere: true, now: NOW });
   assert.deepEqual(behind.map((line) => [line.kind, line.hereOnly, line.blocked]), [["behind", UPDATE_HERE_ONLY, ""]]);
-  // The window: 다시 시도 and 서버 켜기 are locked with why.
+  // The window: 다시 시도 is locked with why, 서버 켜기 pressed.
   const failed = progress("failed", ["ok", "ok", "bad"], { serverOff: true });
-  assert.deepEqual(windowActions(failed, { elsewhere: true }).map((action) => [action.label, action.hereOnly]), [["서버 켜기", "그 컴퓨터에서 누르세요."], ["다시 시도", UPDATE_HERE_ONLY]]);
-  // The end's buttons, and the hub's row on the bell.
+  assert.deepEqual(windowActions(failed, { elsewhere: true }).map((action) => [action.label, action.hereOnly || null]), [["서버 켜기", null], ["다시 시도", UPDATE_HERE_ONLY]]);
+  assert.deepEqual(windowActions(progress("login"), { elsewhere: true }).map((action) => [action.label, action.hereOnly || null]), [["다시 시도", UPDATE_HERE_ONLY]]);
+  // The end's buttons, and the bell's rows of an update that went through, pressed.
   const hub = { id: "hub", title: "팀 주소", text: "팀 주소 다시 올리기를 누르세요. 올리는 동안 팀원의 로그인이 잠깐 멈춥니다.", action: "hub" };
-  const done = progress("done", ALL_OK, { todo: [{ id: "codex", title: "Codex", text: SESSIONS }, hub] });
-  assert.deepEqual(endItems(done, { elsewhere: true }).map((item) => item.action?.hereOnly || null), [null, "그 컴퓨터에서 누르세요."]);
-  assert.deepEqual(bellLines({ status: { ...CURRENT, blocked: there }, update: done }, { elsewhere: true, now: NOW }).map((line) => [line.kind, line.hereOnly]), [["hub", "그 컴퓨터에서 누르세요."]]);
+  const server = { id: "server", title: "기억 서버", text: "꺼 둔 기억 서버는 새 판으로 준비만 했습니다. 켜려면 서버 켜기를 누르세요.", action: "server-start" };
+  const done = progress("done", ALL_OK, { todo: [{ id: "codex", title: "Codex", text: SESSIONS }, server, hub], serverOff: true });
+  assert.deepEqual(endItems(done).map((item) => [item.title, item.action?.label || null, item.action?.hereOnly || null]), [["Codex", null, null], ["기억 서버", "서버 켜기", null], ["팀 주소", "팀 주소 다시 올리기", null]]);
+  assert.deepEqual(bellLines({ status: { ...CURRENT, blocked: there }, update: done }, { elsewhere: true, now: NOW, seen: "" }).map((line) => [line.kind, line.hereOnly || null]), [["ended", null], ["hub", null]]);
   // On this computer's own page, nothing is locked.
   assert.deepEqual(bellLines({ status: status() }, { now: NOW }).map((line) => line.hereOnly), [""]);
   assert.ok(windowActions(failed).every((action) => !action.hereOnly));
@@ -456,13 +523,14 @@ test("the bell asks every minute for what is light, and only as it opens for a s
   const counts = {};
   let answer = status();
   let update = null;
+  let behind = ["runtime"];
   serve(new Proxy({}, {
     get: (_, key) => {
       counts[key] = (counts[key] || 0) + 1;
       if (key === "GET /api/update/status") return answer;
       if (key === "GET /api/update/progress") return { ok: true, progress: update };
       if (key === "GET /api/doctor/fix/status") return { ok: true, progress: null };
-      if (key === "GET /api/status") return { detect: {}, doctor: doctor(["runtime"]) };
+      if (key === "GET /api/status") return { detect: {}, doctor: doctor(behind) };
       if (key === "GET /api/app/flow") return { ok: true, past: null, rederive: null };
       return undefined;
     },
@@ -498,8 +566,76 @@ test("the bell asks every minute for what is light, and only as it opens for a s
   for (let minute = 1; minute <= 3; minute += 1) await refreshUpdate({ now: at + minute * 60_000 });
   assert.equal(asked("GET /api/update/status"), light + 3);
   assert.equal(asked("GET /api/status"), doctorReads, "doctor's checks only as the bell opens");
-  assert.equal(asked("GET /api/app/flow"), 4, "the long jobs each time what doctor found is on the bell");
+  assert.equal(asked("GET /api/app/flow"), 0, "the long jobs hold nothing while 기억 서버 is not behind");
   await refreshUpdate({ open: true, now: at + 5 * 60_000 });
   assert.equal(asked("GET /api/status"), doctorReads + 1);
   assert.deepEqual(updateLines({ now: at }).map((line) => [line.kind, line.title]), [["behind", "대화 모으기가 새 판에 맞지 않습니다."]]);
+  // 기억 서버 behind: the long jobs each time, as they hold its 고치기.
+  behind = ["runtime", "server-version"];
+  await refreshUpdate({ open: true, now: at + 10 * 60_000 });
+  for (let minute = 1; minute <= 2; minute += 1) await refreshUpdate({ now: at + (10 + minute) * 60_000 });
+  assert.equal(asked("GET /api/app/flow"), 3);
+});
+
+test("an update or a 고치기 that ends takes what doctor found before it off the bell at once, its checks read again", async () => {
+  let fix = null;
+  let behind = ["runtime"];
+  const calls = serve({
+    "GET /api/update/progress": { ok: true, progress: null },
+    "GET /api/doctor/fix/status": () => ({ ok: true, progress: fix }),
+    "GET /api/update/status": CURRENT,
+    "GET /api/status": () => ({ detect: {}, doctor: doctor(behind) }),
+  });
+  const doctorReads = () => calls.filter((call) => call.key === "GET /api/status").length;
+  const at = NOW + 300 * DAY;
+  await refreshUpdate({ open: true, now: at });
+  assert.deepEqual(updateLines({ now: NOW }).map((line) => [line.kind, line.title]), [["behind", "대화 모으기가 새 판에 맞지 않습니다."]]);
+  // A 고치기 goes, from a window closed since or from a terminal, and stands in for what doctor found.
+  fix = { ...progress("running", ["run"]), kind: "fix", rows: [{ id: "runtime", title: "대화 모으기", state: "run" }] };
+  await refreshUpdate({ now: at + 60_000 });
+  assert.deepEqual(updateLines({ now: NOW }).map((line) => line.kind), ["going"]);
+  // It went through: doctor's checks are read again at once, not as the bell next opens.
+  fix = { ...fix, state: "done", rows: [{ id: "runtime", title: "대화 모으기", state: "ok" }] };
+  behind = [];
+  const reads = doctorReads();
+  await refreshUpdate({ now: at + 120_000 });
+  assert.equal(doctorReads(), reads + 1);
+  assert.deepEqual(updateLines({ now: NOW }), []);
+  // Until another ends, the minute's reads leave them as they are.
+  await refreshUpdate({ now: at + 180_000 });
+  assert.equal(doctorReads(), reads + 1);
+});
+
+test("an update that ended while its window was closed stays on the bell until this browser showed its end, a day at most, and 열기 loads the new version's screens first", async () => {
+  const running = progress("running", ["ok", "ok", "run"]);
+  const finished = "2026-10-19T09:08:00.000Z";
+  const done = progress("done", ALL_OK, { said: "Claude Code 플러그인을 0.8.14로 올렸습니다.", updatedAt: finished, finishedAt: finished });
+  let update = running;
+  serve({
+    "GET /api/update/progress": () => ({ ok: true, progress: update }),
+    "GET /api/doctor/fix/status": { ok: true, progress: null },
+    "GET /api/update/status": () => (update.state === "running" ? status({ progress: update }) : CURRENT),
+    "GET /api/status": { detect: {}, doctor: doctor([]) },
+  });
+  const rows = (options = {}) => updateLines({ now: NOW, seen: "", ...options }).map((line) => [line.kind, line.title, line.text]);
+  const at = NOW + 400 * DAY;
+  await refreshUpdate({ open: true, now: at });
+  assert.deepEqual(rows(), [["going", "새 판 0.8.14", "업데이트하는 중입니다."]]);
+  // It went through with no window open: a row that opens its end.
+  update = done;
+  await refreshUpdate({ now: at + 60_000 });
+  assert.deepEqual(rows(), [["ended", "새 판 0.8.14", "업데이트를 마쳤습니다."]]);
+  assert.deepEqual(bootWindow(done, null, { now: NOW }), { kind: "update", progress: done }, "as the app starts, the same end opens");
+  // Its end shown in this browser, or a day after: gone.
+  assert.deepEqual(rows({ seen: endKey(done) }), []);
+  assert.deepEqual(rows({ now: NOW + DAY }), []);
+  // 열기: while the app runs this page's version, the end; on another, the page loads first, and nothing opens on the old one.
+  const opened = [];
+  let reloads = 0;
+  const press = (version) => openEnded(done, { version, reload: () => { reloads += 1; }, open: (shown) => opened.push(shown) });
+  serve({ "GET /api/app/context": { version: "0.8.14" } });
+  await press("0.8.13");
+  assert.deepEqual([reloads, opened], [1, []]);
+  await press("0.8.14");
+  assert.deepEqual([reloads, opened], [1, [{ kind: "update", progress: done }]]);
 });
