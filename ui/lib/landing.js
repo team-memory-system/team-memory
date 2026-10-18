@@ -24,14 +24,25 @@ export function landing(path, { setUp, link = "", team = null } = {}) {
 }
 
 /**
+ * The window an address opens with 기억 설정's page (views/settings.js): 대화 수집's
+ * 수정 on any computer that is set up (computer/collect, what `/team-memory setup`
+ * opens), even one that does not collect yet; 지난 대화 and MCP 도구 once it
+ * collects (`configured`).
+ */
+export function windowOf(name, configured) {
+  if (name === "collect") return name;
+  return configured && (name === "past" || name === "tools") ? name : null;
+}
+
+/**
  * Whether the app, as it starts on `path`, opens first setup's window for a setup
  * kept half way (`kept`), where the window shows its rows with 이어서 하기 and
  * 처음부터: on a computer set up already, such as one whose server that setup has
  * installed. One not set up opens the window anyway, as `start` does; an address
- * that opens a window of its own (computer/collect) is left to it, and its 적용
- * drops what was kept.
+ * that opens a window of its own here (windowOf) is left to it, and its 적용 drops
+ * what was kept.
  */
-export function resumeAtBoot(path, { setUp, kept }) {
+export function resumeAtBoot(path, { setUp, kept, configured = false }) {
   const [name, page] = path.split("/");
-  return Boolean(setUp && kept && name !== "start" && !(name === "computer" && page));
+  return Boolean(setUp && kept && name !== "start" && !(name === "computer" && windowOf(page, configured)));
 }

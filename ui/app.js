@@ -440,8 +440,9 @@ async function boot() {
   await Promise.race([firstStatus, new Promise((resolve) => setTimeout(resolve, 3000))]);
   await probeAudit();
   await show();
-  // A setup kept half way, on a computer set up since (its server installed): its window again.
-  if (resumeAtBoot(bootPath, { setUp: setupDone(), kept: resumable(keptSetup()) }) && !setupWindow) showSetup({ firstRun: false });
+  // A setup kept half way, on a computer set up since (its server installed): its
+  // window again, unless the address opened 기억 설정's own window.
+  if (resumeAtBoot(bootPath, { setUp: setupDone(), kept: resumable(keptSetup()), configured: app.context?.configured }) && !setupWindow) showSetup({ firstRun: false });
   setInterval(() => { refreshStatus(); refreshBell(); }, 60_000);
 }
 

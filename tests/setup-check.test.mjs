@@ -526,16 +526,22 @@ test("a setup kept half way opens its window as the app starts, also on a comput
   assert.equal(resumeAtBoot("", { setUp: true, kept: true }), true);
   assert.equal(resumeAtBoot("team", { setUp: true, kept: true }), true);
   assert.equal(resumeAtBoot("dashboard", { setUp: true, kept: false }), false);
-  // `start` opens it anyway; a window an address names is left to it, and its 적용 drops what was kept.
+  // `start` opens it anyway; a window an address opens is left to it, and its 적용 drops what was kept.
   assert.equal(resumeAtBoot("start", { setUp: true, kept: true }), false);
   assert.equal(resumeAtBoot("computer/collect", { setUp: true, kept: true }), false);
+  assert.equal(resumeAtBoot("computer/past", { setUp: true, kept: true, configured: true }), false);
   assert.equal(resumeAtBoot("computer", { setUp: true, kept: true }), true);
+  // An address naming a window that does not open here opens this one: 지난 대화 on a
+  // computer in a team that does not collect, or a name that is no window.
+  assert.equal(resumeAtBoot("computer/past", { setUp: true, kept: true, configured: false }), true);
+  assert.equal(resumeAtBoot("computer/tools", { setUp: true, kept: true }), true);
+  assert.equal(resumeAtBoot("computer/nope", { setUp: true, kept: true, configured: true }), true);
 
   const shell = await read("ui/app.js");
   const boot = shell.slice(shell.indexOf("async function boot()"));
   // The address read first: a screen a change in status shows on the way takes a window's name off it.
   assert.match(boot, /^async function boot\(\) \{\n(?:\s*\/\/[^\n]*\n)*\s*const bootPath = movedTo\(\) \|\| hashParts\(\)\.path;\n/);
-  assert.match(boot, /await show\(\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(resumeAtBoot\(bootPath, \{ setUp: setupDone\(\), kept: resumable\(keptSetup\(\)\) \}\) && !setupWindow\) showSetup\(\{ firstRun: false \}\);/);
+  assert.match(boot, /await show\(\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(resumeAtBoot\(bootPath, \{ setUp: setupDone\(\), kept: resumable\(keptSetup\(\)\), configured: app\.context\?\.configured \}\) && !setupWindow\) showSetup\(\{ firstRun: false \}\);/);
 });
 
 test("대화 수집's 수정 window drops a first setup kept half way once it applies, and ends with 점검", async () => {

@@ -27,6 +27,7 @@ import {
   serverStep,
   setupBody,
 } from "../lib/collect.js";
+import { windowOf } from "../lib/landing.js";
 import { lateLine, monthText, pastStep, periodText, planPast, shortDay, startPast } from "../lib/past.js";
 import { sendRequest, teamDirectory } from "../lib/team.js";
 import { TOOL_GROUPS, TOOL_INFO } from "../lib/tools.js";
@@ -378,16 +379,6 @@ function pastBlock(openMore) {
 }
 
 // ── The page ─────────────────────────────────────────────
-
-/**
- * The window an address opens with the page: 대화 수집's 수정 on any computer that
- * is set up (computer/collect, what `/team-memory setup` opens), even one that does
- * not collect yet; 지난 대화 and MCP 도구 once it collects.
- */
-export function windowOf(name, configured) {
-  if (name === "collect") return name;
-  return configured && (name === "past" || name === "tools") ? name : null;
-}
 
 export default {
   title: "기억 설정",

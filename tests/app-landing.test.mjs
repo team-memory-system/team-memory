@@ -16,9 +16,8 @@ import test, { afterEach } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { DEFAULT_SOURCE } from "../scripts/host-plugins.mjs";
-import { landing } from "../ui/lib/landing.js";
+import { landing, windowOf } from "../ui/lib/landing.js";
 import { inviteLine, joinCase, leaveTeam, REPOSITORY } from "../ui/lib/team.js";
-import { windowOf } from "../ui/views/settings.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const HUB = "team.example.com";
