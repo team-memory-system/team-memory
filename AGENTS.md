@@ -351,7 +351,7 @@ answer.
 ### Verify a change
 
 ```sh
-npm test          # 460 tests, no network, no Docker
+npm test          # no network, no Docker
 node scripts/cli.mjs detect
 node scripts/cli.mjs doctor
 npm run ui        # the Team Memory app on localhost
@@ -458,7 +458,64 @@ An agent asked to install runs its pair, then opens the app from the plugin fold
   - An install that fails, or finds no CLI, never fails setup or rolls it back. Its `nextSteps` entry `install-plugin` carries the two `commands` to run by hand, and the app shows them in its result.
   - A plugin that is installed but turned off stays off, and the plan warns about it.
 
-To update an installed plugin:
+### Updating from the app / 업데이트
+
+The app's bell says when a new version is out, and 업데이트 there brings what is behind
+on this computer up to it (`scripts/update.mjs`; the screen is `ui/lib/update.js`).
+Nothing goes up by itself: rebuilding the server stops teammates' reading for minutes,
+so the owner picks the time.
+
+- **What it reads.** Once a day, and an hour after a failed read, the app reads `main`
+  of team-memory-system/team-memory on GitHub: `.claude-plugin/plugin.json`'s version,
+  `server/honcho-source.json`, `server/gateway-source.json`, `server/compose.yaml` and
+  `server/gate/gate.mjs`, kept in `<app home>/update/check.json` and `update/main/`.
+  The repository has no releases or tags, so main is the version. When main is above
+  the lowest of the app answering, the Claude Code plugin, the Codex plugin (its
+  highest cache folder) and the collector, the bell shows 새 판 <version> with what goes
+  up, and the dashboard says to press it there. "기억 서버를 다시 만드는 동안 팀원
+  열람이 멈춥니다." is added only when a running server's pins or container files differ
+  from main's, the same three things `doctor`'s `server-version` compares. A plugin
+  installed from another marketplace cannot reach main's version, and its row fails.
+- **Pressing 업데이트** (`POST /api/update/start` with what the bell showed) reads main
+  again. When the version or the warning changed since the bell, it refuses with
+  `changed` and the new status, and the bell shows that first. It also refuses while
+  past conversations are stored or the memory is re-derived (a stopped re-derivation
+  too, until 서버 → 기억 서버 picks it up), while 고치기 runs, and on a page another
+  computer shows (HERE_ONLY), since the way to that page breaks while the app or the
+  gate starts again.
+- **The order.** The plugin goes up first, in a detached `update run`
+  (`claude plugin marketplace update`, `claude plugin update`). Then `update continue`
+  from the new plugin folder runs the same doctor and `fix.mjs` as `doctor --fix`, row
+  by row: 대화 모으기 (`setup apply`), 기억 서버 다시 만들기 (`server start --build`; a
+  server that was off is only prepared, stays off, and the end lists 서버 켜기), 앱 다시
+  켜기, and the Codex plugin last, because Codex keeps only its newest folder and the
+  app may be serving from the old one. With Codex alone the order is Codex plugin, app,
+  collector, server. The app and its login item run in the app home, so no plugin
+  folder is held open.
+- **Rows that outlive the app.** Each row goes into `<app home>/update/update.json`
+  (0600; versions, rows, reasons and to-dos, no pid, folder or host). The page that
+  pressed 업데이트 reads it every few seconds, waits while the app starts again, and
+  loads itself again when the app answers at another version; a page opened later
+  reopens the window while it runs, or until this browser has seen its end. A row whose
+  process died shows "중간에 멈췄습니다.", and 다시 시도 (`update retry`) goes on from the
+  row that stopped. A subscription login that ended puts 구독 계정 로그인 before the
+  server row, and logging in there retries by itself.
+- **Failures** keep the command's last line as the reason (`Honcho /health: …` for a
+  health check) and up to 20 lines before it under 오류 내용, addresses masked. A
+  compose step that fails, as on 10-17, shows as it failed.
+- **The end** is first setup's 점검 with the to-dos left: open Claude Code and Codex
+  sessions anew, 서버 켜기 for a server left off, and on the computer that made the team
+  팀 주소 다시 올리기 when the hub's code changed (each deploy records a sha256 of the
+  hub's modules; `team redeploy` uses the saved Cloudflare token only). 업데이트 never
+  redeploys the hub, since every teammate's login stops while it does.
+- **Behind with no new version.** When `doctor` finds something fixable and main is no
+  higher (after a server step failed, say), the bell offers the same 업데이트 for
+  `doctor --fix` (`/api/doctor/fix`), whose rows go to `fix.json` in the same shape.
+  That is why a fixable check's `fix` reads "팀 메모리 앱 오른쪽 위 종에서 업데이트를
+  누르세요".
+- The bell came in 0.8.14; a computer on an older version goes up once by hand.
+
+To update an installed plugin by hand:
 
 ```sh
 claude plugin marketplace update team-memory
@@ -485,10 +542,12 @@ current server is never restarted:
    rebuilt, and the server comes back with the models it had. `setup apply` alone does
    none of this; the gateway moves only through prepare. A server that was stopped is
    only prepared and stays off.
-3. `app`, the app answering at 4180 from an older copy of the plugin: stopped and
-   started again from the new folder, since it serves its pages from the folder it
-   was started in, and the next login starts that copy. No app is started when none
-   was running.
+3. `app`, the app answering at 4180 from an older copy of the plugin, or one whose
+   pages went with its folder (`pages: false`: `/` answers 404 while
+   `/api/app/context` answers in this app's shape): stopped and started again from
+   the new folder, since it serves its pages from the folder it was started in, and
+   the next login starts that copy. Only a process named node is stopped. No app is
+   started when none was running.
 
 Right after the gateway is installed again its adapters take a moment to list models,
 so prepare asks the gateway again for up to a minute while an account is logged in,
