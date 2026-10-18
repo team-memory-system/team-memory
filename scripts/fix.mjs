@@ -57,6 +57,15 @@ export function fixable(checks) {
 }
 
 /**
+ * `version` with 으로 or 로 as its last digit is read: 0 영, 3 삼 and 6 육 take 으로
+ * (0.8.13으로, 0.8.10으로); the rest 로, 1 일, 7 칠 and 8 팔 too, since a word that
+ * ends in ㄹ takes 로 (0.8.11로, 0.8.12로).
+ */
+export function toVersion(version) {
+  return `${version}${/[036]$/.test(String(version)) ? "으로" : "로"}`;
+}
+
+/**
  * `checks` is doctor's list. `deps`: setupApply, serverStatus, serverStart,
  * serverPrepare and restartApp, the last answering { ok, restarted }, and onStep,
  * told (step, state, info) as each step goes: step runtime, server or app, state
@@ -99,7 +108,7 @@ export async function fixChecks(checks, deps) {
     steps.push({ step: "setup", ok: Boolean(setup?.ok) });
     if (!setup?.ok) return stop("runtime", "대화 모으기를 새 판으로 바꾸지 못했습니다", setup);
     await told("runtime", "ok");
-    done.push(`대화 모으기를 ${VERSION}로 바꿨습니다.`);
+    done.push(`대화 모으기를 ${toVersion(VERSION)} 바꿨습니다.`);
   }
 
   let serverOff = false;

@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { fixable, fixChecks } from "../scripts/fix.mjs";
+import { fixable, fixChecks, toVersion } from "../scripts/fix.mjs";
 import { VERSION } from "../scripts/version.mjs";
 
 const behind = (...names) => [
@@ -49,6 +49,13 @@ test("only the checks marked fix count, and nothing is done when none is behind"
   assert.deepEqual(names(), []);
 });
 
+test("a version takes 으로 or 로 as its last digit is read", () => {
+  // 영, 삼 and 육 end in a consonant; 일, 칠 and 팔 end in ㄹ, which takes 로 as the rest do.
+  assert.deepEqual(["0.8.10", "0.8.13", "0.8.16"].map((version) => toVersion(version)), ["0.8.10으로", "0.8.13으로", "0.8.16으로"]);
+  assert.deepEqual(["0.8.11", "0.8.12", "0.8.14", "0.8.15", "0.8.17", "0.8.18", "0.8.19", "0.9"].map((version) => toVersion(version)),
+    ["0.8.11로", "0.8.12로", "0.8.14로", "0.8.15로", "0.8.17로", "0.8.18로", "0.8.19로", "0.9로"]);
+});
+
 test("after an update everything behind is brought up: setup, the running server, the app", async () => {
   const { deps, calls, names } = bench();
   const answer = await fixChecks(behind("runtime", "server-version", "app"), deps);
@@ -56,7 +63,7 @@ test("after an update everything behind is brought up: setup, the running server
   assert.deepEqual(names(), ["setupApply", "serverStatus", "serverStart", "restartApp"]);
   assert.deepEqual(calls[0][1], {}, "setup keeps the saved settings");
   assert.deepEqual(calls[2][1], { profile: "personal", build: true }, "start prepares again, so the gateway moves too");
-  assert.equal(answer.said, `대화 모으기를 ${VERSION}로 바꿨습니다. 기억 서버와 구독 게이트웨이를 새 판으로 다시 시작했습니다. 팀 메모리 앱을 새 판으로 다시 켰습니다. 열려 있는 Claude Code와 Codex 창은 새로 시작해야 새 판을 씁니다.`);
+  assert.equal(answer.said, `대화 모으기를 ${toVersion(VERSION)} 바꿨습니다. 기억 서버와 구독 게이트웨이를 새 판으로 다시 시작했습니다. 팀 메모리 앱을 새 판으로 다시 켰습니다. 열려 있는 Claude Code와 Codex 창은 새로 시작해야 새 판을 씁니다.`);
 });
 
 test("a server that is current is not restarted when only the collector is behind", async () => {
@@ -88,7 +95,7 @@ test("a gateway whose login ended says where to log in, after what was already d
   const answer = await fixChecks(behind("runtime", "server-version", "app"), deps);
   assert.equal(answer.ok, false);
   assert.deepEqual(names(), ["setupApply", "serverStatus", "serverStart"]);
-  assert.match(answer.said, new RegExp(`^대화 모으기를 ${VERSION.replaceAll(".", "\\.")}로 바꿨습니다\\. 구독 계정의 로그인이 풀려 있습니다\\.`));
+  assert.match(answer.said, new RegExp(`^대화 모으기를 ${toVersion(VERSION).replaceAll(".", "\\.")} 바꿨습니다\\. 구독 계정의 로그인이 풀려 있습니다\\.`));
   // It ends at the login: the chat runs /team-memory doctor again, the app has 다시 시도.
   assert.match(answer.said, /팀 메모리 앱의 서버 → 모델에서 로그인하세요\.$/);
   assert.equal(answer.login, true);
@@ -176,7 +183,7 @@ test("a compose that throws fails the server's step with docker's own last line,
   assert.equal(answer.error, "Error response from daemon: driver failed programming external connectivity");
   assert.equal(answer.detail, "Container honcho-api  Recreate\nContainer honcho-api  Error");
   assert.equal(answer.serverOff, true);
-  assert.equal(answer.said, `대화 모으기를 ${VERSION}로 바꿨습니다. 기억 서버를 새 판으로 다시 시작하지 못했습니다: Error response from daemon: driver failed programming external connectivity`);
+  assert.equal(answer.said, `대화 모으기를 ${toVersion(VERSION)} 바꿨습니다. 기억 서버를 새 판으로 다시 시작하지 못했습니다: Error response from daemon: driver failed programming external connectivity`);
   assert.deepEqual(broken.told.at(-1), ["server", "bad", { error: answer.error, detail: answer.detail }]);
 
   const setup = bench({ setup: () => { throw new Error("Setup failed: EACCES: permission denied; changes were rolled back"); } });

@@ -1078,7 +1078,9 @@ const fixHere = (checks, onStep) => fixChecks(checks, fixSteps(onStep));
  * /team-memory doctor and the app's 고치기: the checks, and what they mark with
  * `fix` repaired at once (scripts/fix.mjs), then the checks again. Its rows go to
  * the app's fix.json as it goes (update.mjs), since the app it restarts is not the
- * one that asked; it waits for an update the app runs. Plain `doctor` only looks.
+ * one that asked; it waits for an update the app runs, and does not make the server
+ * again while past conversations go in or the memory is made again (recordFix): its
+ * `code` and `said` say which. Plain `doctor` only looks.
  */
 async function doctorAndFix() {
   const before = await doctor();
@@ -1907,7 +1909,7 @@ function usage() {
       "team grants",
       "team devices",
       "team redeploy (on the computer that made the team: the hub deployed again with the Cloudflare API token saved then, as 팀 주소 다시 올리기 does)",
-      "doctor [--fix] (--fix: what the checks mark with fix, which a plugin update leaves behind, is repaired: setup apply with the saved settings, then this computer's memory server and subscription gateway restarted at this version, or only prepared when stopped, and an older running app started again from here; its rows go to the app's update/fix.json)",
+      "doctor [--fix] (--fix: what the checks mark with fix, which a plugin update leaves behind, is repaired: setup apply with the saved settings, then this computer's memory server and subscription gateway restarted at this version, or only prepared when stopped, and an older running app started again from here; not the server while past conversations go in or the memory is made again; its rows go to the app's update/fix.json)",
       "update status [--check] | start [--seen-latest <version> [--seen-warning]] | retry (a newer version on GitHub's main, read once a day or now with --check; start reads main again and brings the plugins, the collector, the server and the app up to it in processes of their own, with their rows in the app's update/update.json, and with --seen-latest only when main's version and the warning are still what the screen showed; retry starts again at the row that stopped)",
       "switch [off|on|shared-off|shared-on] [<teammate's team name or email>] (/team-memory: what is on; off|on the memory server; shared-off|shared-on sharing, or what one teammate may read)",
       "teammates list",

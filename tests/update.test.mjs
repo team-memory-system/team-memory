@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test, { after } from "node:test";
 
-import { fixChecks } from "../scripts/fix.mjs";
+import { fixChecks, toVersion } from "../scripts/fix.mjs";
 import { VERSION } from "../scripts/version.mjs";
 import {
   compareVersions,
@@ -481,7 +481,7 @@ test("on a computer with Codex only, the Codex plugin goes first, the app right 
   await drive(failing);
   const failed = await updateProgress(failing.options);
   assert.deepEqual(failing.states(failed.rows), { codex: "ok", app: "ok", runtime: "ok", server: "bad" });
-  assert.equal(failed.said, `팀 메모리 앱을 새 판으로 다시 켰습니다. 대화 모으기를 ${VERSION}로 바꿨습니다. 기억 서버를 새 판으로 다시 시작하지 못했습니다: Docker Desktop is not running`);
+  assert.equal(failed.said, `팀 메모리 앱을 새 판으로 다시 켰습니다. 대화 모으기를 ${toVersion(VERSION)} 바꿨습니다. 기억 서버를 새 판으로 다시 시작하지 못했습니다: Docker Desktop is not running`);
   failing.answers.started = { ok: true, ready: true };
   failing.doctor = ["server-version"];
   failing.calls.length = 0;
@@ -703,6 +703,19 @@ test("the versions said are the ones the plugins went to, when main moved on aft
   assert.equal(done.said, "Claude Code 플러그인을 0.9.2로 올렸습니다. Codex 플러그인을 0.9.2로 올렸습니다.");
 });
 
+test("a version ending in 3 is said with 으로, as 삼 is read", async (t) => {
+  const b = await bench(t, { latest: "0.9.3", claude: "0.9.0", codex: "0.9.0", runtime: "0.9.3", app: "0.9.3", doctor: [] });
+  await updateStart(b.options);
+  await drive(b);
+  assert.equal((await updateProgress(b.options)).said, "Claude Code 플러그인을 0.9.3으로 올렸습니다. Codex 플러그인을 0.9.3으로 올렸습니다.");
+
+  const stale = await bench(t, { latest: "0.9.3" });
+  stale.options.clientRunner = async () => ({ code: 0, stdout: "", stderr: "" });
+  await updateStart(stale.options);
+  await drive(stale);
+  assert.equal((await updateProgress(stale.options)).rows[0].error, "Claude Code 플러그인이 0.9.3으로 바뀌지 않았습니다. 지금 판: 0.9.0");
+});
+
 test("an address in a reason keeps none of its secrets in update.json or fix.json", async (t) => {
   const secret = "https://agent:hunter2@memory.example.com/v3/health?key=abc123";
   const failing = { ok: false, error: `Honcho at ${secret} did not answer`, detail: `GET ${secret}\n502` };
@@ -855,6 +868,86 @@ test("doctor --fix writes its rows to fix.json as it goes, and waits for an upda
   await updateStart(b.options);
   const refused = await recordFix(checks, fix, b.options);
   assert.deepEqual(refused, { refused: { code: "updating", said: "팀 메모리 앱에서 업데이트가 도는 중입니다. 업데이트가 끝나기를 기다리세요." } });
+});
+
+test("doctor --fix leaves the server alone while past conversations go in or the memory is made again, and says why as the update does", async (t) => {
+  const b = await bench(t);
+  const server = [{ name: "runtime", ok: false, fix: "고치기" }, { name: "server-version", ok: false, fix: "고치기" }];
+  const collector = [{ name: "runtime", ok: false, fix: "고치기" }, { name: "app", ok: false, fix: "고치기" }];
+  const ran = [];
+  const fix = async (checks) => {
+    ran.push(checks.filter((check) => !check.ok).map((check) => check.name));
+    return { ok: true, changed: true, steps: [], said: "" };
+  };
+  // The update's words for the same job, with the button pressed here.
+  const asUpdate = async (refused) => {
+    const { blocked } = await updateStatus(b.options);
+    assert.deepEqual(blocked, { code: refused.code, reason: refused.said.replace("고치기를 다시 누르세요.", "업데이트를 누르세요.") });
+  };
+
+  await put(path.join(b.appHome, "data", "past", "status.json"), JSON.stringify({ running: { pid: 4321, startedAt: "2026-10-19T08:00:00Z" } }));
+  b.live.add(4321);
+  const past = await recordFix(server, fix, b.options);
+  assert.deepEqual(past, { refused: { code: "past", said: "지난 대화를 쌓는 중입니다. 다 쌓은 뒤 고치기를 다시 누르세요." } });
+  await asUpdate(past.refused);
+  assert.deepEqual(ran, []);
+  await assert.rejects(fsp.access(path.join(b.appHome, "update", "fix.json")), "a refused fix writes no rows");
+  // The collector and the app are not the server: the job's own process goes on through them.
+  assert.equal((await recordFix(collector, fix, b.options)).fixed.ok, true);
+  assert.deepEqual(ran, [["runtime", "app"]]);
+  b.live.delete(4321);
+
+  const rederive = path.join(b.appHome, "data", "rederive", "status.json");
+  await put(rederive, JSON.stringify({ job: { pid: 4322, kind: "build" } }));
+  b.live.add(4322);
+  const going = await recordFix(server, fix, b.options);
+  assert.deepEqual(going, { refused: { code: "rederive", said: "기억을 다시 정리하는 중입니다. 다 끝난 뒤 고치기를 다시 누르세요." } });
+  await asUpdate(going.refused);
+  // Its process gone, the server's screen carries it on, and it holds the server's fix till then.
+  b.live.delete(4322);
+  const stopped = await recordFix(server, fix, b.options);
+  assert.deepEqual(stopped, { refused: { code: "rederive", said: "기억 다시 정리가 멈춰 있습니다. 서버 → 기억 서버를 열면 이어서 정리합니다. 다 끝난 뒤 고치기를 다시 누르세요." } });
+  await asUpdate(stopped.refused);
+  assert.deepEqual(ran, [["runtime", "app"]]);
+  assert.deepEqual(b.ids((await fixProgress(b.options)).rows), ["runtime", "app"], "the rows are still the last fix's");
+
+  await put(rederive, JSON.stringify({ job: { pid: 4322, kind: "build", error: "Honcho answered 500" } }));
+  assert.equal((await recordFix(server, fix, b.options)).fixed.ok, true, "one that stopped with an error holds nothing up");
+  assert.deepEqual(ran, [["runtime", "app"], ["runtime", "server-version"]]);
+});
+
+test("doctor --fix from the CLI prints the long job's code and why, and fixes nothing", async (t) => {
+  const b = await bench(t, { server: "honcho" });
+  // The server here is behind the checkout's Honcho pin, and its gateway is the one the
+  // checkout pins, so doctor reads files only and runs no git.
+  const pin = await readJson(path.join(ROOT, "server", "gateway-source.json"));
+  await put(path.join(b.appHome, "runtime", "subscription-gateway", ".honcho-agent-bridge-source.json"), JSON.stringify({ ...pin, head: pin.commit }));
+  await put(path.join(b.appHome, "data", "past", "status.json"), JSON.stringify({ running: { pid: process.pid, startedAt: "2026-10-19T08:00:00Z" } }));
+  // Were the long job missed, a 고치기 running here would hold this one too: nothing is ever fixed.
+  const running = { version: 1, kind: "fix", state: "running", pid: process.pid, rows: [] };
+  await put(path.join(b.appHome, "update", "fix.json"), JSON.stringify(running));
+  // No docker, git or claude to find, and no app on the port asked.
+  const bin = path.join(b.root, "bin");
+  await fsp.mkdir(bin);
+  const probe = http.createServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const { port } = probe.address();
+  await new Promise((resolve) => probe.close(resolve));
+  const run = await execFileAsync(process.execPath, [path.join(ROOT, "scripts", "cli.mjs"), "doctor", "--fix"], {
+    env: {
+      ...process.env,
+      PATH: bin,
+      HOME: b.home,
+      USERPROFILE: b.home,
+      HONCHO_AGENT_BRIDGE_HOME: b.appHome,
+      HONCHO_AGENT_BRIDGE_USER_HOME: b.home,
+      HONCHO_AGENT_BRIDGE_UI_PORT: String(port),
+    },
+  }).catch((error) => error);
+  const answer = JSON.parse(run.stdout);
+  assert.deepEqual([answer.ok, answer.code, answer.said], [false, "past", "지난 대화를 쌓는 중입니다. 다 쌓은 뒤 고치기를 다시 누르세요."]);
+  assert.deepEqual(answer.checks.filter((check) => check.fix).map((check) => check.name), ["server-version"]);
+  assert.deepEqual(await readJson(path.join(b.appHome, "update", "fix.json")), running);
 });
 
 test("the app answers the bell from its own folder, and another computer's screen is told to press it there", async (t) => {

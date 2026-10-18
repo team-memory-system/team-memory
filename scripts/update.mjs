@@ -34,7 +34,7 @@ import { fileURLToPath } from "node:url";
 
 import { defaultAppHome, installPaths, loadConfig, readJson, userHome } from "./config.mjs";
 import { acquireFileLock, releaseFileLock } from "./file-lock.mjs";
-import { fixable } from "./fix.mjs";
+import { fixable, toVersion } from "./fix.mjs";
 import { gatewayDirectory, gatewaySourceProbe } from "./gateway.mjs";
 import { DEFAULT_SOURCE, hostCli, PLUGIN_INSTALL_TIMEOUT_MS, PLUGIN_NAME } from "./host-plugins.mjs";
 import { sanitizeUrlsInText } from "./redact.mjs";
@@ -93,13 +93,27 @@ const STALLED = "중간에 멈췄습니다.";
 const SESSIONS = "열린 창은 닫고 새로 여세요.";
 const BLOCKED = Object.freeze({
   fixing: "고치기가 도는 중입니다. 끝난 뒤 업데이트를 누르세요.",
-  past: "지난 대화를 쌓는 중입니다. 다 쌓은 뒤 업데이트를 누르세요.",
-  rederive: "기억을 다시 정리하는 중입니다. 다 끝난 뒤 업데이트를 누르세요.",
   "no-plugin": "Claude Code나 Codex에 팀 메모리 플러그인을 설치한 뒤 업데이트를 누르세요.",
 });
-// A rebuild of the memory whose process stopped (the computer restarted, say) goes on
-// when 서버 → 기억 서버 asks how it goes (rederive status), and holds the update up till then.
-const REDERIVE_STOPPED = "기억 다시 정리가 멈춰 있습니다. 서버 → 기억 서버를 열면 이어서 정리합니다. 다 끝난 뒤 업데이트를 누르세요.";
+// A long job that making the server again would cut (longJob): the update waits for
+// it, and so does a 고치기 that would make the server again (recordFix), whose words
+// name the app's button, as fix.mjs's name its screens. A rebuild of the memory whose
+// process stopped (the computer restarted, say) goes on when 서버 → 기억 서버 asks how
+// it goes (rederive status), and holds both up till then.
+const LONG_JOBS = Object.freeze({
+  past: {
+    update: "지난 대화를 쌓는 중입니다. 다 쌓은 뒤 업데이트를 누르세요.",
+    fix: "지난 대화를 쌓는 중입니다. 다 쌓은 뒤 고치기를 다시 누르세요.",
+  },
+  rederive: {
+    update: "기억을 다시 정리하는 중입니다. 다 끝난 뒤 업데이트를 누르세요.",
+    fix: "기억을 다시 정리하는 중입니다. 다 끝난 뒤 고치기를 다시 누르세요.",
+  },
+  stopped: {
+    update: "기억 다시 정리가 멈춰 있습니다. 서버 → 기억 서버를 열면 이어서 정리합니다. 다 끝난 뒤 업데이트를 누르세요.",
+    fix: "기억 다시 정리가 멈춰 있습니다. 서버 → 기억 서버를 열면 이어서 정리합니다. 다 끝난 뒤 고치기를 다시 누르세요.",
+  },
+});
 const UPDATING = "팀 메모리 앱에서 업데이트가 도는 중입니다. 업데이트가 끝나기를 기다리세요.";
 const FIXING = "고치기가 이미 도는 중입니다. 끝나기를 기다리세요.";
 const STARTING = "업데이트나 고치기를 시작하는 중입니다. 끝나기를 기다리세요.";
@@ -414,16 +428,16 @@ function summaryOf(rows) {
 
 /**
  * 지난 대화 쌓기 or 기억 다시 정리 going now, from their status files only (as
- * rederive.mjs reads them): { code, reason }, or null. A rebuild of the memory is going
- * until it ends or stops with an error, whether or not its process runs: the app
- * carries one on whose process stopped, and the reason says where.
+ * rederive.mjs reads them): { code, update, fix }, its words (LONG_JOBS), or null. A
+ * rebuild of the memory is going until it ends or stops with an error, whether or not
+ * its process runs: the app carries one on whose process stopped, and the words say where.
  */
 async function longJob(ctx, config) {
   const paths = rederivePaths(config);
   const [past, rederive] = await Promise.all([readJson(paths.pastStatus, null), readJson(paths.status, null)]);
-  if (past?.running && ctx.alive(Number(past.running.pid))) return { code: "past", reason: BLOCKED.past };
+  if (past?.running && ctx.alive(Number(past.running.pid))) return { code: "past", ...LONG_JOBS.past };
   if (rederive?.job && !rederive.job.error) {
-    return { code: "rederive", reason: ctx.alive(Number(rederive.job.pid)) ? BLOCKED.rederive : REDERIVE_STOPPED };
+    return { code: "rederive", ...(ctx.alive(Number(rederive.job.pid)) ? LONG_JOBS.rederive : LONG_JOBS.stopped) };
   }
   return null;
 }
@@ -435,7 +449,7 @@ async function blockedNow(ctx, config, here = null) {
   const reason = (code) => ({ code, reason: BLOCKED[code] });
   if (runningIn(ctx, await readJson(ctx.paths.fix, null))) return reason("fixing");
   const job = await ctx.longJob(ctx, config);
-  if (job) return job;
+  if (job) return { code: job.code, reason: job.update };
   if (here && !here.claude && !here.codex) return reason("no-plugin");
   return null;
 }
@@ -677,7 +691,7 @@ async function updatePlugin(ctx, host, to) {
   }
   const after = await pluginOf(ctx, host);
   if (!after?.folder || !after.version || compareVersions(after.version, to) < 0) {
-    return { ok: false, error: `${name} 플러그인이 ${to}로 바뀌지 않았습니다. 지금 판: ${after?.version || "알 수 없음"}` };
+    return { ok: false, error: `${name} 플러그인이 ${toVersion(to)} 바뀌지 않았습니다. 지금 판: ${after?.version || "알 수 없음"}` };
   }
   return { ok: true, record: after };
 }
@@ -866,7 +880,7 @@ async function continueHere(ctx, progress, save) {
     await save.step("codex", "ok");
   }
   const plugins = progress.rows.filter((item) => item.id === "claude" || item.id === "codex")
-    .map((item) => `${CLIENT_NAMES[item.id]} 플러그인을 ${item.version || progress.to}로 올렸습니다.`);
+    .map((item) => `${CLIENT_NAMES[item.id]} 플러그인을 ${toVersion(item.version || progress.to)} 올렸습니다.`);
   progress.said = clean([...plugins, ...said].join(" "));
   progress.todo = await todoOf(ctx, progress);
   progress.state = "done";
@@ -919,7 +933,9 @@ export async function updateRetry(options = {}) {
 
 /**
  * doctor --fix with its rows in fix.json as it goes, for the app's 고치기, whose app
- * it may restart: { fixed } or, while an update or another fix runs, { refused }.
+ * it may restart: { fixed } or, while an update or another fix runs, { refused }. One
+ * that would make the server again is refused too while a long job runs, by that
+ * job's code (past, rederive) and why, as the update is: the restart would cut it.
  * `fix(checks, onStep)` is fix.mjs with this copy's steps.
  */
 export async function recordFix(checks, fix, options = {}) {
@@ -940,6 +956,11 @@ export async function recordFix(checks, fix, options = {}) {
   const lock = await acquireFileLock(ctx.paths.lock, LOCK);
   if (!lock) return { refused: { code: "busy", said: STARTING } };
   try {
+    // A long job's hours first, before another update's or fix's minutes.
+    if (fixable(checks).has("server-version")) {
+      const job = await ctx.longJob(ctx, await ctx.config());
+      if (job) return { refused: { code: job.code, said: job.fix } };
+    }
     if (runningIn(ctx, await readJson(ctx.paths.update, null))) return { refused: { code: "updating", said: UPDATING } };
     if (runningIn(ctx, await readJson(ctx.paths.fix, null))) return { refused: { code: "fixing", said: FIXING } };
     await writeJson(ctx.paths.fix, progress);
