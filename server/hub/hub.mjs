@@ -105,7 +105,10 @@ const GUARD_WINDOW_MS = 60_000;
 const GUARD_TEXT_LENGTH = 16_000;
 const GUARD_FIELD_LENGTH = 320;
 const JEV_API_BASE = "https://api.typesafe.ai";
-const JEV_MODEL = "jev-latest";
+// A version, not the jev-latest alias: the alias moves when TypeSafe ships a new Jev,
+// and the threshold and questions below were measured on this one. On jev-1.14.0 the
+// same questions refuse far more work (2026-10-19), so move it after measuring anew.
+const JEV_MODEL = "jev-1.13.0";
 const JEV_TIMEOUT_MS = 10_000;
 // A 5xx or a dropped connection is asked once more, this long after.
 const JEV_RETRY_MS = 300;
@@ -573,7 +576,8 @@ function retryAfterMs(header) {
 
 /**
  * Jev's score for one question or answer (`checked`): how surely it reaches for, or
- * gives away, the owner's private life, from 0 to 1. A 5xx or a dropped connection
+ * gives away, the owner's private life, from 0 to 1, with the version that answered
+ * (`model`, as Jev names it, or null without one). A 5xx or a dropped connection
  * is often Jev's moment rather than the text's, so it is asked once more; a slow
  * answer is not, since a second wait would double the teammate's. A 429 means the
  * team's key is over its calls, from this hub or elsewhere: `busy` hears for how
@@ -632,7 +636,8 @@ async function jevScore(env, key, state, checked, { busy = () => {} } = {}) {
   }
   const score = answer?.answers?.[name]?.noul;
   if (typeof score !== "number" || !Number.isFinite(score)) throw failed(`Jev's answer held no score for the ${checked}`);
-  return score;
+  const model = typeof answer.model === "string" && answer.model ? answer.model.slice(0, 64) : null;
+  return { score, model };
 }
 
 // -------------------------------------------------------------- the team's state
@@ -1358,8 +1363,8 @@ export class TeamHub {
   /**
    * POST /guard, from a member's server with its guard token: whether a teammate's
    * question may go on, or, with an answer in the body, whether that answer may go
-   * back to them. `checked` says which was judged. Without a key the hub does not
-   * judge and lets either go on.
+   * back to them. `checked` says which was judged, and `model` which Jev version
+   * judged it. Without a key the hub does not judge and lets either go on.
    */
   async guard(request) {
     if (request.method !== "POST") throw new HubError(405, "method_not_allowed", "/guard takes POST");
@@ -1372,8 +1377,8 @@ export class TeamHub {
     const record = await this.storage.get("jev");
     if (!record?.key) return json(200, { judged: false, checked, allowed: true, score: null, reason: "no_key" });
     await this.jevTurn();
-    const score = await jevScore(this.env, record.key, state, checked, { busy: (ms) => this.jevBusy(ms) });
-    return json(200, { judged: true, checked, allowed: score < JEV_THRESHOLD, score, threshold: JEV_THRESHOLD });
+    const { score, model } = await jevScore(this.env, record.key, state, checked, { busy: (ms) => this.jevBusy(ms) });
+    return json(200, { judged: true, checked, allowed: score < JEV_THRESHOLD, score, threshold: JEV_THRESHOLD, model });
   }
 
   /** The server whose current guard token the Authorization header carries; else 401. */

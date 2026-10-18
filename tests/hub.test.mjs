@@ -1337,7 +1337,7 @@ test("POST /guard, with no Access login, asks Jev with the team's key and says w
 
   const allowed = await f.ask(question);
   assert.equal(allowed.status, 200);
-  assert.deepEqual(allowed.json, { judged: true, checked: "query", allowed: true, score: 0.02, threshold: 0.7 });
+  assert.deepEqual(allowed.json, { judged: true, checked: "query", allowed: true, score: 0.02, threshold: 0.7, model: "jev-1.13.0" });
   assert.equal(allowed.headers.get("cache-control"), "no-store");
   assert.ok(f.names.length > names, "it reached the Durable Object without any assertion");
 
@@ -1351,7 +1351,7 @@ test("POST /guard, with no Access login, asks Jev with the team's key and says w
   assert.equal(call.headers.accept, "application/json");
   assert.equal(call.body, JSON.stringify({
     state: { tool: "chat", caller: "carol@example.com", workspace: WORKSPACE, query: "밥의 다음 주 배포 일정은?" },
-    model: "jev-latest",
+    model: "jev-1.13.0",
     questions: { out_of_scope: { type: "noul", instructions: GUARD_QUESTION, criteria: { true: GUARD_TRUE, false: GUARD_FALSE } } },
   }));
 
@@ -1366,8 +1366,14 @@ test("POST /guard, with no Access login, asks Jev with the team's key and says w
   for (const [noul, verdict] of [[0.93, false], [0.7, false], [0.6999, true], [0, true]]) {
     f.jev.body = jevAnswer(noul);
     const judged = await f.ask(question);
-    assert.deepEqual([judged.status, judged.json], [200, { judged: true, checked: "query", allowed: verdict, score: noul, threshold: 0.7 }], String(noul));
+    assert.deepEqual([judged.status, judged.json], [200, { judged: true, checked: "query", allowed: verdict, score: noul, threshold: 0.7, model: "jev-1.13.0" }], String(noul));
   }
+
+  // The version that answered goes back as Jev names it, null when it names none.
+  f.jev.body = { ...jevAnswer(0.1), model: "jev-1.14.0" };
+  assert.equal((await f.ask(question)).json.model, "jev-1.14.0");
+  f.jev.body = { answers: jevAnswer(0.1).answers };
+  assert.deepEqual((await f.ask(question)).json, { judged: true, checked: "query", allowed: true, score: 0.1, threshold: 0.7, model: null });
 
   // Only the query is needed; what is left out is left out of Jev's state too.
   f.jev.body = jevAnswer(0.1);
@@ -1392,12 +1398,12 @@ test("with an answer in the body, /guard asks Jev about the answer and says whet
 
   f.jev.body = jevAnswer(0.03, "sensitive_answer");
   const passed = await f.ask(question);
-  assert.deepEqual([passed.status, passed.json], [200, { judged: true, checked: "answer", allowed: true, score: 0.03, threshold: 0.7 }]);
+  assert.deepEqual([passed.status, passed.json], [200, { judged: true, checked: "answer", allowed: true, score: 0.03, threshold: 0.7, model: "jev-1.13.0" }]);
   // Jev got the answer's own question, with the query beside the answer as context.
   assert.equal(f.jev.seen.length, 1);
   assert.equal(f.jev.seen[0].body, JSON.stringify({
     state: { tool: "chat", caller: "carol@example.com", workspace: WORKSPACE, query: "밥은 요즘 뭐 해?", answer: "밥은 이번 주 결제 모듈 배포를 맡고 있습니다." },
-    model: "jev-latest",
+    model: "jev-1.13.0",
     questions: { sensitive_answer: { type: "noul", instructions: ANSWER_QUESTION, criteria: { true: ANSWER_TRUE, false: ANSWER_FALSE } } },
   }));
 
@@ -1405,7 +1411,7 @@ test("with an answer in the body, /guard asks Jev about the answer and says whet
   for (const [noul, verdict] of [[0.97, false], [0.7, false], [0.6999, true]]) {
     f.jev.body = jevAnswer(noul, "sensitive_answer");
     const judged = await f.ask(question);
-    assert.deepEqual([judged.status, judged.json], [200, { judged: true, checked: "answer", allowed: verdict, score: noul, threshold: 0.7 }], String(noul));
+    assert.deepEqual([judged.status, judged.json], [200, { judged: true, checked: "answer", allowed: verdict, score: noul, threshold: 0.7, model: "jev-1.13.0" }], String(noul));
   }
 
   // Beside an answer the query may be left out, and an answer may be as long as a query.
