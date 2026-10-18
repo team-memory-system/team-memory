@@ -22,7 +22,8 @@ function reasonOf(result) {
   return String(result?.error || result?.issues?.[0] || result?.next || "").trim().split(/\r?\n/)[0];
 }
 
-const LOGIN_NEEDED = "구독 계정의 로그인이 풀려 있습니다. 팀 메모리 앱의 게이트웨이 화면에서 로그인한 뒤 /team-memory doctor 를 다시 입력하세요.";
+// What is said names the app's screens rather than a command: Codex has no /team-memory.
+const LOGIN_NEEDED = "구독 계정의 로그인이 풀려 있습니다. 팀 메모리 앱의 서버 → 모델에서 로그인한 뒤 다시 하세요.";
 
 /** The names of the checks doctor marked as repaired here. */
 export function fixable(checks) {
@@ -63,7 +64,7 @@ export async function fixChecks(checks, deps) {
     }
     done.push(running
       ? "기억 서버와 구독 게이트웨이를 새 판으로 다시 시작했습니다."
-      : "꺼 둔 기억 서버는 새 판으로 준비만 했습니다. 켜려면 /team-memory on");
+      : "꺼 둔 기억 서버는 새 판으로 준비만 했습니다. 켜려면 팀 메모리 앱의 서버 → 기억 서버에서 시작을 누르세요.");
   }
 
   if (behind.has("app")) {

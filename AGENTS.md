@@ -78,7 +78,7 @@ answer.
    audit log are relayed to those programs' own APIs by `scripts/app-api.mjs`,
    which adds the Honcho token so the page never holds it.
    `cli.mjs ui open` starts it detached (default `http://127.0.0.1:4180`) and opens
-   the browser, which is how `/team-memory setup` shows it. Each start also writes
+   the browser, which is how an agent shows it (see [Setup](#setup)). Each start also writes
    the app's login autostart with the copy it started (`scripts/app-autostart.mjs`:
    launchd `team-memory-system.app`, the Windows Run value `TeamMemoryApp`, systemd
    `team-memory-app.service`), so the app is back after a reboot, for another
@@ -419,7 +419,7 @@ With `--profile personal` on macOS (Apple Silicon or Intel) or Windows 11, a mis
 - Docker publishes no checksum for these unversioned downloads, which is why the signature is what is checked.
 - Docker Desktop is free for personal use, education, non-commercial open source projects and small businesses (fewer than 250 employees and less than $10 million in annual revenue); larger companies and government entities need a paid Docker subscription. The plan repeats this as a warning.
 
-Git is still a prerequisite. When git is absent, the setup skill offers an explicitly confirmed installation through the detected platform's official package manager or vendor installer, then reruns the prerequisite checks. System software installation is never hidden inside the release archive.
+Node.js and git come before the plugin: its marketplace add clones with git, and everything it runs is Node. The agent asked to install (README's 에이전트에게) checks both, asks once, and installs what is missing the official way, the one `prereqs` reports under `install` (winget on Windows; Homebrew, the nodejs.org installer and `xcode-select --install` on macOS). A winget install is not on the open session's `PATH`, so that session goes on with the program's full path (`C:\Program Files\nodejs\node.exe`) and puts `C:\Program Files\Git\cmd` in front of `PATH` for the marketplace add. An install a person has to finish (the Command Line Tools window, the nodejs.org installer) ends the agent's turn with one line asking them to say the same words again once it is done. System software installation is never hidden inside the release archive.
 
 One setup run can enable conversation collection for every detected agent, and it puts the plugin into each of those hosts that does not have it yet (see [Plugin installation](#plugin-installation)).
 
@@ -432,8 +432,11 @@ codex plugin marketplace add team-memory-system/team-memory
 codex plugin add team-memory@team-memory
 
 claude plugin marketplace add team-memory-system/team-memory
-claude plugin install team-memory@team-memory
+claude plugin install team-memory@team-memory --scope user
 ```
+
+An agent asked to install runs its pair, then opens the app from the plugin folder
+(README's 에이전트에게; see [Setup](#setup)).
 
 `setup apply` puts the plugin into the other host for you. For every agent it turns collection on for, it looks at that host's plugin. A host where the plugin is missing gets the plugin installed with its own CLI, as an `install-plugin` operation in the plan. Claude Code's Stop hook ships only inside the plugin, and Codex gets its skills and recall MCP server from it.
 
@@ -466,11 +469,13 @@ codex plugin add team-memory@team-memory
 ```
 
 Then, in a new Claude Code session, `/team-memory doctor` (in a terminal, `doctor
---fix` from the new plugin folder's `scripts/cli.mjs`) brings what the plugin installed
-up to it, with the saved settings and without asking (scripts/fix.mjs). The same holds
-after Claude Code updated the plugin on its own: the plugin files change, nothing else
-does. Plain `doctor` only looks; it marks each check `--fix` repairs with `fix`, and
-only those checks are repaired, so a current server is never restarted:
+--fix` from the new plugin folder's `scripts/cli.mjs`, the way on a computer with Codex
+alone, which has no `/team-memory`) brings what the plugin installed up to it, with
+the saved settings and without asking (scripts/fix.mjs). What it says names the app's
+screens, never a command. The same holds after Claude Code updated the plugin on its
+own: the plugin files change, nothing else does. Plain `doctor` only looks; it marks
+each check `--fix` repairs with `fix`, and only those checks are repaired, so a
+current server is never restarted:
 
 1. `runtime`: `setup apply`, the collector and the hooks of this version.
 2. `server-version`, the Honcho source or the gateway behind this version's pins, or
@@ -507,21 +512,57 @@ Then `setup apply` from the new plugin folder puts `team-memory` into Codex. The
 app serves its pages from the plugin folder it was started from, so stop the one
 answering at 4180 and start it again with `ui open` from the new folder.
 
-For a local checkout, pass its absolute directory instead of the repository name. Start a new Codex session or reload Claude plugins after installation. Then invoke `$setup-memory` in Codex or `/team-memory setup` in Claude Code.
+For a local checkout, pass its absolute directory instead of the repository name. Start a new Codex session or reload Claude plugins after installation. Then open the app: `/team-memory setup` in Claude Code, `$setup-memory` in Codex, or `ui open` from the plugin folder's `scripts/cli.mjs`.
 
 ## Setup
 
-Use the bundled `setup-memory` skill. It follows this sequence:
+Setup is done in the app. An agent puts the plugin in and opens the app at a screen,
+and the app asks the rest and does it.
+
+- **Installing.** An agent asked to install with this repository's address has no
+  skill yet, so it follows README's 에이전트에게: Node.js 18 or newer and git (see
+  [Prerequisites](#prerequisites)), the plugin into itself unless it is there already,
+  `ui open --screen dashboard` from the plugin folder, and one fixed line with the app's
+  address. Words that carry a team address (the invite line an admin copies does) open
+  `start?team=<team address>` instead. A computer not set up yet shows the first setup
+  window over every screen; one that is set up shows its dashboard.
+- **The setup skill** (`skills/setup-memory`) does the same once the plugin is in: it
+  finds what the user asked in its table, runs `ui open --screen <screen>` and says
+  that request's line, the app's address in it. `/team-memory setup` in Claude Code and
+  `$setup-memory` in Codex open `computer/collect`, which is the first setup window on a
+  computer not set up yet and its 수정 on one that is. The agent also reaches for the
+  skill unasked: its `SKILL.md` has no `disable-model-invocation` and its
+  `agents/openai.yaml` allows implicit invocation, so "민준 기억 열람 요청해 줘" in any
+  session opens 팀. It only opens screens, which is why being reached for unasked is
+  safe. `tests/setup-skill.test.mjs` keeps it reachable and checks that every screen it
+  names is one the app serves.
+- **One line and errors, nothing else.** The first setup window asks where the server
+  goes, the subscription and models, the agents, past conversations and project
+  folders, and its 적용 installs Docker Desktop, Ollama and the subscription gateway,
+  logs in, starts the server and puts the plugin into the other agents. When the chat
+  asked and installed as well, the user answered the same questions twice and finished
+  the app only to type "했어" in chat, so the agent says nothing between opening the app
+  and its line, and waits for nothing. A server token or a Cloudflare API token goes
+  from the person into the app, never through chat.
+- **Over SSH** (`SSH_CONNECTION` set), the browser window `ui open` asks for opens on
+  that computer's own screen and the app answers only on its 127.0.0.1, so the line
+  adds `ssh -L 4180:127.0.0.1:4180 <user>@<host>` for the computer in front of the
+  person, whose browser then opens the same address.
+
+The app's windows run the same CLI a terminal would:
 
 1. Detect Codex, Claude Code, the current configuration, Honcho health, and the local Docker/host-model prerequisites for the selected profile.
 2. Ask which detected agents should collect conversations.
-3. Offer the OS-default storage location or a custom path.
-4. Show the exact installation plan without changing files.
-5. Apply only after confirmation. Apply also installs the plugin into any chosen host that lacks it.
-6. Run the diagnostic checks and pass on `nextSteps` from `setup apply`:
+3. Use the OS application-data location (`--data-dir` in a terminal for another).
+4. Plan without changing files (`setup plan`).
+5. Apply (`setup apply`). Apply also installs the plugin into any chosen host that lacks it.
+6. Pass on `nextSteps` from `setup apply` on the window's last screen (할 일):
    - Codex asks the user to approve the new Stop hook in a new session (or `/hooks`).
    - Claude Code sessions opened before setup need `/reload-plugins`.
    - An `install-plugin` step lists the commands to run when setup could not install the plugin itself.
+
+In a terminal the same steps are `detect`, `server plan|prepare|start` (see [Server
+profiles](#server-profiles)), `setup plan|apply` and `doctor`.
 
 ### Which folders, and past conversations / 프로젝트 폴더와 지난 대화
 
@@ -726,10 +767,12 @@ node scripts/cli.mjs setup plan --honcho-url https://memory.example.com --agents
 node scripts/cli.mjs setup apply --honcho-url https://memory.example.com --agents codex,claude --user-peer <id>
 ```
 
-Setup refuses any of these secrets as command-line options, prints them only as
-`"[redacted]"`, and saves them in the private `config.json` (`honcho.apiToken`,
-`honcho.access`). A later setup without them keeps them while the address stays on
-the same server, and drops them with a warning when it moves to another one. The
+The person sets these in their own terminal: an agent never asks for them in chat or
+puts them on a command line it runs. Setup refuses any of these secrets as
+command-line options, prints them only as `"[redacted]"`, and saves them in the
+private `config.json` (`honcho.apiToken`, `honcho.access`). A later setup without
+them keeps them while the address stays on the same server, and drops them with a
+warning when it moves to another one. The
 Team Memory app's 서버 step (다른 컴퓨터의 내 서버) takes the same values and hands
 them to the CLI through its environment.
 
@@ -1036,8 +1079,13 @@ The plugin's one command (`commands/team-memory.md`; Claude Code lists it as
 `cli.mjs switch` (`scripts/switch.mjs`), whose every answer is one line of what it
 did and how to undo it. Typing the option is the confirmation. It is the only entry
 the plugin puts in Claude Code's `/` menu: both skills say `user-invocable: false`,
-`honcho-memory` because the agent reaches for it on its own and `setup-memory`
-because `/team-memory setup` opens it (Codex still lists `$setup-memory`).
+since the agent reaches for each on its own, and `/team-memory setup` opens
+`setup-memory` too.
+
+Only Claude Code has `/team-memory`: `.codex-plugin/plugin.json` carries no
+commands. A Codex user presses the same buttons in the app and opens the setup window
+with `$setup-memory` (Codex lists both skills), so docs, screens and what a command
+says name `/team-memory` only for Claude Code.
 
 | Typed | Does what the app's button does |
 | --- | --- |
@@ -1045,7 +1093,7 @@ because `/team-memory setup` opens it (Codex still lists `$setup-memory`).
 | `/team-memory off`, `on` | 서버 → 기억 서버 → 멈추기, 시작: the whole memory server, so this computer's own search and collecting stop too; on keeps the models it was set up with |
 | `/team-memory shared-off`, `shared-on` | 서버 → 공유 → 공유 끄기, 다시 켜기 (the team's address again); a server never opened through the team is turned on in the app |
 | `/team-memory shared-off <teammate>`, `shared-on <teammate>` | The teammate's switch in 내 기억을 여는 팀원, named by team name or email (by email when a name fits two); the memory opens to them the first time only by approving their request |
-| `/team-memory setup`, `doctor` | The setup skill, and `cli.mjs doctor` explained (they were `/memory-setup` and `/memory-doctor`) |
+| `/team-memory setup`, `doctor` | `setup` opens the app's setup window (`computer/collect`) through the setup skill; `doctor` runs `cli.mjs doctor --fix` and says its `said` and the checks still failing (they were `/memory-setup` and `/memory-doctor`) |
 
 ### The admin / 관리자
 
@@ -1118,6 +1166,9 @@ CLOUDFLARE_API_TOKEN='<api token>' node scripts/cli.mjs server share enable --cl
 node scripts/cli.mjs server share status --check
 node scripts/cli.mjs server share token     # the gate token, to copy to the other computers
 ```
+
+`server share token` prints the secret itself, so the person runs it in their own
+terminal, or presses "서버 token 복사" on 서버 → 공유; an agent does not run it.
 
 `enable --cloudflare` needs an installed personal server and a user peer (`setup apply --user-peer <id>` first: teammates' questions run as that peer). `--email` is needed the first time, `--zone` only when the token sees more than one zone, and `--idp` only when Zero Trust has more than one Google login. Through the API it makes the following, or keeps each one that is already right:
 
@@ -1196,7 +1247,7 @@ Install the plugin, then run setup against the public address with the gate toke
 HONCHO_API_TOKEN='<gate token>' node scripts/cli.mjs setup apply --agents codex,claude --user-peer <id> --honcho-url https://<name>.<your domain>
 ```
 
-In the app on that computer, 기억 설정 → 대화 수집 → 수정 does the same: the address and the gate token go into its 서버 step under 다른 컴퓨터의 내 서버. `/team-memory setup` opens that window for a server on another computer.
+In the app on that computer, 기억 설정 → 대화 수집 → 수정 does the same: the address and the gate token go into its 서버 step under 다른 컴퓨터의 내 서버. `/team-memory setup` in Claude Code and `$setup-memory` in Codex open that window.
 
 The Team Memory app offers all of this on 서버 → 공유: "팀 만들기" (the API token, the owner's email, and the zone and name under "token 권한과 주소"), "초대 코드로 열기", the folded "직접 만든 Tunnel로 켜기", and with sharing on one 공유 block: the address, the gate token ("복사", "바꾸기"), the 팀원 MCP address, "밖에서 확인" and "공유 끄기". First setup's 새 팀 만들기 runs the same `server share enable --cloudflare` once its server is up. 관리자, on the owner's computer only, has the 팀 주소 with "복사", the 팀원 list with "팀원 더하기", "공유 빼기" and "팀에서 빼기", and the Cloudflare block with "token 바꾸기". A teammate who came in with an invite sees the public address, the gate and the 팀원 MCP address, and no Cloudflare: that word belongs to the owner's 팀 만들기 and 관리자. A token typed there goes to the app's own server only, and no token or invite is logged.
 
@@ -1457,9 +1508,9 @@ The `team-memory` server's five tools are not among these, and `mcp-tools.json` 
 Installation rollback and memory backup are different:
 
 - Setup automatically rolls back the managed runtime, private configuration, and edited host hook files when an apply step fails. Updates retain `runtime/collector.previous` and `server.previous`; unrelated host settings and the running host supervisor are preserved.
-- Durable memory lives primarily in the Docker PostgreSQL `pgdata` volume. A machine-migration or disaster backup must contain a consistent PostgreSQL dump (or an offline copy of that volume) plus the Team Memory application-data directory containing `config.json`, the private server `.env`, MCP tool settings, and any pending collector spool/state. Include the Redis volume only when preserving in-flight Deriver jobs is important; Redis is not the authoritative long-term memory store.
-- The gateway (its source and its logins), Ollama model blobs, plugin caches, and hooks are deliberately outside the portable backup set. On a restored computer, install the prerequisites, restore the database and private Team Memory files, then rerun `server prepare --profile personal` (log in at the gateway screen when it asks; the restored router key is replaced with the new gateway's), `server start --profile personal`, and `setup apply`. Qwen models are recreated when absent.
-- Keep backups encrypted because the private `.env` and Team Memory configuration can contain database passwords, the gateway's router key, or API bearer tokens. The release builder never includes them.
+- Durable memory lives primarily in the Docker PostgreSQL `pgdata` volume. A machine-migration or disaster backup must contain a consistent PostgreSQL dump (or an offline copy of that volume) plus the Team Memory application-data directory containing `config.json`, the private server `.env`, MCP tool settings, and any pending collector spool/state. Have one before moving to another computer or a destructive repair. Include the Redis volume only when preserving in-flight Deriver jobs is important; Redis is not the authoritative long-term memory store.
+- The gateway (its source and its logins), Ollama model blobs, plugin caches, and hooks are deliberately outside the portable backup set. On a restored computer, install the prerequisites, restore the database and private Team Memory files, then rerun `server prepare --profile personal` (when it stops for `gateway-login`, log in on the app's 서버 → 모델; the restored router key is replaced with the new gateway's), `server start --profile personal`, and `setup apply`. Qwen models are recreated when absent. These steps have no screen in the app; an agent runs them only when the person asks to move or restore.
+- Keep backups encrypted because the private `.env` and Team Memory configuration can contain database passwords, the gateway's router key, or API bearer tokens. The release builder never includes them. Do not state that a backup exists unless its database and application-data contents were actually verified.
 - `server stop --profile personal` preserves Docker volumes. Never use `docker compose down -v` unless permanently deleting the memory database is the explicit goal.
 
 ## Verification

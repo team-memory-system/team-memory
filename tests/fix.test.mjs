@@ -3,7 +3,8 @@
 // touched (a current server is never restarted), that a server behind its pins is
 // brought up to them (setup apply alone left the server and gateway on the old
 // version), that a stopped one stays off, that a lost gateway login says what to do,
-// and that the answer is one line.
+// and that the answer is one line, which names the app's screens and no command Codex
+// lacks.
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -65,7 +66,7 @@ test("a stopped server behind its pins is only prepared and stays off", async ()
   const answer = await fixChecks(behind("server-version"), deps);
   assert.equal(answer.ok, true);
   assert.deepEqual(names(), ["serverStatus", "serverPrepare"]);
-  assert.equal(answer.said, "꺼 둔 기억 서버는 새 판으로 준비만 했습니다. 켜려면 /team-memory on");
+  assert.equal(answer.said, "꺼 둔 기억 서버는 새 판으로 준비만 했습니다. 켜려면 팀 메모리 앱의 서버 → 기억 서버에서 시작을 누르세요.");
 });
 
 test("a setup that fails stops before the server", async () => {
@@ -82,7 +83,17 @@ test("a gateway whose login ended says where to log in, after what was already d
   assert.equal(answer.ok, false);
   assert.deepEqual(names(), ["setupApply", "serverStatus", "serverStart"]);
   assert.match(answer.said, new RegExp(`^대화 모으기를 ${VERSION.replaceAll(".", "\\.")}로 바꿨습니다\\. 구독 계정의 로그인이 풀려 있습니다\\.`));
-  assert.match(answer.said, /게이트웨이 화면에서 로그인한 뒤 \/team-memory doctor 를 다시 입력하세요/);
+  assert.match(answer.said, /팀 메모리 앱의 서버 → 모델에서 로그인한 뒤 다시 하세요\.$/);
+});
+
+test("no answer sends a Codex user to /team-memory, which only Claude Code has", async () => {
+  const answers = [
+    await fixChecks(behind("runtime", "server-version", "app"), bench().deps),
+    await fixChecks(behind("server-version"), bench({ server: { installed: true, running: false } }).deps),
+    await fixChecks(behind("runtime", "server-version"), bench({ started: { ok: true, ready: false, nextAction: { kind: "gateway-login" } } }).deps),
+    await fixChecks(behind("server-version"), bench({ started: { ok: false, issues: ["Docker Desktop is not running"] } }).deps),
+  ];
+  for (const answer of answers) assert.doesNotMatch(answer.said, /\/team-memory/, answer.said);
 });
 
 test("a server that does not come back, or an app that cannot restart, says why", async () => {
