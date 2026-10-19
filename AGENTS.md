@@ -235,9 +235,18 @@ answer.
   `## My request:` (what follows is kept whole), `<user_instructions>`,
   `<user_action>`, `<user_shell_command>`, image markers, and a goal continuation
   except its objective (once per file); Claude rows marked `isMeta`, except a
-  command or typed slash command with arguments and a goal reminder. Turn
-  identities hold no text, so changing a filter never sends a turn again. Messages
-  stored before 2026-10-05 still hold such text.
+  command or typed slash command with arguments and a goal reminder, and the
+  `<system-reminder>` blocks Claude Code puts beside what the person typed (the
+  CLAUDE.md files, the account and git context, commit attribution, a finished
+  task), a goal reminder again excepted. Claude Code 2.1.300 and later writes every
+  message of an API request a second time, reminders included, as an
+  `api-request-blob` row; the parser reads none of those. Turn identities hold no
+  text, so changing a filter never sends a turn again. Messages stored before
+  2026-10-05 still hold such text, and Claude conversations collected from
+  2026-10-15 until 0.8.15 hold the request copies too: what the person typed a
+  second time with the reminders in front, the assistant's replies a second time,
+  compact summaries. A teammate reads none of that text (`inserted.py` in
+  honcho-selfhost's MCP bridge).
 - **The owner's machine is hand-wired, not installed.** Its hooks read
   `~/.config/codex-honcho-sync/.env` and use `CODEX_HONCHO_SYNC_ROOT`. Those names
   are deliberately left at the old spelling: renaming them buys nothing and can

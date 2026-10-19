@@ -5,6 +5,10 @@ const NOISE_TAGS = [
   "local-command-caveat", "command-message", "command-name",
   "local-command-stdout", "local-command-stderr", "bash-input",
   "bash-stdout", "bash-stderr", "task-notification",
+  // What Claude Code adds to a turn: the CLAUDE.md files, the account and git
+  // context, commit attribution, a finished task ("[SYSTEM NOTIFICATION - NOT USER
+  // INPUT]" around a <task-notification>), word that a file was read again.
+  "system-reminder",
 ];
 
 export function normalizeCreatedAt(value) {
@@ -46,6 +50,8 @@ export function isInjectedContextText(text, tags) {
   let rest = text;
   while (rest) {
     if (isInjectedPolicyText(rest)) return true;
+    // A goal reminder holds the person's own /goal.
+    if (isGoalReminder(rest)) return false;
     // Empty slash-command arguments are UI metadata. Nonempty arguments can be
     // the only copy of a user's /goal (or other request), so never discard them.
     const emptyArgs = rest.match(/^<command-args>\s*<\/command-args>\s*/);
@@ -70,7 +76,18 @@ export function isInjectedContextText(text, tags) {
 function metaCarriesPersonText(text) {
   if (/<command-args>\s*\S[\s\S]*?<\/command-args>/.test(text)) return true;
   if (/^\/[^\s/]+\s+\S/.test(text)) return true;
+  return isGoalReminder(text);
+}
+
+function isGoalReminder(text) {
   return /^<system-reminder>\s*Current goal:/.test(text);
+}
+
+// Claude Code puts its reminders in a person's turn as text blocks of their own,
+// beside the blocks the person typed: true for a block of reminders and nothing else.
+export function isReminderText(text) {
+  const normalized = normalizeRawText(text);
+  return Boolean(normalized) && isInjectedContextText(normalized, ["system-reminder"]);
 }
 
 export function normalizeText(text, role = "user", isMeta = false) {

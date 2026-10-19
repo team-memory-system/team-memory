@@ -1,6 +1,6 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { extractTextBlocks, normalizeCreatedAt, normalizeText, sanitizeId } from "./shared.mjs";
+import { extractTextBlocks, isReminderText, normalizeCreatedAt, normalizeText, sanitizeId } from "./shared.mjs";
 
 /**
  * A message the person typed while Claude was still working is written as a queued_command
@@ -50,6 +50,10 @@ export function parseLines(lines, transcriptPath) {
     if (metadata.cwd == null && typeof obj.cwd === "string" && obj.cwd) metadata.cwd = obj.cwd;
     // isCompactSummary rows hold the summary Claude Code writes when it compacts a session.
     if (obj.isSidechain || obj.isCompactSummary) continue;
+    // Claude Code 2.1.300 and later also writes each message of an API request as an
+    // api-request-blob row: what the person typed with the reminders put beside it, a
+    // compact summary, the assistant's replies. Each copies a row of its own.
+    if (obj.type === "api-request-blob") continue;
     const queuedText = queuedHumanPrompt(obj);
     if (queuedText !== null) {
       if (queuedText && !BARE_COMMAND.test(queuedText)) {
@@ -74,7 +78,11 @@ export function parseLines(lines, transcriptPath) {
     } else if (Array.isArray(content)) {
       if (message.role === "user" && content.some((item) => item?.type === "tool_result")) continue;
       if (message.role === "assistant" && !content.some((item) => item?.type === "text")) continue;
-      text = extractTextBlocks(content, (value) => normalizeText(value, message.role, obj.isMeta === true));
+      // Only the blocks the person typed are their words, not the reminders beside them.
+      const blocks = message.role === "user"
+        ? content.filter((item) => !(item?.type === "text" && isReminderText(item.text)))
+        : content;
+      text = extractTextBlocks(blocks, (value) => normalizeText(value, message.role, obj.isMeta === true));
     }
     if (!text) continue;
     if (message.role === "user" && BARE_COMMAND.test(text)) continue;
