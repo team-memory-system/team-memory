@@ -954,7 +954,7 @@ test("personal start prepares under its existing lifecycle lock without reentran
   assert.equal(parseEnv(await fsp.readFile(path.join(destination, ".env"), "utf8")).DERIVER_MODEL_CONFIG__MODEL, "claude-sonnet-5-5");
 });
 
-test("personal start requires a healthy host before Compose and rolls it back on Compose failure", async () => {
+test("personal start requires a healthy host before Compose and rolls it back when compose up fails, not when the build does", async () => {
   const events = [];
   const hostRuntime = {
     start: async ({ skipPrepare }) => { assert.equal(skipPrepare, true); events.push("host-start"); return { ok: true, running: true }; },
@@ -980,11 +980,30 @@ test("personal start requires a healthy host before Compose and rolls it back on
       hostRuntime,
       preparedServer,
       serverDirectory: path.join(os.tmpdir(), "honcho-agent-bridge-start-rollback"),
-      composeRunner: async (_directory, args) => { events.push(`compose ${args[0]}`); throw new Error("compose failed"); },
+      composeRunner: async (_directory, args) => {
+        events.push(`compose ${args[0]}`);
+        if (args[0] === "up") throw new Error("compose failed");
+        return { stdout: "", stderr: "" };
+      },
     }),
     /compose failed/,
   );
-  assert.deepEqual(events, ["host-start", "compose build", "host-stop"]);
+  assert.deepEqual(events, ["host-start", "compose build", "compose up", "host-stop"]);
+
+  // A build that fails has changed no container: a server running from before keeps
+  // its host services, and nothing is started.
+  events.length = 0;
+  await assert.rejects(
+    serverStart({
+      profile: "personal",
+      hostRuntime,
+      preparedServer,
+      serverDirectory: path.join(os.tmpdir(), "honcho-agent-bridge-start-build-failed"),
+      composeRunner: async (_directory, args) => { events.push(`compose ${args[0]}`); throw new Error("failed to solve"); },
+    }),
+    /failed to solve/,
+  );
+  assert.deepEqual(events, ["host-start", "compose build"]);
 });
 
 test("personal start never invokes Compose when the host runtime is unhealthy", async () => {

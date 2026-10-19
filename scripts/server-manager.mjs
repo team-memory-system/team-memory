@@ -1730,14 +1730,14 @@ async function serverStartUnlocked({
   // elsewhere settles it here, so share never comes up half set.
   const share = preparedServer ? await settleShareFor(profile, installed, shareOptions) : prepared.share || null;
   const ports = await installedServerPorts(installed);
-  let jev = null;
-  const outputs = [];
+  // The images before the guard token: a new token ends the one the running mcp
+  // asks the team hub with, and a build of a new version takes minutes, in which
+  // every teammate's answer was refused. A build that fails has changed no
+  // container, so nothing is rolled back: the running server keeps its token and
+  // its host services.
+  const outputs = build ? [await composeRunner(installed, ["build"])] : [];
+  const jev = await syncJevGuardFor(installed, shareOptions);
   try {
-    // The images before the guard token: a new token ends the one the running mcp
-    // asks the team hub with, and a build of a new version takes minutes, in which
-    // every teammate's answer was refused. A build that fails leaves both as they were.
-    if (build) outputs.push(await composeRunner(installed, ["build"]));
-    jev = await syncJevGuardFor(installed, shareOptions);
     outputs.push(await composeRunner(installed, ["up", "-d", "--remove-orphans"]));
   } catch (error) {
     if (host) await hostRuntime.stop({ profile, installedServerDir: installed }).catch(() => {});

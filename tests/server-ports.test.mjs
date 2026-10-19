@@ -148,7 +148,9 @@ test("start reports a taken port as an issue and checks health on the installed 
     profile: "portable",
     preparedServer: { ok: true, ready: true },
     serverDirectory: destination,
-    composeRunner: async () => {
+    // The port is taken when compose up starts the containers, after the build.
+    composeRunner: async (_directory, args) => {
+      if (args[0] === "build") return { stdout: "", stderr: "" };
       const error = new Error("compose failed");
       error.stderr = "Error response from daemon: Ports are not available: listen tcp 127.0.0.1:8007: bind: address already in use";
       throw error;
