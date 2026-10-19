@@ -22,13 +22,13 @@ Claude Code나 Codex에 이렇게 말하세요.
 
 직접 설치하려면 Node.js 18 이상과 git이 있어야 합니다.
 
-**Claude Code**
-```sh
+**Claude Code**: Claude Code 안에서 입력합니다.
+```text
 /plugin marketplace add team-memory-system/team-memory
 /plugin install team-memory@team-memory
 ```
 
-**Codex**
+**Codex**: 터미널에서 실행합니다.
 ```sh
 codex plugin marketplace add team-memory-system/team-memory
 codex plugin add team-memory@team-memory

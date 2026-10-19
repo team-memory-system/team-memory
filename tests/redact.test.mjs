@@ -101,6 +101,17 @@ test("a URL in a printed error ends where the sentence goes on, credentials remo
   );
 });
 
+test("an app address keeps its screen and a team link, and no other fragment", () => {
+  // The url `ui open` prints is the one line the agent says, so on a computer whose
+  // browser does not open by itself (SSH) it is the way to the team's login.
+  const printed = (url) => JSON.parse(formatJson({ url })).url;
+  assert.equal(printed("http://127.0.0.1:4180/#/models"), "http://127.0.0.1:4180/#/models");
+  assert.equal(printed("http://127.0.0.1:4180/#/start?team=team.example.com"), "http://127.0.0.1:4180/#/start?team=team.example.com");
+  for (const hash of ["#/start?token=abc", "#/start?team=team.example.com&token=abc", "#/start?team=a/b", "#access_token=abc"]) {
+    assert.equal(printed(`http://127.0.0.1:4180/${hash}`), "http://127.0.0.1:4180", hash);
+  }
+});
+
 test("the CLI prints every result through that same formatter", async () => {
   const cli = await fsp.readFile(path.join(ROOT, "scripts", "cli.mjs"), "utf8");
   assert.match(cli, /function printJson\(value\) \{\n {2}process\.stdout\.write\(formatJson\(value\)\);\n\}/);

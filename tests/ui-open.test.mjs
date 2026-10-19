@@ -136,6 +136,9 @@ test("ui open starts one detached setup screen and reuses it", async (t) => {
   const onScreen = await cli(["ui", "open", "--screen", "models", "--no-browser"], uiEnv);
   assert.equal(onScreen.body.ok, true);
   assert.match(onScreen.body.url, /#\/models$/, "--screen opens the app on that screen");
+  const link = await cli(["ui", "open", "--screen", "start?team=team.example.com", "--no-browser"], uiEnv);
+  assert.equal(link.body.ok, true);
+  assert.equal(link.body.url, `http://127.0.0.1:${port}/#/start?team=team.example.com`, "the address the agent says is the team's link");
   const bad = await cli(["ui", "open", "--screen", "x?y=1", "--no-browser"], uiEnv);
   assert.equal(bad.body.ok, false);
 });

@@ -24,8 +24,10 @@ export function publicUrl(value) {
     url.username = "";
     url.password = "";
     url.search = "";
-    // An app screen route (#/models) is kept; any other fragment could carry a value.
-    const route = /^#\/[a-z0-9/_-]+$/i.test(url.hash) ? url.hash : "";
+    // An app screen route (#/models) is kept, and a team link (#/start?team=team.example.com),
+    // the address an invite line carries, as `ui open --screen` takes it; any other
+    // fragment could carry a value.
+    const route = /^#\/[a-z0-9/_-]+(?:\?team=[a-z0-9.-]+)?$/i.test(url.hash) ? url.hash : "";
     url.hash = "";
     return `${url.toString().replace(/\/$/, "")}${route ? `/${route}` : ""}`;
   } catch {
