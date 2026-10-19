@@ -19,6 +19,7 @@ import {
   agentsStep,
   applySetup,
   applyTargets,
+  asksPeer,
   changedAgents,
   collectDraft,
   detectAgents,
@@ -94,7 +95,7 @@ function openCollectWindow(onApplied, { at: startAt = 0 } = {}) {
 
   const newServer = () => draft.server === "here" && !context.localServer;
   const build = () => [
-    serverStep(draft, context, { peer: !context.configured || !context.user?.peerId, others: Boolean(context.configured), company }),
+    serverStep(draft, context, { peer: asksPeer(context), others: Boolean(context.configured), company }),
     agentsStep(draft),
     pastStep(draft, context, { edit, newServer: newServer() }),
     projectsStep(draft, context, { edit, server: draftServer(draft, context, { newServer: newServer() }) }),

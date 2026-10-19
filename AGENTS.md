@@ -1070,7 +1070,11 @@ The app's first setup: 팀에 들어가기 takes the 팀 주소 (or a team link,
 logs in with Google. The hub answers who this is: not on the roster (the window says
 which email to send the admin), or a member with a peer name made from the email
 (the one this computer already used is kept), whether they already have a server,
-the company server, and the members who have a server.
+the company server, and the members who have a server. Nobody types the peer name
+in a team, in first setup or in 기억 설정 → 대화 수집 → 수정 (`asksPeer`): a
+computer that chose 쌓지 않기 and turns collecting on later takes the team's name,
+so its conversations do not go in under a second name. Outside a team, a computer
+not collecting yet is asked for one.
 
 다른 계정으로 로그인, on the not-on-the-roster screen, forgets this computer's login
 and, in one tab, signs the browser out of Access on the hub's own domain and then on

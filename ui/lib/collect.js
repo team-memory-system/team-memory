@@ -67,7 +67,9 @@ export function collectDraft(context) {
     apiToken: "",
     accessClientId: "",
     accessClientSecret: "",
-    userPeer: context?.user?.peerId || "",
+    // A computer that collects keeps its name; in a team the hub names each person
+    // after their email, and nobody types it.
+    userPeer: (configured ? context.user?.peerId : context?.team?.peer || context?.user?.peerId) || "",
     workspace: context?.workspace || "memory",
     agents: configured ? new Set(Object.keys(AGENTS).filter((name) => context.agents?.[name])) : null,
     // 지난 대화: the backup store and ChatGPT files chosen, and how far their reading got (lib/past.js).
@@ -126,6 +128,16 @@ export function remoteUrlProblem(value) {
   if (!url || !/^https?:$/.test(url.protocol)) return "다른 컴퓨터 서버의 주소를 http:// 나 https:// 로 시작하게 넣으세요.";
   if (url.username || url.password || url.search || url.hash) return "기억 서버 주소에 아이디·비밀번호·물음표 뒤 값을 넣지 마세요. token은 서버 token 칸에 넣습니다.";
   return null;
+}
+
+/**
+ * Whether 대화 수집 → 수정 asks for the peer name: on a computer that does not collect
+ * yet, outside a team. In a team the hub names each person after their email, so
+ * first setup asks nothing there, and neither does this window (collectDraft takes
+ * the team's name).
+ */
+export function asksPeer(context) {
+  return !context?.team?.peer && !(context?.configured && context?.user?.peerId);
 }
 
 /**

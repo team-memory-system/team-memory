@@ -19,7 +19,7 @@
 // 이어서 하기, also as the app starts on a computer set up since, and going to another
 // team's link as opening it with that link does; 수정's 적용 drops it; and a
 // computer that collects joins a team alone, its peer name made the team's first
-// when its setup has another.
+// when its setup has another; and in a team 수정 asks no peer name either.
 import assert from "node:assert/strict";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_MARKETPLACE, DEFAULT_SOURCE, manualCommands } from "../scripts/host-plugins.mjs";
 import { HERE_ONLY } from "../scripts/viewer.mjs";
 import { checkRows, failures, FIX_HERE_ONLY, fixLines, fixOutcome, INSTALL_COMMANDS, missingPlugins, offers, REBUILD_NOTE, runFix, teamCheckRows } from "../ui/lib/check.js";
-import { agentTodo, changedAgents, collectDraft, dockerSteps, hookWritten, remoteUrlProblem, teamServers, todoAgents } from "../ui/lib/collect.js";
+import { agentTodo, asksPeer, changedAgents, collectDraft, dockerSteps, hookWritten, remoteUrlProblem, teamServers, todoAgents } from "../ui/lib/collect.js";
 import { resumeAtBoot } from "../ui/lib/landing.js";
 import { applyRows, endButton, joinsAlone, linkTurn, peerChange, restoreSetup, resumable, setupSnapshot } from "../ui/views/setup.js";
 
@@ -795,6 +795,28 @@ test("joining alone, the team's peer name goes into this computer's setup first,
   const rename = setupPart(setup, "async function renamePeer(");
   assert.match(rename, /const peer = peerChange\(state, app\.context\);\n\s*if \(!peer\) return;\n\s*const outcome = await applySetup\(\{ userPeer: peer\.to \}\);/);
   assert.match(setup.match(/const RUNS = \{([\s\S]*?)\n {2}\};/)[1], /^\s*peer: renamePeer,$/m);
+});
+
+test("대화 수집's 수정 asks for a peer name only outside a team, on a computer that does not collect yet; in a team it takes the team's", async () => {
+  const fresh = { configured: false, localServer: null, honcho: { url: "" }, user: { peerId: "" }, team: null, targets: [] };
+  assert.equal(asksPeer(fresh), true);
+  assert.equal(collectDraft(fresh).userPeer, "");
+  // 쌓지 않기 at first setup in a team, collecting turned on later: the name the hub
+  // gave from the email, as first setup would have taken it.
+  const team = { hub: HUB, signedIn: true, email: "chen@example.com", peer: "chen-example-com" };
+  const storesNothing = { ...fresh, team };
+  assert.equal(asksPeer(storesNothing), false);
+  assert.equal(collectDraft(storesNothing).userPeer, "chen-example-com");
+  assert.equal(collectDraft({ ...storesNothing, user: { peerId: "chen" } }).userPeer, "chen-example-com");
+  // A team login the hub gave no name: asked, as outside a team.
+  assert.equal(asksPeer({ ...fresh, team: { hub: HUB, signedIn: true, peer: null } }), true);
+  // A computer that collects keeps its name, in a team or not (joining alone renames it, above).
+  assert.equal(asksPeer(COLLECTS), false);
+  assert.equal(collectDraft(COLLECTS).userPeer, "chen");
+  assert.equal(collectDraft({ ...COLLECTS, team }).userPeer, "chen");
+  // The window asks by asksPeer.
+  const settings = await read("ui/views/settings.js");
+  assert.match(settings, /serverStep\(draft, context, \{ peer: asksPeer\(context\),/);
 });
 
 test("the move to another team names the servers it stops collecting into, or nothing when it cannot tell", async () => {
