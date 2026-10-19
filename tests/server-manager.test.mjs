@@ -944,11 +944,11 @@ test("personal start prepares under its existing lifecycle lock without reentran
         return { ok: true, running: true };
       },
     },
-    composeRunner: async () => { events.push("compose"); return { stdout: "started\n", stderr: "" }; },
+    composeRunner: async (_directory, args) => { events.push(`compose ${args[0]}`); return { stdout: "started\n", stderr: "" }; },
     healthWaiter: async () => ({ ok: true, status: 200 }),
   });
   assert.equal(result.ok, true);
-  assert.deepEqual(events, ["prepare", "start", "compose"]);
+  assert.deepEqual(events, ["prepare", "start", "compose build", "compose up"]);
   await assert.rejects(fsp.access(`${destination}.lifecycle.lock`));
   // Start prepares again, and the model it was given reaches that prepare.
   assert.equal(parseEnv(await fsp.readFile(path.join(destination, ".env"), "utf8")).DERIVER_MODEL_CONFIG__MODEL, "claude-sonnet-5-5");
@@ -966,12 +966,12 @@ test("personal start requires a healthy host before Compose and rolls it back on
     hostRuntime,
     preparedServer,
     serverDirectory: path.join(os.tmpdir(), "honcho-agent-bridge-start-order"),
-    composeRunner: async () => { events.push("compose-start"); return { stdout: "started\n", stderr: "" }; },
+    composeRunner: async (_directory, args) => { events.push(`compose ${args[0]}`); return { stdout: "started\n", stderr: "" }; },
     healthWaiter: async () => ({ ok: true, status: 200 }),
   });
   assert.equal(started.ok, true);
   assert.equal(started.host.running, true);
-  assert.deepEqual(events, ["host-start", "compose-start"]);
+  assert.deepEqual(events, ["host-start", "compose build", "compose up"]);
 
   events.length = 0;
   await assert.rejects(
@@ -980,11 +980,11 @@ test("personal start requires a healthy host before Compose and rolls it back on
       hostRuntime,
       preparedServer,
       serverDirectory: path.join(os.tmpdir(), "honcho-agent-bridge-start-rollback"),
-      composeRunner: async () => { events.push("compose-start"); throw new Error("compose failed"); },
+      composeRunner: async (_directory, args) => { events.push(`compose ${args[0]}`); throw new Error("compose failed"); },
     }),
     /compose failed/,
   );
-  assert.deepEqual(events, ["host-start", "compose-start", "host-stop"]);
+  assert.deepEqual(events, ["host-start", "compose build", "host-stop"]);
 });
 
 test("personal start never invokes Compose when the host runtime is unhealthy", async () => {
@@ -1108,7 +1108,7 @@ test("a share profile with every setting filled is kept, and start says when it 
   assert.equal(started.share.profileDropped, true);
   assert.match(started.warnings.join("\n"), /Sharing was turned off/);
   assert.equal((await old.readEnv()).COMPOSE_PROFILES, "debug", "dropped before Compose came up");
-  assert.deepEqual(composeCalls, ["up -d --remove-orphans --build"]);
+  assert.deepEqual(composeCalls, ["build", "up -d --remove-orphans"]);
 });
 
 test("a start that put a new bundle in place recreates the gate while sharing, its code being a mount of the old folder", async (t) => {
@@ -1134,15 +1134,15 @@ test("a start that put a new bundle in place recreates the gate while sharing, i
   const shared = await oldSharedServer(t, { values });
   const swapped = await start(shared, { changed: true });
   assert.equal(swapped.result.ok, true, JSON.stringify(swapped.result));
-  assert.deepEqual(swapped.calls, ["up -d --remove-orphans --build", "up -d --no-deps --force-recreate gate"]);
+  assert.deepEqual(swapped.calls, ["build", "up -d --remove-orphans", "up -d --no-deps --force-recreate gate"]);
   assert.deepEqual(swapped.result.gate, { recreated: true });
   assert.equal("warnings" in swapped.result, false);
 
   // No new bundle, or no sharing: the gate is Compose's to keep.
-  assert.deepEqual((await start(shared, { changed: false })).calls, ["up -d --remove-orphans --build"]);
+  assert.deepEqual((await start(shared, { changed: false })).calls, ["build", "up -d --remove-orphans"]);
   const alone = await oldSharedServer(t, { profiles: "debug", values });
   const unshared = await start(alone, { changed: true });
-  assert.deepEqual(unshared.calls, ["up -d --remove-orphans --build"]);
+  assert.deepEqual(unshared.calls, ["build", "up -d --remove-orphans"]);
   assert.equal("gate" in unshared.result, false);
 
   // A gate that did not come back is said, and the server is started all the same.
@@ -1186,11 +1186,34 @@ test("a start while shared through the team writes this server's guard token fro
   assert.equal(JSON.stringify(started).includes(hub.issued[0]), false, "the result never holds the token");
   if (process.platform !== "win32") assert.equal((await fsp.stat(envFile)).mode & 0o777, 0o600);
 
-  // The next start is a new token in place of the last.
+  // The next start is a new token in place of the last, once the images are built:
+  // the running mcp asks the hub with the last one until Compose recreates it.
   const restarted = await start(full, { ...full.shareOptions, teamAuth: hub.teamAuth });
   assert.deepEqual(restarted.jev, { synced: true, changed: true });
+  const [building, starting] = atCompose.slice(-2);
+  assert.equal(building.args, "build");
+  assert.equal(building.environment.HONCHO_JEV_GUARD_TOKEN, hub.issued[0], "the last token while the images build");
+  assert.equal(starting.args, "up -d --remove-orphans");
+  assert.equal(starting.environment.HONCHO_JEV_GUARD_TOKEN, hub.issued[1]);
   const text = await fsp.readFile(envFile, "utf8");
   assert.deepEqual(text.split("\n").filter((line) => line.startsWith("HONCHO_JEV_GUARD_TOKEN=")), [`HONCHO_JEV_GUARD_TOKEN=${hub.issued[1]}`]);
+
+  // A build that fails asks the hub nothing, so the running mcp keeps its token.
+  const issued = hub.issued.length;
+  await assert.rejects(serverStart({
+    profile: "personal",
+    hostRuntime: { start: async () => ({ ok: true, running: true }), stop: async () => ({ ok: true }) },
+    preparedServer: { ok: true, ready: true, installation: {}, environment: {} },
+    serverDirectory: full.directory,
+    composeRunner: async (_directory, args) => {
+      if (args[0] === "build") throw Object.assign(new Error("Command failed"), { stderr: "failed to solve: process did not complete successfully: exit code: 1\n" });
+      return { stdout: "", stderr: "" };
+    },
+    healthWaiter: async () => ({ ok: true, status: 200 }),
+    shareOptions: { ...full.shareOptions, teamAuth: hub.teamAuth },
+  }), /Command failed/);
+  assert.equal(hub.issued.length, issued);
+  assert.equal(await fsp.readFile(envFile, "utf8"), text);
 
   // Without the hub, or without a server in the team, the server still starts and the
   // .env stays as it was.

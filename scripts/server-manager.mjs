@@ -1729,13 +1729,16 @@ async function serverStartUnlocked({
   // The prepare above settled the share profile; a start given a server prepared
   // elsewhere settles it here, so share never comes up half set.
   const share = preparedServer ? await settleShareFor(profile, installed, shareOptions) : prepared.share || null;
-  const jev = await syncJevGuardFor(installed, shareOptions);
-  const args = ["up", "-d", "--remove-orphans"];
-  if (build) args.push("--build");
   const ports = await installedServerPorts(installed);
-  let composeResult;
+  let jev = null;
+  const outputs = [];
   try {
-    composeResult = await composeRunner(installed, args);
+    // The images before the guard token: a new token ends the one the running mcp
+    // asks the team hub with, and a build of a new version takes minutes, in which
+    // every teammate's answer was refused. A build that fails leaves both as they were.
+    if (build) outputs.push(await composeRunner(installed, ["build"]));
+    jev = await syncJevGuardFor(installed, shareOptions);
+    outputs.push(await composeRunner(installed, ["up", "-d", "--remove-orphans"]));
   } catch (error) {
     if (host) await hostRuntime.stop({ profile, installedServerDir: installed }).catch(() => {});
     const detail = String(error?.stderr || error?.message || error);
@@ -1766,7 +1769,10 @@ async function serverStartUnlocked({
     environment: prepared.environment,
     health,
     ...serverUrls(ports),
-    compose: { stdout: composeResult.stdout.trim(), stderr: composeResult.stderr.trim() },
+    compose: {
+      stdout: outputs.map((output) => String(output?.stdout ?? "").trim()).filter(Boolean).join("\n"),
+      stderr: outputs.map((output) => String(output?.stderr ?? "").trim()).filter(Boolean).join("\n"),
+    },
     ...(share ? { share } : {}),
     ...(jev ? { jev } : {}),
     ...(gate ? { gate } : {}),
