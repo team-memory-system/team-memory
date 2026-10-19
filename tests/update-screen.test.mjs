@@ -430,6 +430,13 @@ test("the end shows what is left, 서버 켜기 for the server kept off and 팀 
   assert.deepEqual(calls.map((call) => call.key), ["POST /api/team/redeploy"]);
   serve({ "POST /api/team/redeploy": { ok: false, code: "no_token", error: "No Cloudflare API token is saved here: change it in the app's admin tab (token 바꾸기)" } });
   assert.deepEqual(await redeployHub(), { text: "관리자 탭의 Cloudflare에서 token 바꾸기를 누르세요.", bad: true });
+  // Anything else leads with the app's own words: Cloudflare's follow, in the app's when it has them.
+  serve({ "POST /api/team/redeploy": { ok: false, error: "Cloudflare API PUT /accounts/a1/workers/scripts/team-memory-hub failed: 10021 script content error" } });
+  assert.deepEqual(await redeployHub(), { text: "팀 주소를 다시 올리지 못했습니다: Cloudflare API PUT /accounts/a1/workers/scripts/team-memory-hub failed: 10021 script content error", bad: true });
+  serve({ "POST /api/team/redeploy": { ok: false, error: "Cloudflare refused GET /zones (the API token needs Zone: Read on the zone)" } });
+  assert.deepEqual(await redeployHub(), { text: "팀 주소를 다시 올리지 못했습니다: Cloudflare API token에 Zone: Read 권한이 없습니다. Cloudflare에서 token에 이 권한을 더한 뒤 다시 누르세요.", bad: true });
+  serve({ "POST /api/team/redeploy": { ok: false } });
+  assert.deepEqual(await redeployHub(), { text: "팀 주소를 다시 올리지 못했습니다.", bad: true });
   assert.ok((await read("scripts/update.mjs")).includes('"관리자 탭의 Cloudflare에서 token 바꾸기를 누르세요."'), "in the to-do's own words");
 });
 

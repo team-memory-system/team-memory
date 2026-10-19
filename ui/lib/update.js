@@ -414,7 +414,10 @@ export async function retryUpdate() {
 export async function redeployHub() {
   const answer = await post("/api/team/redeploy", {}).catch((error) => ({ ok: false, error: error.message }));
   if (answer?.ok) return { text: "팀 주소를 다시 올렸습니다.", bad: false };
-  return { text: answer?.code === "no_token" ? NO_TOKEN : problem(answer, "팀 주소를 다시 올리지 못했습니다."), bad: true };
+  if (answer?.code === "no_token") return { text: NO_TOKEN, bad: true };
+  // What Cloudflare or the network said comes after the app's own words, as on 고치기.
+  const why = problem(answer, "");
+  return { text: why ? `팀 주소를 다시 올리지 못했습니다: ${why}` : "팀 주소를 다시 올리지 못했습니다.", bad: true };
 }
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

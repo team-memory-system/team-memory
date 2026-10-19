@@ -89,6 +89,11 @@ const LOGIN_ROW = Object.freeze({ title: "구독 계정 로그인", sub: "브라
 // to-do), as fix.mjs's KEPT_OFF tells a terminal where 시작 is.
 const KEPT_OFF_HERE = "꺼 둔 기억 서버는 새 판으로 준비만 했습니다. 켜려면 서버 켜기를 누르세요.";
 const inApp = (said) => said.replace(KEPT_OFF, KEPT_OFF_HERE);
+
+/** What doctor --fix answered, in the app's words, for the 고치기 beside 점검's rows. */
+export function fixAnswerInApp(answer) {
+  return typeof answer?.said === "string" ? { ...answer, said: inApp(answer.said) } : answer;
+}
 // The doctor checks fix.mjs repairs, by the row each one is.
 const FIX_ROWS = Object.freeze({ runtime: "runtime", "server-version": "server", app: "app" });
 

@@ -21,6 +21,7 @@ import { fixChecks, KEPT_OFF, toVersion } from "../scripts/fix.mjs";
 import { VERSION } from "../scripts/version.mjs";
 import {
   compareVersions,
+  fixAnswerInApp,
   fixProgress,
   latestVersion,
   pluginUpdateArgs,
@@ -866,6 +867,12 @@ test("doctor --fix writes its rows to fix.json as it goes, and waits for an upda
   // fix.json says it where 서버 켜기 is beside it; the terminal, where 시작 is.
   assert.ok(fixed.said.includes(KEPT_OFF), fixed.said);
   assert.equal(done.said, fixed.said.replace(KEPT_OFF, "꺼 둔 기억 서버는 새 판으로 준비만 했습니다. 켜려면 서버 켜기를 누르세요."));
+  // So does the answer the app's 고치기 hears from doctor --fix (/api/doctor/fix).
+  const answered = { ok: true, fixed: { ok: true, serverOff: true }, said: fixed.said };
+  assert.deepEqual(fixAnswerInApp(answered), { ...answered, said: done.said });
+  assert.equal(answered.said, fixed.said, "doctor --fix's own answer is left as it was");
+  assert.deepEqual(fixAnswerInApp({ ok: false, error: "fetch failed" }), { ok: false, error: "fetch failed" });
+  assert.match(await fsp.readFile(path.join(ROOT, "scripts", "ui.mjs"), "utf8"), /"\/api\/doctor\/fix": async \(\) => fixAnswerInApp\(await runCli\(\["doctor", "--fix"\]\)\),/);
 
   // While an update the app started runs, doctor --fix waits for it.
   await updateStart(b.options);

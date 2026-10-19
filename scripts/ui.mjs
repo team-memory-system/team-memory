@@ -30,7 +30,7 @@ import { TARGET_ID, TARGET_SECRET_ENV } from "./targets.mjs";
 import { API_TOKEN_ENV, dropTeamEntries, INVITE_ENV, teammateAdd, teamName } from "./team-access.mjs";
 import { handleLoginCallback, runTeamRoute, TEAM_READ_ROUTES, teamRoute } from "./team-app.mjs";
 import { CALLBACK_PATH, TEAM_AUTH_ENV, teamAuthPaths } from "./team-auth.mjs";
-import { fixProgress, retryCli, updateProgress, updateStatus } from "./update.mjs";
+import { fixAnswerInApp, fixProgress, retryCli, updateProgress, updateStatus } from "./update.mjs";
 import { VERSION } from "./version.mjs";
 import { createViewServer, displayName, HERE_ONLY, hereOnly, serverOrigin, viewerDeviceOf, viewerInfo, viewerOf } from "./viewer.mjs";
 
@@ -374,7 +374,8 @@ const UPDATE_ROUTES = {
     return runCli(["update", "start", ...seen], { timeout: 120_000 });
   },
   "/api/update/retry": async () => runCli(["update", "retry"], { timeout: 120_000, cli: await retryCli(CLI) }),
-  "/api/doctor/fix": async () => runCli(["doctor", "--fix"]),
+  // 점검's 기억 서버 row has 서버 켜기 beside it, so a server kept off is said that way.
+  "/api/doctor/fix": async () => fixAnswerInApp(await runCli(["doctor", "--fix"])),
 };
 
 // What the bell shows on another computer's screen: the button is that computer's.
