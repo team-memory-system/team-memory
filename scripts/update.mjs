@@ -74,7 +74,7 @@ const LOCK = { attempts: 50, delayMs: 100, staleMs: 120_000, reclaimDeadImmediat
 const TITLES = Object.freeze({
   claude: "Claude Code 플러그인",
   codex: "Codex 플러그인",
-  runtime: "대화 모으기",
+  runtime: "대화 수집",
   app: "앱 다시 켜기",
 });
 const SERVER_ROWS = Object.freeze({
@@ -97,7 +97,7 @@ export function fixAnswerInApp(answer) {
 // The doctor checks fix.mjs repairs, by the row each one is.
 const FIX_ROWS = Object.freeze({ runtime: "runtime", "server-version": "server", app: "app" });
 
-const WARNING = "기억 서버를 다시 만드는 동안 팀원 열람이 멈춥니다.";
+const WARNING = "기억 서버를 새 판으로 다시 켜는 동안 잠깐 팀원 열람이 멈춥니다.";
 const STALLED = "중간에 멈췄습니다.";
 const SESSIONS = "열린 창은 닫고 새로 여세요.";
 const BLOCKED = Object.freeze({
@@ -130,7 +130,7 @@ const STARTING = "업데이트나 고치기를 시작하는 중입니다. 끝나
 // version whether teammates' reading stops (the server came on, or went off or was
 // brought up to that version, in between).
 const CHANGED = "새 판이 바뀌었습니다. 바뀐 내용을 보고 업데이트를 다시 누르세요.";
-const WARNED = "그사이 기억 서버가 켜져, 다시 만드는 동안 팀원 열람이 멈춥니다. 보고 업데이트를 다시 누르세요.";
+const WARNED = "그사이 기억 서버가 켜져, 새 판으로 다시 켜는 동안 잠깐 팀원 열람이 멈춥니다. 보고 업데이트를 다시 누르세요.";
 const UNWARNED = "그사이 기억 서버가 바뀌어, 팀원 열람은 멈추지 않습니다. 보고 업데이트를 다시 누르세요.";
 const UNREAD = "GitHub에서 새 판을 읽지 못했습니다. 인터넷 연결을 확인하고 업데이트를 다시 누르세요.";
 
@@ -410,7 +410,7 @@ function sortRows(progress) {
   progress.rows.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 }
 
-/** 받침 picks the particle: 플러그인과, 대화 모으기와; 기억 서버를, 플러그인을. */
+/** 받침 picks the particle: 플러그인과, 대화 수집과; 기억 서버를, 플러그인을. */
 function particle(word, withFinal, without) {
   const code = word.charCodeAt(word.length - 1) - 0xac00;
   return code >= 0 && code < 11172 && code % 28 ? withFinal : without;
@@ -423,12 +423,12 @@ function listOf(names) {
   return `${first}${particle(first, "과", "와")} ${[...rest.slice(0, -1), object(rest.at(-1))].join(", ")}`;
 }
 
-/** "플러그인과 대화 모으기, 기억 서버를 올립니다.": what the button brings up, or null for nothing. */
+/** "플러그인과 대화 수집, 기억 서버를 올립니다.": what the button brings up, or null for nothing. */
 function summaryOf(rows) {
   const has = (...ids) => rows.some((item) => ids.includes(item.id));
   const names = [
     ...(has("claude", "codex") ? ["플러그인"] : []),
-    ...(has("runtime") ? ["대화 모으기"] : []),
+    ...(has("runtime") ? ["대화 수집"] : []),
     ...(has("server") ? ["기억 서버"] : []),
   ];
   if (names.length) return `${listOf(names)} 올립니다.`;

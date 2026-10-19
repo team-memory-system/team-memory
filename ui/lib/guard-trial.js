@@ -17,7 +17,7 @@ import { icon } from "./icons.js";
 import { kv } from "./kit.js";
 import { loadRequests } from "./requests.js";
 import { app, savePrefs } from "./state.js";
-import { teamCall } from "./team.js";
+import { personName, teamCall, teamDirectory } from "./team.js";
 import { details, errorNotice, notice, spinner, tag } from "./ui.js";
 
 // No length limit here: a question longer than Jev reads at once is for the bridge
@@ -142,7 +142,7 @@ export function guardTrial() {
 
   async function loadTargets() {
     try {
-      const [listed, requests] = await Promise.all([teamCall("/api/team/folders", {}), loadRequests().catch(() => null)]);
+      const [listed, requests, directory] = await Promise.all([teamCall("/api/team/folders", {}), loadRequests().catch(() => null), teamDirectory().catch(() => null)]);
       const folders = listed.folders || [];
       const apps = listed.apps || [];
       const sessions = ({ folders: entries, sources = [] }) => folders
@@ -151,10 +151,12 @@ export function guardTrial() {
         + apps.filter((one) => sources.includes(one.source)).reduce((sum, one) => sum + Number(one.sessions || 0), 0);
       const rows = folderRowsOf(folders);
       const every = grantFromTicked(folderTree(rows), new Set(rows.map((row) => row.path)));
-      // A teammate's: their folders, then their apps (철수에게 연 폴더 · ChatGPT 기록).
+      // A teammate's: their folders, then their apps (철수에게 연 폴더 · ChatGPT 기록),
+      // the teammate named as the team calls them.
+      const people = new Map((directory?.people || []).map((person) => [person.email, person]));
       const opened = (grant) => {
         const names = [grant.chat.folders.length ? "폴더" : null, ...(grant.chat.sources || []).map(appRecords)].filter(Boolean);
-        return `${grant.peer || grant.email.split("@")[0]}에게 연 ${names.join(" · ")}`;
+        return `${personName(people.get(grant.email) || grant)}에게 연 ${names.join(" · ")}`;
       };
       targets = [
         ...(requests?.grants || []).filter((grant) => grant.chat?.folders?.length || grant.chat?.sources?.length).map((grant) => ({

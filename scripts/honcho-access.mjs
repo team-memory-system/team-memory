@@ -137,6 +137,6 @@ export function accessRefusedMessage(url) {
 }
 
 /** The same, for the app's screens. */
-export const ACCESS_REFUSED_KO = "Cloudflare Access가 이 컴퓨터를 막았습니다. 그 서버의 Access 서비스 토큰을 넣으세요.";
+export const ACCESS_REFUSED_KO = "Cloudflare Access가 이 컴퓨터를 막았습니다. 그 서버의 Access service token을 넣으세요.";
 
 export const ACCESS_CODE = "cloudflare-access";

@@ -11,6 +11,7 @@ import { h, clear } from "../lib/dom.js";
 import { fullDate, number } from "../lib/format.js";
 import { callReason, callScores, maskedText, scoreText } from "../lib/guard.js";
 import { guardTrial } from "../lib/guard-trial.js";
+import { personName, teamDirectory } from "../lib/team.js";
 import { kv, list, listItem, modal } from "../lib/kit.js";
 import { button, busy, details, empty, errorNotice, notice, pageHead, spinner, tag } from "../lib/ui.js";
 
@@ -54,20 +55,22 @@ function reachOf(row) {
   return [`폴더 ${number(folders.length)}개`, Number.isFinite(sessions) ? `대화 ${number(sessions)}개` : null].filter(Boolean).join(" · ");
 }
 
-/** Everything the log holds about one call. */
-function openCall(row) {
+/** Everything the log holds about one call; `who` names the caller as the team does. */
+function openCall(row, who) {
   const [label, kind] = STATUS[row.status] || [row.status || "?", ""];
   // The bridge's own words stay in the window, under 서버가 남긴 이유 원문.
   const reason = callReason(row);
   const folders = foldersOf(row);
   const at = new Date(row.at);
+  const name = who(row.caller);
+  const how = [name !== row.caller ? row.caller : null, row.caller_source].filter(Boolean).join(" · ");
   const win = modal({ title: "조회 한 건", big: true, small: true });
   win.body(
     h("div", { class: "audit-label" }, "물은 것"),
     h("pre", { class: "audit-full" }, row.query_text || "원문 없음"),
     h("div", { class: "audit-facts" },
       kv("결과", [tag(label, kind), reason ? h("div", { class: "s" }, reason) : null]),
-      kv("누가", [row.caller || "알 수 없음", row.caller_source ? h("div", { class: "s" }, row.caller_source) : null]),
+      kv("누가", [name, how ? h("div", { class: "s" }, how) : null]),
       kv("언제", `${longDay.format(at)} ${seconds.format(at)}`),
       folders.length ? kv("열린 폴더", [folders.map(shortPath).join(", "), h("div", { class: "s" }, reachOf(row))]) : null,
       maskedText(row.arguments?.masked) ? kv("가린 것", [maskedText(row.arguments.masked), h("div", { class: "s" }, "팀원에게 간 답에서 이 자리를 가렸습니다. 기억에는 원래대로 있습니다.")]) : null,
@@ -93,6 +96,10 @@ export default {
     // Who asked and with which tool, kept across loads, so a filter can be undone.
     const callers = new Set();
     const tools = new Set();
+    // The bridge records a teammate by the email their login gave (or the peer name
+    // inside the server); each is shown by the name the team calls them, as on 팀.
+    const names = new Map();
+    const who = (caller) => names.get(caller) || caller || "알 수 없음";
 
     const select = (label, onChange) => {
       const control = h("select", { class: "select", "aria-label": label });
@@ -130,7 +137,7 @@ export default {
         onclick: () => { if (filters.status !== key) { filters.status = key; load(); } },
       }, label, counted ? h("span", { class: `chip-n ${key === "denied" && counts.denied ? "bad" : ""}` }, number(counts[key])) : null)));
 
-      options(caller, [["", "모든 사람"], ...[...callers].sort().map((name) => [name, name])], filters.caller);
+      options(caller, [["", "모든 사람"], ...[...callers].map((value) => [value, who(value)]).sort((left, right) => left[1].localeCompare(right[1]))], filters.caller);
       options(tool, [["", "모든 도구"], ...[...tools].sort().map((name) => [name, name])], filters.tool);
       // A log of one tool's calls only has no choice to offer.
       clear(pickers, period, callers.size ? caller : null, tools.size > 1 || filters.tool ? tool : null);
@@ -139,7 +146,7 @@ export default {
 
     function entry(row) {
       const [label, kind] = STATUS[row.status] || [row.status || "?", ""];
-      const sub = [row.caller || "알 수 없음", reachOf(row), callReason(row), maskedText(row.arguments?.masked), callScores(row)].filter(Boolean).join(" · ");
+      const sub = [who(row.caller), reachOf(row), callReason(row), maskedText(row.arguments?.masked), callScores(row)].filter(Boolean).join(" · ");
       const item = listItem({
         title: [tag(label, kind), h("span", { class: "audit-q" }, row.query_text || "원문 없음")],
         sub,
@@ -149,11 +156,11 @@ export default {
       item.tabIndex = 0;
       item.setAttribute("role", "button");
       item.setAttribute("aria-label", `${label}: ${row.query_text || "원문 없음"}`);
-      item.addEventListener("click", () => { if (!window.getSelection()?.toString()) openCall(row); });
+      item.addEventListener("click", () => { if (!window.getSelection()?.toString()) openCall(row, who); });
       item.addEventListener("keydown", (event) => {
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
-        openCall(row);
+        openCall(row, who);
       });
       return item;
     }
@@ -233,6 +240,15 @@ export default {
       }
     }
 
+    // Names come from the team when this computer is in one; the log does not wait for them.
+    teamDirectory().then((directory) => {
+      for (const person of directory?.people || []) {
+        const name = personName(person);
+        if (person.email) names.set(person.email, name);
+        if (person.peer) names.set(person.peer, name);
+      }
+      if (rows.length) { drawControls(); drawRows(); }
+    }).catch(() => {});
     await load();
   },
 };

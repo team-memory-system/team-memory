@@ -1,7 +1,7 @@
 // The end of first setup (views/setup.js) and of 대화 수집's 수정 window
 // (views/settings.js): 적용's last row is 점검 (lib/check.js), and the window then
 // shows what it found beside what is left to do. What matters: doctor's checks, and
-// `server verify` for a server on this computer, become the rows 대화 모으기, 기억
+// `server verify` for a server on this computer, become the rows 대화 수집, 기억
 // 서버 and 임베딩, each passing one with what it runs and each failed one with what
 // is wrong and what to press (고치기, 서버 켜기, 명령 복사, 대화 수집 수정, and always
 // 다시 점검), never the terminal's `fix` line; a row that follows another (임베딩 when
@@ -31,7 +31,7 @@ import { HERE_ONLY } from "../scripts/viewer.mjs";
 import { checkRows, failures, FIX_HERE_ONLY, fixLines, fixOutcome, INSTALL_COMMANDS, missingPlugins, offers, REBUILD_NOTE, runFix, teamCheckRows } from "../ui/lib/check.js";
 import { agentTodo, asksPeer, changedAgents, collectDraft, dockerSteps, hookWritten, remoteUrlProblem, teamServers, todoAgents } from "../ui/lib/collect.js";
 import { resumeAtBoot } from "../ui/lib/landing.js";
-import { applyRows, endButton, joinsAlone, linkTurn, peerChange, restoreSetup, resumable, setupSnapshot } from "../ui/views/setup.js";
+import { applyRows, endButton, joined, joinsAlone, linkTurn, peerChange, restoreSetup, resumable, setupSnapshot } from "../ui/views/setup.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LOCAL = "http://127.0.0.1:8001";
@@ -115,10 +115,10 @@ function joining(context, { peer = "chen-example-com", server = "here" } = {}) {
 const saved = globalThis.fetch;
 afterEach(() => { globalThis.fetch = saved; });
 
-test("a setup whose checks pass shows 대화 모으기, 기억 서버 and 임베딩 with what each runs, and no button", () => {
+test("a setup whose checks pass shows 대화 수집, 기억 서버 and 임베딩 with what each runs, and no button", () => {
   const rows = checkRows(doctor(), verify(), { context: HERE, expected: LOCAL });
   assert.deepEqual(shown(rows), [
-    { name: "대화 모으기", ok: true, value: "0.8.14" },
+    { name: "대화 수집", ok: true, value: "0.8.14" },
     { name: "기억 서버", ok: true, value: "127.0.0.1:8001" },
     { name: "임베딩", ok: true, value: "" },
   ]);
@@ -126,14 +126,14 @@ test("a setup whose checks pass shows 대화 모으기, 기억 서버 and 임베
   assert.equal(failures(rows), 0);
   // A server on another computer has no verify, so no 임베딩 row.
   assert.deepEqual(shown(checkRows(doctor({}, MINE), null, { context: AWAY, expected: MINE })), [
-    { name: "대화 모으기", ok: true, value: "0.8.14" },
+    { name: "대화 수집", ok: true, value: "0.8.14" },
     { name: "기억 서버", ok: true, value: "memory-me.example.com" },
   ]);
   // The other servers some folders go to are a row each; the app, only when it is behind.
   const company = doctor();
   company.checks.push({ name: "target-company", ok: true, url: "https://memory.example.com", health: { ok: true }, workspace: { ok: true } });
   const withTarget = checkRows(company, null, { context: { ...HERE, targets: [{ id: "company", label: "회사", url: "https://memory.example.com" }] }, expected: LOCAL });
-  assert.deepEqual(withTarget.map((item) => item.name), ["대화 모으기", "기억 서버", "회사"]);
+  assert.deepEqual(withTarget.map((item) => item.name), ["대화 수집", "기억 서버", "회사"]);
 });
 
 test("a failed row says what is wrong and offers what to press, and 다시 점검 every time", () => {
@@ -144,14 +144,14 @@ test("a failed row says what is wrong and offers what to press, and 다시 점�
     "server-version": { ok: false, fix: FIX },
     app: { ok: false, version: "0.8.13", fix: FIX },
   }), verify(), { context: HERE, expected: LOCAL });
-  assert.deepEqual(row(behind, "대화 모으기").problems, ["대화 모으기가 옛 판(0.8.13)입니다."]);
-  assert.deepEqual(buttons(row(behind, "대화 모으기")), ["고치기", "다시 점검"]);
+  assert.deepEqual(row(behind, "대화 수집").problems, ["대화 수집이 옛 판(0.8.13)입니다."]);
+  assert.deepEqual(buttons(row(behind, "대화 수집")), ["고치기", "다시 점검"]);
   assert.deepEqual(row(behind, "기억 서버").problems, ["기억 서버가 옛 판입니다."]);
   assert.deepEqual(buttons(row(behind, "기억 서버")), ["고치기", "다시 점검"]);
   assert.deepEqual(shown([behind.at(-1)]), [{ name: "앱", ok: false, value: "0.8.13" }]);
   assert.deepEqual(buttons(behind.at(-1)), ["고치기", "다시 점검"]);
   assert.equal(JSON.stringify(behind.map((item) => item.problems)).includes(FIX), false);
-  assert.deepEqual(row(checkRows(doctor({ runtime: { ok: false, missingFiles: ["mcp-server.mjs"], fix: FIX } }), null, { context: HERE }), "대화 모으기").problems, ["대화 모으기 파일이 빠졌습니다."]);
+  assert.deepEqual(row(checkRows(doctor({ runtime: { ok: false, missingFiles: ["mcp-server.mjs"], fix: FIX } }), null, { context: HERE }), "대화 수집").problems, ["대화 수집 파일이 빠졌습니다."]);
 
   // The server here not answering: 서버 켜기, once, however many checks saw it.
   const down = checkRows(doctor({ "honcho-health": NO_ANSWER, "honcho-workspaces": NO_ANSWER }), verify({
@@ -184,14 +184,14 @@ test("a failed row says what is wrong and offers what to press, and 다시 점�
     { agent: "codex", action: "approve-hook" },
   ] };
   const missing = { "claude-plugin": { ok: false, installed: false, enabled: false, pluginIds: [] }, "claude-hook": { ok: false }, "codex-plugin": { ok: false, installed: false, enabled: false } };
-  const plugins = row(checkRows(doctor(missing), null, { context: HERE, done }), "대화 모으기");
+  const plugins = row(checkRows(doctor(missing), null, { context: HERE, done }), "대화 수집");
   assert.deepEqual(plugins.problems, ["Claude Code에 팀 메모리 플러그인이 없습니다.", "Codex에 팀 메모리 플러그인이 없습니다."]);
   assert.deepEqual(plugins.actions, [
     { kind: "copy", label: "명령 복사", text: [...done.nextSteps[0].commands, ...done.nextSteps[1].commands].join("\n") },
     { kind: "recheck", label: "다시 점검" },
   ]);
   // One turned off in Claude Code: the command that turns it on.
-  const off = row(checkRows(doctor({ "claude-plugin": { ok: false, enabled: false }, "claude-hook": { ok: false } }), null, { context: HERE }), "대화 모으기");
+  const off = row(checkRows(doctor({ "claude-plugin": { ok: false, enabled: false }, "claude-hook": { ok: false } }), null, { context: HERE }), "대화 수집");
   assert.deepEqual(off.problems, ["Claude Code에 팀 메모리 플러그인이 꺼져 있습니다."]);
   assert.equal(off.actions[0].text, "claude plugin enable team-memory@team-memory");
 
@@ -219,7 +219,7 @@ test("a plugin to install copies its own repository's commands when setup gave n
   }
   const missing = { "claude-plugin": { ok: false, installed: false, enabled: false, pluginIds: [] }, "codex-plugin": { ok: false, installed: false, enabled: false } };
   const rows = checkRows(doctor(missing), null, { context: HERE });
-  assert.deepEqual(row(rows, "대화 모으기").actions, [
+  assert.deepEqual(row(rows, "대화 수집").actions, [
     { kind: "copy", label: "명령 복사", text: [...INSTALL_COMMANDS.claude, ...INSTALL_COMMANDS.codex].join("\n") },
     { kind: "recheck", label: "다시 점검" },
   ]);
@@ -270,17 +270,17 @@ test("a 고치기 that makes the server again says so before it is pressed, and 
   assert.equal(fixes.length, 2);
   for (const action of fixes) assert.equal(action.note, REBUILD_NOTE, "one 고치기 fixes all that is behind, the server too");
   const runtimeOnly = checkRows(doctor({ runtime: { ok: false, actualVersion: "0.8.13", fix: FIX } }), verify(), { context: HERE, expected: LOCAL });
-  assert.equal(row(runtimeOnly, "대화 모으기").actions[0].note, undefined);
+  assert.equal(row(runtimeOnly, "대화 수집").actions[0].note, undefined);
 
   // fix.json's rows, as the box draws them while 고치기 runs.
   assert.deepEqual(fixLines(null), [{ label: "고치는 중" }, { state: "run", title: "고치기" }]);
   assert.deepEqual(fixLines({ kind: "fix", state: "running", rows: [
-    { id: "runtime", title: "대화 모으기", state: "ok" },
+    { id: "runtime", title: "대화 수집", state: "ok" },
     { id: "server", title: "기억 서버 다시 만들기", sub: "몇 분에서 10분 넘게 걸립니다.", state: "run" },
     { id: "app", title: "앱 다시 켜기", state: "wait" },
   ] }), [
     { label: "고치는 중" },
-    { state: "ok", title: "대화 모으기", sub: undefined },
+    { state: "ok", title: "대화 수집", sub: undefined },
     { state: "run", title: "기억 서버 다시 만들기", sub: "몇 분에서 10분 넘게 걸립니다." },
     { state: "wait", title: "앱 다시 켜기", sub: undefined },
   ]);
@@ -290,7 +290,7 @@ test("a 고치기 that makes the server again says so before it is pressed, and 
     { state: "bad", title: "기억 서버 다시 만들기", sub: "Docker Desktop is not running" });
 
   // What it says after: doctor --fix's answer, a refusal, or fix.json's once the request ended with the app.
-  assert.deepEqual(fixOutcome({ ok: true, checks: [], fixed: { ok: true, steps: ["runtime"] }, said: "대화 모으기를 0.8.14로 바꿨습니다." }, null), { text: "대화 모으기를 0.8.14로 바꿨습니다.", bad: false });
+  assert.deepEqual(fixOutcome({ ok: true, checks: [], fixed: { ok: true, steps: ["runtime"] }, said: "대화 수집을 0.8.14로 바꿨습니다." }, null), { text: "대화 수집을 0.8.14로 바꿨습니다.", bad: false });
   assert.deepEqual(fixOutcome({ ok: true, checks: [], fixed: { ok: false, steps: [] }, said: "기억 서버를 새 판으로 다시 시작하지 못했습니다." }, null), { text: "기억 서버를 새 판으로 다시 시작하지 못했습니다.", bad: true });
   assert.deepEqual(fixOutcome({ ok: false, code: "updating", said: "업데이트가 도는 중입니다." }, null), { text: "업데이트가 도는 중입니다.", bad: true });
   assert.equal(fixOutcome({ ok: true, checks: [] }, null), null, "nothing to fix says nothing");
@@ -301,10 +301,10 @@ test("a 고치기 that makes the server again says so before it is pressed, and 
 
 test("고치기 cut off by the app starting again reads its rows and what it did from fix.json, not as a failure", async () => {
   const json = (body) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
-  const rows = [{ id: "runtime", title: "대화 모으기", state: "ok" }, { id: "app", title: "앱 다시 켜기", state: "run" }];
+  const rows = [{ id: "runtime", title: "대화 수집", state: "ok" }, { id: "app", title: "앱 다시 켜기", state: "run" }];
   const before = { kind: "fix", state: "done", startedAt: "2026-10-18T00:00:00.000Z", rows: [], said: "지난번" };
   const running = { kind: "fix", state: "running", startedAt: "2026-10-19T09:00:00.000Z", rows };
-  const finished = { ...running, state: "done", rows: rows.map((item) => ({ ...item, state: "ok" })), said: "대화 모으기를 0.8.14로 바꾸고 앱을 새 판으로 다시 켰습니다." };
+  const finished = { ...running, state: "done", rows: rows.map((item) => ({ ...item, state: "ok" })), said: "대화 수집을 0.8.14로 바꾸고 앱을 새 판으로 다시 켰습니다." };
   // The app goes down with the request, says nothing for a read, then answers from fix.json.
   const reads = [before, "down", running, finished];
   const calls = [];
@@ -321,12 +321,12 @@ test("고치기 cut off by the app starting again reads its rows and what it did
   assert.equal(calls.filter((call) => call === "POST /api/doctor/fix").length, 1);
   assert.deepEqual(drawn.map((lines) => lines.slice(1).map((line) => `${line.title} ${line.state}`)), [
     ["고치기 run"],
-    ["대화 모으기 ok", "앱 다시 켜기 run"],
-    ["대화 모으기 ok", "앱 다시 켜기 ok"],
+    ["대화 수집 ok", "앱 다시 켜기 run"],
+    ["대화 수집 ok", "앱 다시 켜기 ok"],
   ], "the fix before this one is never drawn");
 
   // A request that answers: its answer, with fix.json's rows drawn while it went.
-  const answer = { ok: true, checks: [], fixed: { ok: true, steps: ["runtime"] }, said: "대화 모으기를 0.8.14로 바꿨습니다." };
+  const answer = { ok: true, checks: [], fixed: { ok: true, steps: ["runtime"] }, said: "대화 수집을 0.8.14로 바꿨습니다." };
   let release;
   const answered = new Promise((resolve) => { release = resolve; });
   const statuses = [{ ok: true, progress: null }, { ok: true, progress: running }];
@@ -386,8 +386,8 @@ test("고치기 reads fix.json no more often than it is told, whatever its reque
     assert.ok(took >= (reads - 2) * every * 0.8, `${name}: ${reads} reads in ${Math.round(took)} ms`);
   }
   // A 200 with no body for a 고치기 that ran: its rows and what it did, from fix.json.
-  const running = { kind: "fix", state: "running", startedAt: "2026-10-19T09:00:00.000Z", rows: [{ id: "runtime", title: "대화 모으기", state: "run" }] };
-  const finished = { ...running, state: "done", rows: [{ id: "runtime", title: "대화 모으기", state: "ok" }], said: "대화 모으기를 0.8.14로 바꿨습니다." };
+  const running = { kind: "fix", state: "running", startedAt: "2026-10-19T09:00:00.000Z", rows: [{ id: "runtime", title: "대화 수집", state: "run" }] };
+  const finished = { ...running, state: "done", rows: [{ id: "runtime", title: "대화 수집", state: "ok" }], said: "대화 수집을 0.8.14로 바꿨습니다." };
   const reads = [before, running, finished];
   globalThis.fetch = async (url) => {
     if (url === "/api/doctor/fix") return new Response("", { status: 200, headers: type });
@@ -403,7 +403,7 @@ test("on a page another computer shows, 고치기 is there but locked, with wher
   assert.equal(FIX_HERE_ONLY, `고치기는 그 컴퓨터에서 누르세요. ${HERE_ONLY.get("/api/doctor/fix")}`);
   const FIX = "/team-memory doctor";
   const rows = checkRows(doctor({ runtime: { ok: false, actualVersion: "0.8.13", fix: FIX }, "server-version": { ok: false, fix: FIX } }), verify(), { context: HERE, expected: LOCAL });
-  const behind = row(rows, "대화 모으기");
+  const behind = row(rows, "대화 수집");
   // Here: 고치기, with what it stops first.
   assert.deepEqual(offers(behind), { locked: false, notes: [REBUILD_NOTE], actions: behind.actions });
   // There: the same buttons, 고치기 locked with why, and where to press it in place of the note.
@@ -513,7 +513,7 @@ test("what the window keeps holds no secret, and opened again it is back at 적�
       { key: "plugin", first: true, title: "Claude Code에 플러그인 설치", state: "bad", error: "설정하지 못했습니다." },
       { key: "plugin", first: false, title: "Codex에 플러그인 설치", state: "wait" },
       { label: "점검" },
-      { key: "check", title: "점검", sub: "대화 모으기, 기억 서버", state: "wait" },
+      { key: "check", title: "점검", sub: "대화 수집, 기억 서버", state: "wait" },
     ],
   };
   state.tasks[1].extra = { nodeName: "DIV" };
@@ -704,7 +704,7 @@ test("Codex's to-do approves its hook only when setup wrote it anew, also in a w
     roles: null,
     plan: null,
     filling: false,
-    tasks: [{ label: "점검" }, { key: "check", title: "점검", sub: "대화 모으기, 기억 서버", state: "wait" }],
+    tasks: [{ label: "점검" }, { key: "check", title: "점검", sub: "대화 수집, 기억 서버", state: "wait" }],
     applied: {
       ok: true,
       hooks: [{ provider: "codex", target: "/Users/me/.codex/hooks.json", installed: true, mode: "host-settings", changed: false }, { provider: "claude", changed: undefined }],
@@ -742,6 +742,56 @@ test("적용 ends with 점검, the end screen has its box, and every row runs so
   assert.deepEqual(endButton({ path: "join", joinOnly: false, draft: { server: "none" } }), ["팀 화면 열기", "team"]);
 });
 
+test("적용 says once that new conversations go after the past ones, and names teammates with the particle their names take", () => {
+  // Both agents, past conversations to put in: the first plugin row says it, the second does not again.
+  const draft = { ...collectDraft(HERE), server: "here", agents: new Set(["claude", "codex"]) };
+  draft.past.totals = { put: 3 };
+  const solo = { path: "solo", joinOnly: false, verify: false, team: { hub: "", directory: null }, draft, models: { chosen: new Set(), counts: {} }, mates: new Set(), requested: [], tasks: [] };
+  const plugins = applyRows(solo, { ...HERE, configured: false }).filter((task) => task.key === "plugin");
+  assert.deepEqual(plugins.map((task) => task.sub), ["새 대화는 지난 대화 다음에 쌓입니다.", null]);
+  // 받침 picks 과 or 와, after the name before the last.
+  assert.equal(joined(["아람", "민준"]), "아람과 민준");
+  assert.equal(joined(["민지", "아람"]), "민지와 아람");
+  assert.equal(joined(["sora", "민지", "bob"]), "sora, 민지와 bob");
+  assert.equal(joined(["bob", "carol"]), "bob과 carol");
+  assert.equal(joined(["민지"]), "민지");
+  const team = joining(COLLECTS);
+  team.joinOnly = false;
+  team.path = "join";
+  team.draft.server = "none";
+  team.team.directory = {
+    people: [{ email: "aram@example.com", nickname: "아람" }, { email: "minjun@example.com", peer: "민준" }],
+    servers: [{ owner: "aram@example.com", host: "aram.example.com" }, { owner: "minjun@example.com", host: "minjun.example.com" }],
+  };
+  team.mates = new Set(["aram@example.com", "minjun@example.com"]);
+  assert.ok(lines(applyRows(team, { ...COLLECTS, configured: false })).includes("mates: 아람과 민준에게 열람 요청"));
+});
+
+test("the login step, come back to after the login, says who logged in and goes on; a missing field's warning goes once the step changes", async () => {
+  const setup = await read("ui/views/setup.js");
+  const login = setupPart(setup, "function loginStep(");
+  assert.match(login, /if \(login\.phase === "done"\) \{[\s\S]*?h\("h3", \{\}, "로그인했습니다"\)[\s\S]*?check: \(\) => null,/);
+  assert.ok(login.indexOf('login.phase === "done"') < login.indexOf("startLogin()"), "before the wait that starts a login");
+  const draw = setupPart(setup, "function drawStep(");
+  // 이전, not 취소, on a login done; and only the step into the login starts it anew.
+  assert.match(draw, /keys\[at\] === "login" && state\.login\.phase !== "done" \? "취소" : "이전"/);
+  assert.match(draw, /if \(keys\[at \+ 1\] === "login"\) state\.login\.phase = "idle";/);
+  assert.doesNotMatch(draw, /\n\s*state\.login\.phase = "idle";\n\s*at \+= 1;/);
+  assert.match(draw, /say\(notice\("warn", problemText\)\);\n.*\n\s*step\.body\?\.addEventListener\?\.\("input", \(\) => clear\(issue\), \{ once: true \}\);/);
+});
+
+test("적용 shows a login's link and paste box under its own row, and my server on another computer only connected once it answers", async () => {
+  const setup = await read("ui/views/setup.js");
+  const draw = setupPart(setup, "function draw(");
+  assert.match(draw, /more: task\.state === "run" \? task\.extra : null/);
+  assert.doesNotMatch(draw, /running\?\.extra/);
+  const kit = await read("ui/lib/kit.js");
+  assert.match(kit, /h\("div", \{ class: "pb" \}, h\("div", \{ class: "pgt" \}, row\.title\), row\.sub \? h\("div", \{ class: "pgs" \}, row\.sub\) : null, row\.more \|\| null\)/);
+  const reach = setupPart(setup, "async function reach(");
+  assert.match(reach, /state\.draft\.server === "remote" && plan\.choices\?\.honchoMode === "external-setup-required"/);
+  assert.match(reach, /throw new Error\(refused\.length \? refused\.join\(" "\) : UNREACHABLE\);/);
+});
+
 test("only a computer that collects, or one in a team that stores nothing, joins a team alone", () => {
   const team = { hub: HUB, signedIn: true, loginEnded: null };
   assert.equal(joinsAlone(COLLECTS), true);
@@ -767,7 +817,7 @@ test("joining alone, the team's peer name goes into this computer's setup first,
     "기억 서버",
     "share: 팀에 내 서버 열기 · 팀원이 승인을 받아 물을 수 있는 내 서버 주소를 만듭니다.",
     "점검",
-    "check: 점검 · 대화 모으기, 기억 서버",
+    "check: 점검 · 대화 수집, 기억 서버",
   ]);
   assert.ok(rows.every((task) => task.label || task.state === "wait"));
   // No plugin or past rows: the computer goes on collecting as it does.
@@ -777,10 +827,10 @@ test("joining alone, the team's peer name goes into this computer's setup first,
   // The same name: no row.
   const same = joining(COLLECTS, { peer: "chen" });
   assert.equal(peerChange(same, COLLECTS), null);
-  assert.deepEqual(lines(applyRows(same, COLLECTS)), ["기억 서버", "share: 팀에 내 서버 열기 · 팀원이 승인을 받아 물을 수 있는 내 서버 주소를 만듭니다.", "점검", "check: 점검 · 대화 모으기, 기억 서버"]);
+  assert.deepEqual(lines(applyRows(same, COLLECTS)), ["기억 서버", "share: 팀에 내 서버 열기 · 팀원이 승인을 받아 물을 수 있는 내 서버 주소를 만듭니다.", "점검", "check: 점검 · 대화 수집, 기억 서버"]);
   // Collecting into a server on another computer: the peer row, and no server of this computer to open.
   const away = { ...AWAY, user: { peerId: "chen" }, agents: { claude: true }, team: { hub: null, localHost: null, computer: "studio" } };
-  assert.deepEqual(lines(applyRows(joining(away, { server: "remote" }), away)), ["대화 수집", "peer: peer 이름 바꾸기 · chen → chen-example-com", "점검", "check: 점검 · 대화 모으기, 기억 서버"]);
+  assert.deepEqual(lines(applyRows(joining(away, { server: "remote" }), away)), ["대화 수집", "peer: peer 이름 바꾸기 · chen → chen-example-com", "점검", "check: 점검 · 대화 수집, 기억 서버"]);
   // Storing nothing: no setup to rename, the team's logins checked.
   const none = { configured: false, localServer: null, honcho: { url: "" }, user: { peerId: "" }, team: { hub: HUB, signedIn: true }, targets: [] };
   const storesNothing = joining(none, { server: "none" });

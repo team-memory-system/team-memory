@@ -66,7 +66,7 @@ export function etaText(seconds) {
 }
 
 /** "48MB", or "12KB" for a file under a megabyte. */
-function fileSize(bytes) {
+export function fileSize(bytes) {
   const size = Number(bytes || 0);
   return size < 1024 * 1024 ? `${number(Math.max(1, Math.round(size / 1024)))}KB` : `${number(Math.round(size / 1024 / 1024))}MB`;
 }

@@ -7,7 +7,8 @@ import { h, clear } from "../lib/dom.js";
 import { pickFolder } from "../lib/folders.js";
 import { ago, fullDate, number } from "../lib/format.js";
 import { block, field, kv, modal, opt, opts } from "../lib/kit.js";
-import { button, busy, details, errorNotice, notice, pageHead, spinner, tag, toast, toggle } from "../lib/ui.js";
+import { fileSize } from "../lib/past.js";
+import { button, busy, errorNotice, notice, pageHead, spinner, tag, toast, toggle } from "../lib/ui.js";
 
 const REASONS = {
   missing: "폴더를 찾을 수 없습니다. 드라이브나 NAS가 연결돼 있는지 확인하세요.",
@@ -48,6 +49,31 @@ function countsLine(counts) {
 
 function reasonText(run) {
   return REASONS[run?.reason] || run?.detail || run?.error || "";
+}
+
+/** "3분 12초", "40초": how long a run took; "" when it is not known. */
+function tookText(run) {
+  const seconds = Math.round((Date.parse(run.finishedAt) - Date.parse(run.startedAt)) / 1000);
+  if (!Number.isFinite(seconds) || seconds < 0) return "";
+  if (seconds < 60) return `${seconds}초`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}분 ${seconds % 60}초`;
+  return `${Math.floor(seconds / 3600)}시간 ${Math.floor((seconds % 3600) / 60)}분`;
+}
+
+/** The last run in words, folded under the block: when, how long, where, each kind of file, and the files it could not copy. */
+function runDetails(run) {
+  const counts = run.counts || {};
+  const files = BUCKET_LABELS.filter(([key]) => counts[key])
+    .map(([key, label]) => `${label} ${number(counts[key])}개${run.bytes?.[key] ? ` · ${fileSize(run.bytes[key])}` : ""}`);
+  if (counts.errors) files.push(`복사하지 못함 ${number(counts.errors)}개`);
+  const result = run.ok ? "성공" : run.waiting ? ["연결 대기", reasonText(run) ? h("div", { class: "s" }, reasonText(run)) : null] : [run.counts ? "일부를 복사하지 못함" : "복사하지 못함", run.error ? h("div", { class: "s" }, run.error) : null];
+  return h("details", { class: "fold" }, h("summary", {}, "지난 백업 자세히"),
+    kv("시작", fullDate(run.startedAt)),
+    tookText(run) ? kv("걸린 시간", tookText(run)) : null,
+    kv("결과", result),
+    run.destination ? kv("백업한 곳", h("span", { class: "mono" }, run.destination)) : null,
+    files.length ? kv("파일", files.map((line) => h("div", {}, line))) : null,
+    run.errors?.length ? kv("복사하지 못한 파일", run.errors.map((item) => h("div", {}, h("span", { class: "mono" }, item.path), ` · ${item.error}`))) : null);
 }
 
 function where(destination) {
@@ -218,7 +244,7 @@ export default {
             h("li", {}, h("span", { class: "mono" }, "history.jsonl"), "과 Claude 메모리 노트도 복사합니다. subagent 대화와 tool 결과는 넣지 않습니다."),
             h("li", {}, "백업한 곳에서는 아무것도 지우지 않습니다. 같은 이름인데 내용이 다르면 둘 다 남깁니다."),
             h("li", {}, "백업할 곳에 닿지 않으면 연결 대기로 두고, 이 컴퓨터 디스크에는 아무것도 쓰지 않습니다."))),
-        run ? details("지난 백업 결과", run) : null);
+        run ? runDetails(run) : null);
     }
 
     clear(body, spinner());

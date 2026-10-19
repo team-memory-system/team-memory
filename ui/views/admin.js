@@ -225,10 +225,11 @@ export default {
             ? button("관리자에서 빼기", { kind: "small", onClick: (event) => changeAdmin(event.currentTarget, person, false, draw) })
             : button("관리자로 바꾸기", { kind: "small", onClick: (event) => changeAdmin(event.currentTarget, person, true, draw) });
           const rename = button("이름 바꾸기", { kind: "small", onClick: () => openName(person, draw) });
+          // Named as 팀 and the teammates' agents name them, the email under it.
           return listItem({
-            title: person.nickname || person.email,
+            title: personName(person),
             tags: own ? [" ", tag("나 · 관리자")] : person.admin ? [" ", tag("관리자")] : fresh.has(person.email) ? [" ", tag("방금 더함", "new")] : [],
-            sub: [person.nickname ? person.email : null, server ? `서버 ${server}` : person.joined ? "서버 없음" : "아직 로그인하지 않음"].filter(Boolean).join(" · "),
+            sub: [person.email, server ? `서버 ${server}` : person.joined ? "서버 없음" : "아직 로그인하지 않음"].filter(Boolean).join(" · "),
             fresh: fresh.has(person.email),
             end: own ? rename : [rename, toggle, button("팀에서 빼기", { kind: "small danger", onClick: async (event) => {
               const target = event.currentTarget;

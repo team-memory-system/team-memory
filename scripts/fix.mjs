@@ -110,9 +110,9 @@ export async function fixChecks(checks, deps) {
     await told("runtime", "run");
     const setup = await attempt(() => deps.setupApply({}));
     steps.push({ step: "setup", ok: Boolean(setup?.ok) });
-    if (!setup?.ok) return stop("runtime", "대화 모으기를 새 판으로 바꾸지 못했습니다", setup);
+    if (!setup?.ok) return stop("runtime", "대화 수집을 새 판으로 바꾸지 못했습니다", setup);
     await told("runtime", "ok");
-    done.push(`대화 모으기를 ${toVersion(VERSION)} 바꿨습니다.`);
+    done.push(`대화 수집을 ${toVersion(VERSION)} 바꿨습니다.`);
   }
 
   let serverOff = false;

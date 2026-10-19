@@ -54,7 +54,10 @@ answer.
    the 팀 주소 the admin copied), 새 팀 만들기 (from a Cloudflare API token) or 혼자
    쓰기, then the steps 서버 → 모델 (only when a server is made here) → 에이전트 →
    지난 대화 → 프로젝트 → 팀원 (only for a team), 적용, a row for each thing it does (적용 중),
-   and what is left to do in each agent (할 일). After that, the menus: 대시보드
+   and what is left to do in each agent (할 일). A row that asks something of the person
+   (a subscription login's link and paste box) has it under that row, and 내 서버 연결
+   to a server on another computer goes through only once that server answers. After
+   that, the menus: 대시보드
    shows the servers the conversations go to in one table (up to date or not, what
    waits here, when the last one went, what the server holds), how far Honcho has
    got putting them in order, and tiles for the gateway, backup and sharing (the
@@ -471,8 +474,9 @@ An agent asked to install runs its pair, then opens the app from the plugin fold
 
 The app's bell says when a new version is out, and 업데이트 there brings what is behind
 on this computer up to it (`scripts/update.mjs`; the screen is `ui/lib/update.js`).
-Nothing goes up by itself: rebuilding the server stops teammates' reading for minutes,
-so the owner picks the time.
+Nothing goes up by itself: the server's new images are built while it runs, but
+starting it again on them stops teammates' reading for a moment, so the owner picks
+the time.
 
 - **What it reads.** Once a day, and an hour after a failed read, the app reads `main`
   of team-memory-system/team-memory on GitHub: `.claude-plugin/plugin.json`'s version,
@@ -481,8 +485,8 @@ so the owner picks the time.
   The repository has no releases or tags, so main is the version. When main is above
   the lowest of the app answering, the Claude Code plugin, the Codex plugin (its
   highest cache folder) and the collector, the bell shows 새 판 <version> with what goes
-  up, and the dashboard says to press it there. "기억 서버를 다시 만드는 동안 팀원
-  열람이 멈춥니다." is added only when a running server's pins or container files differ
+  up, and the dashboard says to press it there. "기억 서버를 새 판으로 다시 켜는 동안
+  잠깐 팀원 열람이 멈춥니다." is added only when a running server's pins or container files differ
   from main's, the same three things `doctor`'s `server-version` compares. A plugin
   installed from another marketplace cannot reach main's version, and its row fails.
 - **Pressing 업데이트** (`POST /api/update/start` with what the bell showed) reads main
@@ -495,7 +499,7 @@ so the owner picks the time.
 - **The order.** The plugin goes up first, in a detached `update run`
   (`claude plugin marketplace update`, `claude plugin update`). Then `update continue`
   from the new plugin folder runs the same doctor and `fix.mjs` as `doctor --fix`, row
-  by row: 대화 모으기 (`setup apply`), 기억 서버 다시 만들기 (`server start --build`; a
+  by row: 대화 수집 (`setup apply`), 기억 서버 다시 만들기 (`server start --build`; a
   server that was off is only prepared, stays off, and the end lists 서버 켜기), 앱 다시
   켜기, and the Codex plugin last, because Codex keeps only its newest folder and the
   app may be serving from the old one. With Codex alone the order is Codex plugin, app,
@@ -511,7 +515,11 @@ so the owner picks the time.
   server row, and logging in there retries by itself.
 - **Failures** keep the command's last line as the reason (`Honcho /health: …` for a
   health check) and up to 20 lines before it under 오류 내용, addresses masked. A
-  compose step that fails, as on 10-17, shows as it failed.
+  reason in a program's own words (no Korean in it, like the compose step that failed
+  on 10-17) shows as "여기서 멈췄습니다. 다시 시도를 누르세요.", the words themselves
+  first under 오류 내용. Stopped, the rows' heading says 업데이트가 멈췄습니다 (or 고치기가
+  멈췄습니다, or 구독 계정 로그인을 기다립니다), and while the bell keeps it (a day)
+  the dashboard says where it stopped and to open it from the bell.
 - **The end** is first setup's 점검 with the to-dos left: open Claude Code and Codex
   sessions anew, 서버 켜기 for a server left off, and on the computer that made the team
   팀 주소 다시 올리기 when the hub's code changed (each deploy records a sha256 of the
@@ -1284,7 +1292,7 @@ The owner's computers that send to their server show its whole app in their own 
 
 ### Who asked, and Jev / 조회 기록과 Jev
 
-조회 기록 lists every call that reached `mcp`: when, who (the email the gate verified), the question, and whether it passed, was refused or failed. The bridge writes each call to `honcho_audit.tool_calls`; the dashboard reads them from the bridge's `GET http://mcp:8765/audit` with `Authorization: Bearer <HONCHO_TEAM_MCP_TOKEN>` (`HONCHO_MCP_AUDIT_URL`, `HONCHO_MCP_BEARER_TOKEN` on the dashboard, `HONCHO_AUDIT_READ=1` on `mcp`), and the app relays `/api/dashboard/audit` to the dashboard. `/audit` is outside `/mcp`, so the gate never passes it on, and `mcp` has no host port. While sharing is off there is no `mcp`: the dashboard answers 502 and the screen says sharing is off. The records stay in the database and show again once it is on.
+조회 기록 lists every call that reached `mcp`: when, who (the email the gate verified, shown by the name the team gives that person, as 팀, 가드 시험 and 관리자 show it, with the email in the call's window), the question, and whether it passed, was refused or failed. A failed call's cause reads as a few words by its kind (the listing of the folders' conversations, a timeout, no connection, Honcho's HTTP status), the bridge's own words under 서버가 남긴 이유 원문. The bridge writes each call to `honcho_audit.tool_calls`; the dashboard reads them from the bridge's `GET http://mcp:8765/audit` with `Authorization: Bearer <HONCHO_TEAM_MCP_TOKEN>` (`HONCHO_MCP_AUDIT_URL`, `HONCHO_MCP_BEARER_TOKEN` on the dashboard, `HONCHO_AUDIT_READ=1` on `mcp`), and the app relays `/api/dashboard/audit` to the dashboard. `/audit` is outside `/mcp`, so the gate never passes it on, and `mcp` has no host port. While sharing is off there is no `mcp`: the dashboard answers 502 and the screen says sharing is off. The records stay in the database and show again once it is on.
 
 Jev judges each teammate's call, their question with the words they search for, before it reaches the memory, and refuses one about the owner's private life rather than shared work. A question longer than Jev reads at once (16,000 characters) is refused without a judgment, so padding cannot carry one past it. Once the memory has answered, Jev judges what the call found too, since a harmless question can still draw private matters out: a result that gives away the private life, credentials, finances or health of the owner or anyone else is withheld, and the teammate gets the same refusal a question gets, so they cannot tell the memory held anything. A result is judged message by message (each conversation listed, each conclusion), all at once, and one private message withholds the whole result: judged as one text, a salary among ten work messages thinned out to a pass (2026-10-16). Past 50 items a list is judged in 50 groups of neighbours, and an item longer than 16,000 characters in overlapping pieces. A refused question or withheld result is recorded as `denied`; each row carries the question's score (Jev) and the result's (답), and a call let through without a judgment carries the reason.
 

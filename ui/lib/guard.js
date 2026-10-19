@@ -72,19 +72,42 @@ export function reasonText(reason, allowed, { cause = false } = {}) {
   return text;
 }
 
+// Why a call failed on the server, by the kind of failure the bridge wrote: the
+// exception's type, then its words (RuntimeError: Honcho API 500 for …).
+const FAILURES = [
+  [/Timeout|timed out/i, () => "기억 서버가 제때 답하지 않음"],
+  [/Connect(?:ion)?Error|Connection refused|connection error/i, () => "기억 서버에 닿지 못함"],
+  [/^(?:\w+: )?Honcho API (\d{3}) /, (match) => `기억 서버가 오류로 답함 (HTTP ${match[1]})`],
+  [/^(?:\w+: )?Resource not found/, () => "찾는 대화나 메시지가 없음"],
+];
+
+/**
+ * A failed call's cause in a few words, the listing of a teammate's conversations
+ * named first when that is what failed. The bridge's own words stay in the call's
+ * window (서버가 남긴 이유 원문).
+ */
+function failureText(text) {
+  const listing = /^listing the sessions failed: (.*)$/.exec(text);
+  const cause = listing ? listing[1] : text;
+  const known = FAILURES.find(([pattern]) => pattern.test(cause));
+  const why = known ? known[1](known[0].exec(cause)) : "서버에서 실패";
+  return listing ? `열린 폴더의 대화 목록을 읽지 못함 · ${why}` : why;
+}
+
 /**
  * Why a call in the audit log was refused, failed or went through without a
  * judgment, in a few words; null for a plain pass. A call let through can carry a
- * reason for its question and another for its answer, joined by "; ". A refusal's
- * own "; " (…; omit it) stays inside it: only a Jev reason starts a second one.
+ * reason for its question and another for its answer, joined by "; ", and a failed
+ * one its cause and then what let it through unjudged. A refusal's own "; " (…;
+ * omit it) stays inside it: only a Jev reason starts a second one.
  */
 export function callReason(row) {
   const error = String(row?.error || "").split("\n")[0].trim();
   if (!error) return null;
-  if (row.status === "error") return error;
   const allowed = row.status !== "denied";
   const parts = error.split(/; (?=out of scope|query too long|answer |not judged|jev unavailable)/);
-  return [...new Set(parts.map((part) => reasonText(part, allowed)))].join(" · ");
+  const said = parts.map((part, index) => (row.status === "error" && !index ? failureText(part) : reasonText(part, allowed)));
+  return [...new Set(said)].join(" · ");
 }
 
 export const scoreText = (value) => Number(value).toFixed(2);

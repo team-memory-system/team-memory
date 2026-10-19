@@ -26,7 +26,7 @@ import { gateway, get, post } from "../lib/api.js";
 import { backendAccounts } from "../lib/accounts.js";
 import { defaultRoles, roleRows, ROLES } from "../lib/chat-roles.js";
 import { h, clear, copyText } from "../lib/dom.js";
-import { number } from "../lib/format.js";
+import { josa, number } from "../lib/format.js";
 import { counter, field, kv, modal, opt, opts, progressList, stepper, todoList } from "../lib/kit.js";
 import { checkBox, checkHere, checkingText, checkTeam, failures, missingPlugins, startServer } from "../lib/check.js";
 import { shownElsewhere } from "../lib/machines.js";
@@ -39,6 +39,7 @@ import {
   detectAgents,
   dockerSteps,
   draftServer,
+  explainWarning,
   loadProjects,
   NEW_SERVER_SUB,
   problem,
@@ -81,6 +82,11 @@ const TODO_BELL = { title: "알림", text: "팀원이 승인하면 오른쪽 위
 // The Cloudflare API token 새 팀 만들기 needs, in the words of Cloudflare's token screen.
 const TOKEN_PERMISSIONS = "Account의 Cloudflare Tunnel: Edit, Access: Apps and Policies: Edit, Access: Organizations, Identity Providers, and Groups: Read, Workers: Admin과, 쓸 zone의 DNS: Edit, Zone: Read, Workers Routes: Edit";
 
+// My server on another computer at 적용: what the plan warned of when the server
+// answered and refused this computer, and what is said when it did not answer.
+const REFUSED = /requires an API token|rejected the API token|is behind Cloudflare Access and refused this computer/;
+const UNREACHABLE = "이 주소의 서버가 답하지 않습니다. 그 컴퓨터에서 기억 서버와 공유가 켜져 있는지 보고 다시 시도를 누르세요. 주소가 틀렸으면 설정으로 돌아가기를 누르세요.";
+
 // Where `server prepare` stopped for the person to do something, in this window's words.
 const NEXT_ACTIONS = {
   "docker-first-run": "Docker Desktop 창에서 약관에 동의하고 처음 설정을 마치세요. 엔진이 켜졌다고 하면 다시 시도를 누르세요.",
@@ -94,10 +100,10 @@ function idpSub(idp, idps) {
   return named && idps.filter((other) => (other.name || "").trim() === named).length < 2 ? null : h("span", { class: "mono" }, idp.id);
 }
 
-/** "alice와 bob", "alice, bob과 carol": names joined the way a sentence reads. */
-function joined(names) {
+/** "민지와 아람", "alice, bob과 carol": names joined the way a sentence reads. */
+export function joined(names) {
   if (names.length < 2) return names.join("");
-  return `${names.slice(0, -1).join(", ")}와 ${names.at(-1)}`;
+  return `${[...names.slice(0, -2), josa(names.at(-2), "과/와")].join(", ")} ${names.at(-1)}`;
 }
 
 /** Where a computer set up already collects now: its own server, another, or nowhere. */
@@ -217,8 +223,9 @@ export function applyRows(state, context) {
     if (draft.server !== "none") {
       tasks.push({ label: "에이전트" });
       const agents = Object.keys(AGENTS).filter((name) => draft.agents?.has(name));
+      // Said once, under the first: the rows after it hold their new turns the same way.
       const held = pastToPut(draft) ? HELD : null;
-      agents.forEach((name, index) => tasks.push({ key: "plugin", first: !index, title: `${AGENTS[name]}에 플러그인 설치`, sub: held }));
+      agents.forEach((name, index) => tasks.push({ key: "plugin", first: !index, title: `${AGENTS[name]}에 플러그인 설치`, sub: index ? null : held }));
       tasks.push({ label: "지난 대화" });
       tasks.push({ key: "line", title: "시작한 시각순으로 줄 세우기" });
       if (draft.past.totals?.dupes) tasks.push({ key: "dupes", title: "겹치는 대화 빼기" });
@@ -567,6 +574,15 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
         check: () => login.error,
       };
     }
+    if (login.phase === "done") {
+      // Back from the step after it: the login stands, and 다음 goes on with it.
+      return {
+        body: h("div", {}, h("h3", {}, "로그인했습니다"),
+          h("div", { class: "idbox" }, state.team.name ? h("b", {}, state.team.name) : null, host),
+          h("div", { class: "sheet-kv" }, kv("Google 계정", h("span", { class: "mono" }, login.email || state.team.me?.email || "")))),
+        check: () => null,
+      };
+    }
     const from = login.phase === "idle" && !login.tab ? teamToLeave() : null;
     if (from) {
       // Asked before the login starts: once it does, the team this computer is in is left.
@@ -888,7 +904,8 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     clear(issue);
     win.steps(stepper(keys.map((key) => LABELS[key]), at));
     win.body(step.body, issue);
-    const back = button(keys[at] === "login" ? "취소" : "이전", { kind: "quiet", onClick: () => {
+    // A login going on is cancelled; one done is left behind, so it is 이전.
+    const back = button(keys[at] === "login" && state.login.phase !== "done" ? "취소" : "이전", { kind: "quiet", onClick: () => {
       state.login.abort?.();
       if (keys[at] === "login") state.login.phase = "idle";
       // A link on a computer set up already came for that team alone: no start cards behind it.
@@ -908,7 +925,12 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
     const waiting = h("span", { class: "foot-hint" });
     const primary = button(label(), { kind: "primary", onClick: async (event) => {
       const problemText = step.check();
-      if (problemText) { say(notice("warn", problemText)); return; }
+      if (problemText) {
+        say(notice("warn", problemText));
+        // What was missing goes once the person changes the step; 다음 checks again.
+        step.body?.addEventListener?.("input", () => clear(issue), { once: true });
+        return;
+      }
       keys = stepKeys();
       if (last()) { apply(); return; }
       // The login opens a tab: opened now, in the click, so the browser lets it. Another
@@ -930,7 +952,8 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
           return;
         }
       }
-      state.login.phase = "idle";
+      // Into the login it starts anew; a login done stays done through the steps after it.
+      if (keys[at + 1] === "login") state.login.phase = "idle";
       at += 1;
       drawStep();
     } });
@@ -1017,6 +1040,12 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
   async function reach() {
     const plan = await post("/api/setup/plan", setupBody(state.draft, app.context));
     if (!plan.ready) throw new Error(problem(plan, "이 서버에 쌓을 수 없습니다."));
+    // The plan takes a server that does not answer, with a warning at most; my server
+    // on another computer is connected only once it answers, so the row says why not.
+    if (state.draft.server === "remote" && plan.choices?.honchoMode === "external-setup-required") {
+      const refused = (plan.warnings || []).filter((warning) => REFUSED.test(warning)).map(explainWarning);
+      throw new Error(refused.length ? refused.join(" ") : UNREACHABLE);
+    }
   }
 
   /** My server on another computer: this computer registers with its gate, then setup sends there. */
@@ -1157,7 +1186,6 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
   const keep = () => keepSetup(setupSnapshot(state));
 
   function draw() {
-    const running = state.tasks.find((task) => task.state === "run");
     const failed = state.tasks.find((task) => task.state === "bad");
     win.body(
       h("h3", {}, "적용 중"),
@@ -1167,9 +1195,9 @@ export function openSetup({ firstRun, onDone, onCancel, team = "" }) {
         const sub = task.state === "bad" ? task.error : task.sub;
         // Docker Desktop's window, until the install is through.
         const docker = task.key === "install" && task.state !== "ok" ? state.docker : null;
-        return { state: task.state, title: task.title, sub: docker ? [sub, docker.map((line) => h("div", { class: "hint" }, line))] : sub };
-      })),
-      running?.extra || null);
+        // A login's link and paste box sit under its own row, not below 점검.
+        return { state: task.state, title: task.title, sub: docker ? [sub, docker.map((line) => h("div", { class: "hint" }, line))] : sub, more: task.state === "run" ? task.extra : null };
+      })));
     // A window opened again runs nothing by itself: the rows left wait for 이어서 하기.
     if (paused) {
       win.foot(button("처음부터", { kind: "quiet", onClick: restart }), button("이어서 하기", { kind: "primary", onClick: () => { paused = false; run(); } }));

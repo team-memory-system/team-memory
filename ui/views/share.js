@@ -82,7 +82,7 @@ async function teamShareOn(share, redraw) {
       // Turned off from another computer, sharing would cut the way this page came.
       actions: [shownElsewhere() ? hereOnlyButton("공유 끄기", "이 컴퓨터 앞에서만 끌 수 있습니다") : button("공유 끄기", { kind: "small", onClick: async (event) => {
         const target = event.currentTarget;
-        const ok = await confirmWindow({ title: "공유를 끌까요?", text: "Tunnel과 gate를 이 컴퓨터에서 멈춥니다. 내 다른 컴퓨터의 대화는 다시 켤 때까지 그 컴퓨터에 쌓였다가 이어서 옵니다. 팀원은 그동안 묻지 못합니다.", confirm: "끄기", danger: true });
+        const ok = await confirmWindow({ title: "공유를 끌까요?", text: "이 서버의 주소를 닫습니다. 내 다른 컴퓨터의 대화는 다시 켤 때까지 그 컴퓨터에 쌓였다가 이어서 옵니다. 팀원은 그동안 묻지 못합니다.", confirm: "끄기", danger: true });
         if (!ok) return;
         await busy(target, async () => { await cli("/api/server/share/disable", {}); await redraw(false); }, { done: "공유를 껐습니다" });
       } })],

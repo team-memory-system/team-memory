@@ -19,6 +19,8 @@ const AGENT_FOLDERS = { claude: "~/.claude", codex: "~/.codex" };
 const AGENT_LETTERS = { claude: "C", codex: "X" };
 export const NEW_SERVER_SUB = "ChatGPT나 Claude 구독이 필요합니다.";
 const PEER = /^[A-Za-z0-9_-]+$/;
+// A Cloudflare Access service token, in the names Cloudflare gives its two halves.
+const ACCESS_PAIR = "Access service token은 Client ID와 Client Secret을 함께 넣어야 합니다.";
 
 /** Two addresses for the same server, whichever way the loopback is written. */
 export function sameServer(a, b) {
@@ -159,10 +161,10 @@ export function serverStep(draft, context, { choices = ["here", "remote"], peer 
   const remoteFields = h("div", { class: "subfields", hidden: draft.server !== "remote" },
     field("서버 주소", urlInput, "그 컴퓨터의 서버 → 공유에서 복사합니다."),
     field("서버 token", tokenInput, "그 서버가 token을 요구할 때만 넣습니다. 채팅에 붙여 넣지 말고 여기에만 넣으세요."),
-    h("details", { class: "fold" }, h("summary", {}, "Access 서비스 토큰"),
+    h("details", { class: "fold" }, h("summary", {}, "Access service token"),
       h("p", { class: "hint" }, "직접 만든 Cloudflare Access 뒤의 서버일 때만 넣습니다."),
-      field("서비스 토큰 ID", accessId),
-      field("서비스 토큰 비밀", accessSecret)));
+      field("Client ID", accessId),
+      field("Client Secret", accessSecret)));
   const pick = (choice) => () => {
     draft.server = choice;
     remoteFields.hidden = choice !== "remote";
@@ -203,7 +205,7 @@ export function serverStep(draft, context, { choices = ["here", "remote"], peer 
           urlInput.focus();
           return wrong;
         }
-        if (Boolean(draft.accessClientId.trim()) !== Boolean(draft.accessClientSecret.trim())) return "Access 서비스 토큰은 ID와 비밀을 함께 넣어야 합니다.";
+        if (Boolean(draft.accessClientId.trim()) !== Boolean(draft.accessClientSecret.trim())) return ACCESS_PAIR;
       }
       if (peer && draft.server !== "none" && !PEER.test(draft.userPeer.trim())) {
         peerInput.focus();
@@ -226,9 +228,9 @@ function otherServers(draft, company) {
     field("이름", input("label", { class: "input", placeholder: "예: 회사" })),
     field("서버 주소", url),
     field("서버 token", input("apiToken", { type: "password" }), "그 서버를 둔 컴퓨터의 서버 → 공유에서 복사합니다. 회사 서버면 관리자에게 받습니다."),
-    h("details", { class: "fold" }, h("summary", {}, "Access 서비스 토큰"),
-      field("서비스 토큰 ID", input("accessClientId", { type: "password" })),
-      field("서비스 토큰 비밀", input("accessClientSecret", { type: "password" }))));
+    h("details", { class: "fold" }, h("summary", {}, "Access service token"),
+      field("Client ID", input("accessClientId", { type: "password" })),
+      field("Client Secret", input("accessClientSecret", { type: "password" }))));
   const rows = draft.targets.map((target) => (target.team && !target.wasEnabled
     // Asked, not approved yet: nothing to tick until its owner answers.
     ? opt({
@@ -282,7 +284,7 @@ function otherServers(draft, company) {
         url.focus();
         return "더할 서버의 주소를 https:// 로 시작하게 넣으세요.";
       }
-      if (Boolean(draft.extra.accessClientId.trim()) !== Boolean(draft.extra.accessClientSecret.trim())) return "Access 서비스 토큰은 ID와 비밀을 함께 넣어야 합니다.";
+      if (Boolean(draft.extra.accessClientId.trim()) !== Boolean(draft.extra.accessClientSecret.trim())) return ACCESS_PAIR;
       return null;
     },
   };
@@ -583,8 +585,8 @@ const WARNINGS = [
   [/(\w+) collection is enabled, but the Team Memory plugin was not detected as enabled in (\w+)/, (m) => `${m[2] === "codex" ? "Codex" : "Claude Code"}에 팀 메모리 플러그인이 켜져 있지 않습니다. 플러그인을 켜야 대화가 모입니다.`],
   [/A Honcho server answers at (\S+), but it is not the server this plugin installed/, (m) => `${m[1]}에 기억 서버가 있지만 이 앱이 설치한 서버는 아닙니다. 내 서버가 맞는지 확인하세요.`],
   [/requires an API token/, () => "이 서버는 token이 필요합니다. 서버 token 칸을 채우세요."],
-  [/is behind Cloudflare Access and refused this computer/, () => "Cloudflare Access가 이 컴퓨터를 막았습니다. Access 서비스 토큰을 열고 그 서버의 서비스 토큰 ID와 비밀을 넣으세요."],
-  [/Cloudflare Access (?:client id|service token).*(?:both|together)/i, () => "Access 서비스 토큰은 ID와 비밀을 함께 넣어야 합니다."],
+  [/is behind Cloudflare Access and refused this computer/, () => "Cloudflare Access가 이 컴퓨터를 막았습니다. Access service token을 열고 그 서버의 Client ID와 Client Secret을 넣으세요."],
+  [/Cloudflare Access (?:client id|service token).*(?:both|together)/i, () => ACCESS_PAIR],
   [/rejected the API token/, () => "서버가 이 token을 받지 않습니다. 서버를 둔 컴퓨터의 token이 맞는지 확인하세요."],
   [/at least one detected agent must be selected/, () => "대화를 수집할 에이전트를 하나 이상 고르세요. 이 컴퓨터에 설치된 Claude Code나 Codex만 고를 수 있습니다."],
   [/The API token saved for (\S+) is not carried to (\S+)/, (m) => `${m[1]}에 쓰던 token은 ${m[2]}로 옮기지 않습니다. 새 서버의 token을 넣으세요.`],

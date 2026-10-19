@@ -626,6 +626,28 @@ test("a teammate's screens never name Cloudflare; only the admin's do", async ()
   assert.ok(strings(step("makeStep")).some((text) => /cloudflare/i.test(text)), "새 팀 만들기 says it needs a Cloudflare token");
 });
 
+test("every screen calls a teammate by the name the team gives them, and says what it shows without the parts behind it", async () => {
+  const read = (file) => fsp.readFile(path.join(ROOT, "ui", file), "utf8");
+  // 조회 기록 and 가드 시험 read the team's names; 관리자 shows the name, the email under it.
+  const audit = await read("views/audit.js");
+  assert.match(audit, /const who = \(caller\) => names\.get\(caller\) \|\| caller \|\| "알 수 없음";/);
+  assert.match(audit, /const sub = \[who\(row\.caller\), /);
+  assert.match(audit, /teamDirectory\(\)\.then\(\(directory\) => \{\n\s*for \(const person of directory\?\.people \|\| \[\]\) \{\n\s*const name = personName\(person\);/);
+  assert.equal((audit.match(/openCall\(row, who\);/g) || []).length, 2, "a click and Enter open the call with the names");
+  assert.match(await read("lib/guard-trial.js"), /\$\{personName\(people\.get\(grant\.email\) \|\| grant\)\}에게 연 /);
+  const admin = await read("views/admin.js");
+  assert.match(admin, /title: personName\(person\),\n.*\n\s*sub: \[person\.email, /);
+  // 백업's last run reads as rows, not the record it was kept as.
+  const backup = await read("views/backup.js");
+  assert.doesNotMatch(backup, /details\(/);
+  assert.match(backup, /run \? runDetails\(run\) : null/);
+  // Turning team sharing off says what goes from the page; the server check says what it does.
+  const share = await read("views/share.js");
+  assert.match(share, /title: "공유를 끌까요\?", text: "이 서버의 주소를 닫습니다\. /);
+  assert.doesNotMatch(share, /Tunnel과 gate/);
+  assert.doesNotMatch(await read("views/server.js"), /두드려/);
+});
+
 test("a token typed into the setup steps goes to the setup routes alone, never to an address or a log", async () => {
   const read = (file) => fsp.readFile(path.join(ROOT, "ui", file), "utf8");
   const collect = await read("lib/collect.js");

@@ -43,11 +43,21 @@ test("each reason the bridge records reads as a few words, by how the call went"
   );
   assert.equal(passed("not judged: the team hub has no Jev key; not judged: the team hub has no Jev key"), "판정 없이 통과 · 팀에 Jev 키 없음");
 
-  // A plain pass says nothing; an error and an unknown reason stay as they came.
+  // A plain pass says nothing; an unknown reason stays as it came.
   assert.equal(passed(null), null);
   assert.equal(passed(""), null);
-  assert.equal(callReason({ status: "error", error: "Honcho API 500 for /v3/x: boom\ntrace" }), "Honcho API 500 for /v3/x: boom");
   assert.equal(denied("something new"), "something new");
+
+  // A call that failed says its cause by kind; the bridge's words stay in the call's window.
+  const failed = (error) => callReason({ status: "error", error });
+  assert.equal(failed("listing the sessions failed: ReadTimeout: timed out"), "열린 폴더의 대화 목록을 읽지 못함 · 기억 서버가 제때 답하지 않음");
+  assert.equal(failed("listing the sessions failed: ConnectError: [Errno 111] Connection refused"), "열린 폴더의 대화 목록을 읽지 못함 · 기억 서버에 닿지 못함");
+  assert.equal(failed("RuntimeError: Honcho API 500 for /v3/x: boom\ntrace"), "기억 서버가 오류로 답함 (HTTP 500)");
+  assert.equal(failed("Honcho API 404 for /v3/x: gone"), "기억 서버가 오류로 답함 (HTTP 404)");
+  assert.equal(failed("RuntimeError: Resource not found: abc"), "찾는 대화나 메시지가 없음");
+  assert.equal(failed("ValueError: something odd"), "서버에서 실패");
+  // A failed call let through unjudged says that after its cause.
+  assert.equal(failed("ReadTimeout: timed out; jev unavailable: team guard: ConnectError"), "기억 서버가 제때 답하지 않음 · 판정 없이 통과 · Jev가 답하지 않음");
   assert.equal(reasonText(undefined, true), "");
 });
 

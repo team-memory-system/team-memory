@@ -250,8 +250,8 @@ test("main above the lowest of the app, the plugins and the collector is newer, 
   assert.equal(status.newer, true);
   assert.equal(status.latest, "0.9.1");
   assert.deepEqual(status.here, { app: "0.9.1", claude: "0.9.1", codex: "0.9.1", runtime: "0.9.0" });
-  assert.deepEqual(status.rows, [{ id: "runtime", title: "대화 모으기" }], "only what is behind is brought up");
-  assert.equal(status.summary, "대화 모으기를 올립니다.");
+  assert.deepEqual(status.rows, [{ id: "runtime", title: "대화 수집" }], "only what is behind is brought up");
+  assert.equal(status.summary, "대화 수집을 올립니다.");
   assert.equal(status.warning, null);
   assert.deepEqual(behind.fetched.sort(), [
     `${MAIN}.claude-plugin/plugin.json`,
@@ -281,13 +281,13 @@ test("every row says what it brings up, in the order it runs, and a running serv
   const status = await updateStatus(b.options);
   assert.deepEqual(status.rows, [
     { id: "claude", title: "Claude Code 플러그인" },
-    { id: "runtime", title: "대화 모으기" },
+    { id: "runtime", title: "대화 수집" },
     { id: "server", title: "기억 서버 다시 만들기", sub: "몇 분에서 10분 넘게 걸립니다." },
     { id: "app", title: "앱 다시 켜기" },
     { id: "codex", title: "Codex 플러그인" },
   ]);
-  assert.equal(status.summary, "플러그인과 대화 모으기, 기억 서버를 올립니다.");
-  assert.equal(status.warning, "기억 서버를 다시 만드는 동안 팀원 열람이 멈춥니다.");
+  assert.equal(status.summary, "플러그인과 대화 수집, 기억 서버를 올립니다.");
+  assert.equal(status.warning, "기억 서버를 새 판으로 다시 켜는 동안 잠깐 팀원 열람이 멈춥니다.");
   assert.deepEqual(status.server, { rebuild: true, running: true, gateway: false });
 
   const two = await bench(t, { claude: "0.9.0", runtime: "0.9.1", app: "0.9.1", server: "gateway" });
@@ -331,7 +331,7 @@ test("the server is rebuilt only when main runs another Honcho, gateway or conta
   assert.equal(without.newer, true);
   assert.equal(without.server, null);
   assert.equal(without.rows.some((row) => row.id === "server"), false);
-  assert.equal(without.summary, "플러그인과 대화 모으기를 올립니다.");
+  assert.equal(without.summary, "플러그인과 대화 수집을 올립니다.");
 });
 
 test("main is read once a day, an hour after a check that failed, and at once when asked", async (t) => {
@@ -447,7 +447,7 @@ test("the Claude Code plugin goes first, the rest runs from its new folder, and 
     { id: "claude", title: "Claude Code", text: "열린 창은 닫고 새로 여세요." },
     { id: "codex", title: "Codex", text: "열린 창은 닫고 새로 여세요." },
   ]);
-  assert.match(done.said, /^Claude Code 플러그인을 0\.9\.1로 올렸습니다\. Codex 플러그인을 0\.9\.1로 올렸습니다\. 대화 모으기를 /);
+  assert.match(done.said, /^Claude Code 플러그인을 0\.9\.1로 올렸습니다\. Codex 플러그인을 0\.9\.1로 올렸습니다\. 대화 수집을 /);
   assert.equal(done.finishedAt, new Date(b.time).toISOString());
   assert.equal((await updateStatus(b.options)).progress.state, "done", "the status carries the update last done");
 });
@@ -473,7 +473,7 @@ test("on a computer with Codex only, the Codex plugin goes first, the app right 
   const done = await updateProgress(b.options);
   assert.equal(done.state, "done");
   assert.deepEqual(done.todo, [{ id: "codex", title: "Codex", text: "열린 창은 닫고 새로 여세요." }]);
-  assert.match(done.said, /^Codex 플러그인을 0\.9\.1로 올렸습니다\. 팀 메모리 앱을 새 판으로 다시 켰습니다\. 대화 모으기를 /);
+  assert.match(done.said, /^Codex 플러그인을 0\.9\.1로 올렸습니다\. 팀 메모리 앱을 새 판으로 다시 켰습니다\. 대화 수집을 /);
 
   // The server failing after it leaves the new app up, and 다시 시도 runs the server's row.
   const failing = await bench(t, { claude: null, codex: "0.9.0", server: "honcho" });
@@ -482,7 +482,7 @@ test("on a computer with Codex only, the Codex plugin goes first, the app right 
   await drive(failing);
   const failed = await updateProgress(failing.options);
   assert.deepEqual(failing.states(failed.rows), { codex: "ok", app: "ok", runtime: "ok", server: "bad" });
-  assert.equal(failed.said, `팀 메모리 앱을 새 판으로 다시 켰습니다. 대화 모으기를 ${toVersion(VERSION)} 바꿨습니다. 기억 서버를 새 판으로 다시 시작하지 못했습니다: Docker Desktop is not running`);
+  assert.equal(failed.said, `팀 메모리 앱을 새 판으로 다시 켰습니다. 대화 수집을 ${toVersion(VERSION)} 바꿨습니다. 기억 서버를 새 판으로 다시 시작하지 못했습니다: Docker Desktop is not running`);
   failing.answers.started = { ok: true, ready: true };
   failing.doctor = ["server-version"];
   failing.calls.length = 0;
@@ -671,7 +671,7 @@ test("업데이트 reads main again, and starts nothing when main's version or t
   b.running = true;
   const warned = await updateStart({ ...b.options, seen: { latest: "0.9.2", warning: false } });
   assert.deepEqual([warned.code, warned.error, warned.status.warning], [
-    "changed", "그사이 기억 서버가 켜져, 다시 만드는 동안 팀원 열람이 멈춥니다. 보고 업데이트를 다시 누르세요.", "기억 서버를 다시 만드는 동안 팀원 열람이 멈춥니다.",
+    "changed", "그사이 기억 서버가 켜져, 새 판으로 다시 켜는 동안 잠깐 팀원 열람이 멈춥니다. 보고 업데이트를 다시 누르세요.", "기억 서버를 새 판으로 다시 켜는 동안 잠깐 팀원 열람이 멈춥니다.",
   ]);
   // And stopped again: the warning the bell showed is gone.
   b.running = false;
@@ -861,7 +861,7 @@ test("doctor --fix writes its rows to fix.json as it goes, and waits for an upda
   const done = await fixProgress(b.options);
   assert.equal(done.kind, "fix");
   assert.equal(done.state, "done");
-  assert.deepEqual(done.rows.map((row) => [row.id, row.title, row.state]), [["runtime", "대화 모으기", "ok"], ["server", "기억 서버 준비", "ok"]]);
+  assert.deepEqual(done.rows.map((row) => [row.id, row.title, row.state]), [["runtime", "대화 수집", "ok"], ["server", "기억 서버 준비", "ok"]]);
   assert.equal(done.serverOff, true);
   assert.deepEqual(done.todo.map((item) => item.id), ["claude", "server"]);
   // fix.json says it where 서버 켜기 is beside it; the terminal, where 시작 is.

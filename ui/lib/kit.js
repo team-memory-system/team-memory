@@ -187,14 +187,15 @@ export function confirmWindow({ title, text, confirm = "확인", danger = false 
 
 /**
  * What a job is doing, one row per step: `{ label }` starts a group, and
- * `{ state: "ok" | "run" | "wait" | "bad", title, sub, end }` is a step.
+ * `{ state: "ok" | "run" | "wait" | "bad", title, sub, end, more }` is a step;
+ * `more` is what the step asks of the person (a login's panel), under its line.
  */
 export function progressList(rows) {
   return h("div", { class: "prog" }, rows.map((row) => (row.label !== undefined
     ? h("div", { class: "pgl" }, row.label)
-    : h("div", { class: `pg ${row.state}` },
+    : h("div", { class: row.more ? `pg ${row.state} more` : `pg ${row.state}` },
       h("span", { class: `ic ${row.state}` }, row.state === "ok" ? "✓" : row.state === "bad" ? "!" : ""),
-      h("div", { class: "pb" }, h("div", { class: "pgt" }, row.title), row.sub ? h("div", { class: "pgs" }, row.sub) : null),
+      h("div", { class: "pb" }, h("div", { class: "pgt" }, row.title), row.sub ? h("div", { class: "pgs" }, row.sub) : null, row.more || null),
       row.end || null))));
 }
 

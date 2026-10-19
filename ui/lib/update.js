@@ -55,6 +55,10 @@ export const LONG_JOBS = Object.freeze({
   stopped: "기억 다시 정리가 멈춰 있습니다. 서버 → 기억 서버를 열면 이어서 정리합니다. 다 끝난 뒤 업데이트를 누르세요.",
 });
 
+// A stopped row whose reason is a program's own words, not the update's: what to press.
+const STOPPED_HERE = "여기서 멈췄습니다. 다시 시도를 누르세요.";
+const HANGUL = /[가-힣]/;
+
 // An app that stopped answering opens again from an agent (skills/setup-memory, ui open).
 const STALLED = "앱이 답하지 않습니다. Claude Code에서 /team-memory setup을, Codex에서 $setup-memory를 실행하세요.";
 const NO_ACCOUNT = "서버 → 모델에서 구독 계정을 로그인한 뒤 다시 시도를 누르세요.";
@@ -62,7 +66,7 @@ const NO_ACCOUNT = "서버 → 모델에서 구독 계정을 로그인한 뒤 �
 const NO_TOKEN = "관리자 탭의 Cloudflare에서 token 바꾸기를 누르세요.";
 
 // doctor's checks 고치기 repairs, as the bell names them (scripts/update.mjs FIX_ROWS).
-const BEHIND = [["runtime", "대화 모으기"], ["server-version", "기억 서버"], ["app", "앱"]];
+const BEHIND = [["runtime", "대화 수집"], ["server-version", "기억 서버"], ["app", "앱"]];
 
 // What a to-do's `action` is pressed with.
 const ACTIONS = {
@@ -177,7 +181,7 @@ export function behindChecks(doctor) {
     .filter((name) => checks.some((check) => check.name === name && !check.ok && check.fix && !(name === "app" && check.pages === false)));
 }
 
-/** "대화 모으기와 기억 서버가 새 판에 맞지 않습니다.": what doctor finds behind, by name. */
+/** "대화 수집과 기억 서버가 새 판에 맞지 않습니다.": what doctor finds behind, by name. */
 export function behindLine(names) {
   const words = BEHIND.filter(([name]) => names.includes(name)).map(([, word]) => word);
   if (!words.length) return "";
@@ -266,35 +270,66 @@ export function updateLines(options = {}) {
   return bellLines(known, options);
 }
 
-/** The dashboard's line while a new version waits for 업데이트 on the bell, or null. */
+/** An update or a 고치기 that stopped and the bell keeps (a day at most), or null. */
+function stoppedOf(last, now) {
+  const update = last?.update ?? last?.status?.progress ?? null;
+  return [update, last?.fix].find((progress) => standing(progress, now) && progress.state !== "running") || null;
+}
+
+/**
+ * The dashboard's line: an update or a 고치기 that stopped, where it stopped and
+ * what to press, so a closed window leaves more than the bell's number; else a new
+ * version that waits for 업데이트 on the bell; null with neither.
+ */
 export function dashboardLine(last, { elsewhere = false, now = Date.now() } = {}) {
+  const there = elsewhere ? "그 컴퓨터의 " : "";
+  const stopped = stoppedOf(last, now);
+  if (stopped) {
+    const name = josa(stopped.kind === "fix" ? "새 판에 맞추기" : "업데이트", "이/가");
+    if (stopped.state === "login") return `${name} 구독 계정 로그인을 기다립니다. ${there}오른쪽 위 종에서 열고 로그인하세요.`;
+    const at = (stopped.rows || []).find((row) => row.state === "bad");
+    return `${name} ${at ? `${at.title}에서 ` : ""}멈췄습니다. ${there}오른쪽 위 종에서 열고 다시 시도를 누르세요.`;
+  }
   const status = last?.status;
   if (!status?.newer || !status.latest || standing(last.update ?? status.progress, now)) return null;
-  return `새 판 ${josa(status.latest, "이/가")} 있습니다. ${elsewhere ? "그 컴퓨터의 " : ""}오른쪽 위 종에서 업데이트를 누르세요.`;
+  return `새 판 ${josa(status.latest, "이/가")} 있습니다. ${there}오른쪽 위 종에서 업데이트를 누르세요.`;
 }
 
 /** The dashboard's line as a notice, from what this page read last; null with none. */
 export function updateNotice() {
   const line = dashboardLine(known, { elsewhere: shownElsewhere() });
-  return line ? notice("", line) : null;
+  return line ? notice(stoppedOf(known, Date.now()) ? "warn" : "", line) : null;
+}
+
+/** The rows' heading: going, waiting for a login, or stopped. */
+function listLabel(progress) {
+  const fix = progress?.kind === "fix";
+  if (progress?.state === "failed") return fix ? "고치기가 멈췄습니다" : "업데이트가 멈췄습니다";
+  if (progress?.state === "login") return "구독 계정 로그인을 기다립니다";
+  return fix ? "고치는 중" : "업데이트 중";
 }
 
 /**
  * update.json or fix.json as the window's rows, in the order they go, each in its
- * state (wait, run, ok, bad, login): a stopped one says the reason the update wrote
- * as it is, with docker's output (`detail`) to open, and a plugin that went up its
- * version. On a page another computer shows (`elsewhere`), a login row says where
- * its panel is.
+ * state (wait, run, ok, bad, login), under a heading of how it stands: a stopped
+ * one says the reason the update wrote, with docker's output (`detail`) to open,
+ * and a plugin that went up its version. A reason in a program's own words (no
+ * Korean in it) is said as STOPPED_HERE, and goes first under 오류 내용. On a
+ * page another computer shows (`elsewhere`), a login row says where its panel is.
  */
 export function progressLines(progress, { elsewhere = false } = {}) {
-  const rows = (progress?.rows || []).map((row) => ({
-    state: row.state,
-    title: row.title,
-    sub: row.state === "bad" ? row.error || row.sub || "" : row.state === "login" && elsewhere ? LOGIN_THERE : row.sub || "",
-    detail: row.state === "bad" ? row.detail || "" : "",
-    version: row.state === "ok" ? row.version || "" : "",
-  }));
-  return [{ label: progress?.kind === "fix" ? "고치는 중" : "업데이트 중" }, ...rows];
+  const rows = (progress?.rows || []).map((row) => {
+    const reason = row.state === "bad" ? row.error || row.sub || "" : "";
+    const foreign = Boolean(reason) && !HANGUL.test(reason);
+    return {
+      state: row.state,
+      title: row.title,
+      sub: row.state === "bad" ? (foreign ? STOPPED_HERE : reason) : row.state === "login" && elsewhere ? LOGIN_THERE : row.sub || "",
+      detail: row.state === "bad" ? [foreign ? reason : "", row.detail || ""].filter(Boolean).join("\n\n") : "",
+      version: row.state === "ok" ? row.version || "" : "",
+    };
+  });
+  return [{ label: listLabel(progress) }, ...rows];
 }
 
 /**
@@ -776,7 +811,8 @@ export function openUpdate({ kind = "update", progress = null, fix = false, onCl
     win.body(
       h("h3", {}, titleOf(current || { kind })),
       progressList(fixing || drawnLines(progressLines(current, { elsewhere }))),
-      stray ? notice("bad", current.error) : null,
+      // One that stopped before any row, in a program's own words, says what to press as the rows do.
+      stray ? notice("bad", HANGUL.test(current.error) ? current.error : [`${listLabel(current)}. 다시 시도를 누르세요.`, details("오류 내용", current.error)]) : null,
       stalled && !elsewhere ? notice("warn", STALLED) : null,
       state === "login" && !elsewhere ? login?.node || null : null,
       elsewhere && state !== "running" ? hereOnlyNote(UPDATE_HERE_ONLY) : null,

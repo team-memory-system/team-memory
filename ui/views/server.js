@@ -335,7 +335,7 @@ export default {
       const box = h("div", {});
       return section({
         title: "끝에서 끝까지 점검",
-        note: "서버, 컨테이너, 임베딩, 게이트웨이를 차례로 두드려 봅니다. 모델에 실제 질문 하나를 보내는 데까지 30초쯤 걸립니다.",
+        note: "서버, 컨테이너, 임베딩, 게이트웨이가 답하는지 차례로 확인합니다. 모델에 실제 질문 하나를 보내는 데까지 30초쯤 걸립니다.",
         actions: [button("점검", { kind: "small", onClick: (event) => busy(event.currentTarget, async () => {
           clear(box, h("div", { class: "muted", style: { display: "flex", gap: "8px", alignItems: "center" } }, spinner(), "점검하는 중…"));
           const result = await post("/api/server/verify", { profile: "personal" });

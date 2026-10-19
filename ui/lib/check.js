@@ -25,7 +25,7 @@ const START = { kind: "start", label: "서버 켜기" };
 const COLLECT = { kind: "collect", label: "대화 수집 수정" };
 
 /** Said before a 고치기 that makes the server again, in the update's words (scripts/update.mjs). */
-export const REBUILD_NOTE = "기억 서버를 다시 만드는 동안 팀원 열람이 멈춥니다.";
+export const REBUILD_NOTE = "기억 서버를 새 판으로 다시 켜는 동안 잠깐 팀원 열람이 멈춥니다.";
 
 /** Why 고치기 is locked on a page another computer shows: the way here goes while it runs. */
 export const FIX_HERE_ONLY = "고치기는 그 컴퓨터에서 누르세요. 고치는 동안 이 화면으로 오는 길이 끊깁니다.";
@@ -99,14 +99,14 @@ export function checkRows(doctor, verify, { context = null, expected = null, don
   if (!checks.size) return checkFailed();
   const rows = [];
 
-  // 대화 모으기: the setup, the files the hooks run, the MCP server and each agent's plugin.
+  // 대화 수집: the setup, the files the hooks run, the MCP server and each agent's plugin.
   const runtime = checks.get("runtime");
-  const collect = { ...checkRow("대화 모으기", runtime?.actualVersion || ""), missing: [] };
+  const collect = { ...checkRow("대화 수집", runtime?.actualVersion || ""), missing: [] };
   const configuration = checks.get("configuration");
   if (configuration && !configuration.ok) fail(collect, configuration.state === "missing" ? "이 컴퓨터에 대화 수집 설정이 없습니다." : "대화 수집 설정을 읽을 수 없습니다.", COLLECT);
   if (runtime && !runtime.ok && runtime.fix) {
     const old = runtime.actualVersion && runtime.actualVersion !== runtime.expectedVersion ? `(${runtime.actualVersion})` : "";
-    fail(collect, runtime.missingFiles?.length ? "대화 모으기 파일이 빠졌습니다." : `대화 모으기가 옛 판${old}입니다.`, FIX);
+    fail(collect, runtime.missingFiles?.length ? "대화 수집 파일이 빠졌습니다." : `대화 수집이 옛 판${old}입니다.`, FIX);
   }
   if (checks.get("mcp")?.ok === false) fail(collect, "MCP 서버가 답하지 않습니다.");
   for (const name of Object.keys(AGENTS)) {
@@ -244,7 +244,7 @@ export function missingPlugins(rows) {
 /** What the 점검 row says it looks at while it runs. */
 export function checkingText({ team = false, verify = false } = {}) {
   if (team) return "팀 로그인, 팀 서버 로그인";
-  return verify ? "대화 모으기, 기억 서버, 임베딩" : "대화 모으기, 기억 서버";
+  return verify ? "대화 수집, 기억 서버, 임베딩" : "대화 수집, 기억 서버";
 }
 
 /**

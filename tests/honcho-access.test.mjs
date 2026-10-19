@@ -425,7 +425,7 @@ for (const refusal of ["403", "302"]) {
     const body = await response.json();
     assert.equal(body.unreachable, false);
     assert.equal(body.access, true);
-    assert.equal(body.error, "Cloudflare Access가 이 컴퓨터를 막았습니다. 그 서버의 Access 서비스 토큰을 넣으세요.");
+    assert.equal(body.error, "Cloudflare Access가 이 컴퓨터를 막았습니다. 그 서버의 Access service token을 넣으세요.");
 
     await assert.rejects(sessionsPage({ workspace: "memory" }, options), (error) => error.access === true && /Cloudflare Access/.test(error.message));
   });
